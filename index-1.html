@@ -1,0 +1,2490 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M&m 수학훈련소</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@600;700;900&family=Noto+Sans+KR:wght@400;500;600;700&display=swap');
+  :root{
+    --navy:#141B2E; --navy2:#1D2A44; --navy3:#26365A;
+    --gold:#C9A24B; --gold-l:#E8CE8B;
+    --ink:#1A1D26; --paper:#F7F5F0; --line:#E4DFD3;
+    --green:#3EA55A; --yellow:#E0A82E; --red:#D65A4A;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Noto Sans KR',sans-serif;background:var(--paper);color:var(--ink);}
+  h1,h2,h3,.serif{font-family:'Noto Serif KR',serif;}
+  button{font-family:inherit;cursor:pointer;}
+  input,select,textarea{font-family:inherit;}
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px;}
+
+  #loadingScreen{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--navy);color:#fff;font-size:14px;flex-direction:column;gap:14px;}
+  .spinner{width:34px;height:34px;border:3px solid #354569;border-top-color:var(--gold);border-radius:50%;animation:spin 0.8s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  #loginScreen{display:none;min-height:100vh;align-items:center;justify-content:center;background:
+    radial-gradient(circle at 20% 10%, #202b47 0%, var(--navy) 45%, #0d1220 100%);}
+  .login-card{width:min(420px,90vw);background:var(--navy2);border:1px solid #2c3a5c;border-radius:var(--radius);
+    padding:36px 30px;box-shadow:0 20px 60px rgba(0,0,0,.5);}
+  .brand{text-align:center;margin-bottom:28px;}
+  .brand .steps{display:flex;justify-content:center;gap:4px;margin-bottom:10px;}
+  .brand .steps span{display:block;width:14px;background:var(--gold);border-radius:2px;}
+  .brand .steps span:nth-child(1){height:8px;}
+  .brand .steps span:nth-child(2){height:16px;}
+  .brand .steps span:nth-child(3){height:24px;}
+  .brand .steps span:nth-child(4){height:32px;}
+  .brand h1{color:#fff;font-size:26px;margin:0;letter-spacing:.5px;}
+  .brand p{color:var(--gold-l);font-size:12px;margin:4px 0 0;letter-spacing:2px;}
+  .mode-tabs{display:flex;gap:8px;margin-bottom:20px;}
+  .mode-tabs button{flex:1;padding:10px;border-radius:10px;border:1px solid #354569;background:#1a2540;color:#9aa6c4;font-weight:600;font-size:14px;}
+  .mode-tabs button.active{background:var(--gold);color:var(--navy);border-color:var(--gold);}
+  .login-card input{width:100%;padding:13px 14px;border-radius:10px;border:1px solid #354569;background:#0f1729;color:#fff;font-size:16px;margin-bottom:12px;letter-spacing:2px;}
+  .login-card input::placeholder{color:#5b6889;letter-spacing:normal;}
+  .btn-gold{width:100%;padding:13px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--gold-l),var(--gold));color:var(--navy);font-weight:700;font-size:15px;}
+  .login-err{color:#ff9d8a;font-size:13px;margin:-4px 0 12px;min-height:16px;}
+  .setup-note{color:#9aa6c4;font-size:12px;line-height:1.6;margin-top:14px;text-align:center;}
+
+  #appShell{display:none;min-height:100vh;}
+  .layout{display:flex;min-height:100vh;}
+  .sidebar{width:220px;background:var(--navy);color:#fff;flex-shrink:0;display:flex;flex-direction:column;}
+  .sidebar .brand-mini{padding:22px 18px 16px;border-bottom:1px solid #263254;}
+  .sidebar .brand-mini h2{font-size:17px;margin:0;color:#fff;}
+  .sidebar .brand-mini span{font-size:10px;color:var(--gold-l);letter-spacing:1.5px;}
+  .nav-item{padding:13px 20px;color:#aab4d4;font-size:14px;font-weight:500;cursor:pointer;border-left:3px solid transparent;display:flex;align-items:center;gap:10px;}
+  .nav-item:hover{background:#1a2540;color:#fff;}
+  .nav-item.active{background:#1a2540;color:#fff;border-left-color:var(--gold);}
+  .nav-bottom{margin-top:auto;padding:16px 20px;border-top:1px solid #263254;}
+  .nav-bottom button{width:100%;background:transparent;border:1px solid #354569;color:#9aa6c4;padding:9px;border-radius:8px;font-size:13px;margin-bottom:8px;}
+  .conn-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--green);}
+  .conn-dot.off{background:var(--red);}
+  .conn-status{font-size:11px;color:#9aa6c4;padding:0 20px 12px;}
+  .main{flex:1;min-width:0;padding:22px 26px 60px;max-width:1200px;}
+  .mobile-topbar{display:none;background:var(--navy);color:#fff;padding:14px 16px;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;}
+  .mobile-topbar button{background:none;border:none;color:#fff;font-size:22px;}
+  .save-banner{display:none;background:#4a1f1f;color:#ffb3a3;padding:10px 16px;font-size:13px;border-radius:10px;margin-bottom:14px;align-items:center;justify-content:space-between;gap:10px;}
+  .save-banner button{background:#ffb3a3;color:#4a1f1f;border:none;padding:6px 12px;border-radius:6px;font-weight:600;font-size:12px;}
+
+  h1.page-title{font-size:22px;margin:0 0 4px;color:var(--navy);}
+  .page-sub{color:#7a7666;font-size:13px;margin:0 0 20px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:16px;}
+  .grid-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;}
+  .stat-card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:16px;border-top:3px solid var(--gold);}
+  .stat-card .num{font-size:26px;font-weight:800;color:var(--navy);font-family:'Noto Serif KR',serif;}
+  .stat-card .lbl{font-size:12px;color:#8a8674;margin-top:2px;}
+  .btn{padding:9px 16px;border-radius:8px;border:1px solid var(--navy);background:var(--navy);color:#fff;font-size:13px;font-weight:600;}
+  .btn.outline{background:#fff;color:var(--navy);}
+  .btn.gold{background:linear-gradient(135deg,var(--gold-l),var(--gold));border-color:var(--gold);color:var(--navy);}
+  .btn.danger{background:var(--red);border-color:var(--red);}
+  .btn.sm{padding:5px 10px;font-size:12px;}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+  .between{justify-content:space-between;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{padding:8px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle;}
+  th{color:#8a8674;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;}
+  .badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;}
+  .badge.green{background:#e4f5e8;color:var(--green);}
+  .badge.yellow{background:#fdf2df;color:#a97c15;}
+  .badge.red{background:#fbe6e2;color:var(--red);}
+  .badge.gray{background:#eee;color:#888;}
+  input[type=text],input[type=number],input[type=password],input[type=date],select,textarea{
+    padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:#fff;color:var(--ink);}
+  textarea{width:100%;resize:vertical;}
+  .tabs2{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;}
+  .tabs2 button{padding:8px 14px;border-radius:20px;border:1px solid var(--line);background:#fff;font-size:12.5px;font-weight:600;color:#6b6858;}
+  .tabs2 button.active{background:var(--navy);color:#fff;border-color:var(--navy);}
+  .step-chip{display:inline-flex;align-items:center;gap:6px;background:var(--navy);color:#fff;padding:3px 10px 3px 3px;border-radius:20px;font-size:11px;}
+  .step-chip b{background:var(--gold);color:var(--navy);border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:10px;}
+  .empty{text-align:center;padding:50px 20px;color:#9c9880;}
+  .empty .big{font-size:40px;margin-bottom:10px;}
+  a.link{color:var(--navy);font-weight:600;text-decoration:underline;}
+  .thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;}
+  .thumbs img{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer;}
+  .thumb-wrap{position:relative;}
+  .thumb-x{position:absolute;top:-6px;right:-6px;background:var(--red);color:#fff;border:2px solid #fff;border-radius:50%;width:20px;height:20px;font-size:11px;line-height:1;padding:0;display:flex;align-items:center;justify-content:center;}
+  .lightbox{display:none;position:fixed;inset:0;background:rgba(10,12,20,.92);z-index:999;align-items:center;justify-content:center;padding:20px;}
+  .lightbox img{max-width:92vw;max-height:92vh;border-radius:6px;}
+  .lightbox .close{position:absolute;top:16px;right:22px;color:#fff;font-size:30px;background:none;border:none;}
+  .lb-download{position:absolute;top:20px;left:22px;color:#fff;font-size:13px;background:rgba(255,255,255,.14);border:none;padding:8px 14px;border-radius:20px;font-weight:600;}
+  .lb-nav{position:absolute;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.12);color:#fff;border:none;width:48px;height:48px;border-radius:50%;font-size:30px;display:flex;align-items:center;justify-content:center;line-height:1;}
+  .lb-prev{left:10px;}
+  .lb-next{right:10px;}
+  .lb-counter{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);color:#fff;font-size:13px;background:rgba(255,255,255,.12);padding:4px 12px;border-radius:20px;}
+  .modal-bg{display:none;position:fixed;inset:0;background:rgba(10,12,20,.55);z-index:900;align-items:center;justify-content:center;padding:16px;}
+  .modal{background:#fff;border-radius:var(--radius);padding:22px;width:min(440px,94vw);}
+  .modal h3{margin:0 0 8px;}
+  .modal p{color:#6b6858;font-size:13px;line-height:1.6;}
+  .modal .row{margin-top:18px;justify-content:flex-end;}
+  .donut-wrap{display:flex;align-items:center;gap:18px;flex-wrap:wrap;}
+  .legend{font-size:12px;display:flex;flex-direction:column;gap:5px;}
+  .legend .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;}
+  .studentcode{font-family:monospace;font-weight:700;letter-spacing:1px;background:#f1efe4;padding:2px 7px;border-radius:6px;}
+  .stopwatch{font-size:38px;font-family:monospace;font-weight:700;color:var(--navy);text-align:center;}
+  .weekgrid{display:grid;grid-template-columns:70px repeat(7,1fr);gap:4px;font-size:12px;}
+  .weekgrid .hd{font-weight:700;text-align:center;color:#8a8674;padding:4px;}
+  .weekgrid textarea{width:100%;height:50px;font-size:11px;padding:4px;}
+  @media(max-width:880px){
+    .grid-stats{grid-template-columns:repeat(2,1fr);}
+    .sidebar{position:fixed;left:-260px;top:0;bottom:0;z-index:200;transition:left .25s;width:230px;overflow-y:auto;}
+    .sidebar.open{left:0;}
+    .mobile-topbar{display:flex;}
+    .main{padding:16px;}
+    .layout{display:block;}
+    table{font-size:12px;}
+    th,td{padding:6px 5px;}
+  }
+</style>
+</head>
+<body>
+
+<div id="loadingScreen">
+  <div class="spinner"></div>
+  <div>M&amp;m 수학훈련소를 불러오는 중이에요...</div>
+</div>
+
+<div id="loginScreen">
+  <div class="login-card">
+    <div class="brand">
+      <div class="steps"><span></span><span></span><span></span><span></span></div>
+      <h1>M&amp;m 수학훈련소</h1>
+      <p>MATH MASTER TRAINING CENTER</p>
+    </div>
+    <div class="mode-tabs">
+      <button id="tabDirector" class="active" onclick="setLoginMode('director')">원장 모드</button>
+      <button id="tabStudent" onclick="setLoginMode('student')">학생 모드</button>
+    </div>
+    <div id="directorLogin">
+      <input type="password" id="pwInput" placeholder="비밀번호를 입력해주세요" maxlength="20">
+      <div class="login-err" id="pwErr"></div>
+      <button class="btn-gold" onclick="tryDirectorLogin()">원장 모드로 입장</button>
+      <div class="setup-note" id="pwSetupNote"></div>
+    </div>
+    <div id="studentLogin" style="display:none;">
+      <input type="password" id="codeInput" placeholder="학생 코드 4자리" maxlength="4" inputmode="numeric" autocomplete="off">
+      <div class="login-err" id="codeErr"></div>
+      <button class="btn-gold" onclick="tryStudentLogin()">내 페이지 열기</button>
+    </div>
+  </div>
+</div>
+
+<div id="appShell">
+  <div class="mobile-topbar">
+    <button onclick="toggleSidebar(true)">☰</button>
+    <strong>M&amp;m 수학훈련소</strong>
+    <span style="width:22px;"></span>
+  </div>
+  <div class="layout">
+    <div class="sidebar" id="sidebar">
+      <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
+      <div id="navItems"></div>
+      <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-24 v4 (제출확인)</div>
+      <div class="nav-bottom">
+        <button onclick="logout()">로그아웃</button>
+      </div>
+    </div>
+    <div class="main" id="mainArea"></div>
+  </div>
+</div>
+
+<div class="lightbox" id="lightbox" onclick="closeLightbox(event)">
+  <button class="close" onclick="closeLightbox(event)">&times;</button>
+  <button class="lb-download" onclick="downloadLightboxImage(event)">⬇ 저장</button>
+  <button class="lb-nav lb-prev" id="lbPrev" onclick="lbGoPrev(event)">&#8249;</button>
+  <img id="lightboxImg" src="">
+  <button class="lb-nav lb-next" id="lbNext" onclick="lbGoNext(event)">&#8250;</button>
+  <div class="lb-counter" id="lbCounter"></div>
+</div>
+
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <h3 id="modalTitle"></h3>
+    <p id="modalBody"></p>
+    <div class="row">
+      <button class="btn outline" onclick="closeModal()">취소</button>
+      <button class="btn danger" id="modalConfirmBtn">확인</button>
+    </div>
+  </div>
+</div>
+
+<!-- Firebase SDK (compat, CDN — no build step needed) -->
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<script>
+/* =========================================================
+   M&m 수학훈련소 - Firebase(Firestore) 기반 실서비스 버전
+   ========================================================= */
+
+// ⚠️ 아래 firebaseConfig는 원장님의 Firebase 프로젝트 값으로 이미 채워져 있어요.
+const firebaseConfig = {
+  apiKey: "AIzaSyA4Uf5jRBd5K9CKU-W4l0Rk5KvQDp-Rq2M",
+  authDomain: "math-master-6a888.firebaseapp.com",
+  projectId: "math-master-6a888",
+  storageBucket: "math-master-6a888.firebasestorage.app",
+  messagingSenderId: "943375843047",
+  appId: "1:943375843047:web:116ce75ba8d15cb126ec42"
+};
+
+firebase.initializeApp(firebaseConfig);
+const fsdb = firebase.firestore();
+const fauth = firebase.auth();
+
+let session = null;
+let loginMode = 'director';
+let currentView = 'dashboard';
+let currentSubState = {};
+let unsubscribers = [];
+let listenersReady = { settings:false, students:false };
+
+// local in-memory mirror, kept in sync by Firestore real-time listeners
+let db = {
+  settings:{ adminPassword:'0000', isDefaultPassword:true },
+  classes:[], students:[], courses:[], videos:[],
+  classRecords:{}, weeklyPlans:{}, fridaySupp:{}, submissions:{},
+  questions:[], feedbacks:[], kmm:[]
+};
+
+function uid(prefix){ return prefix+'_'+Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-4); }
+function todayISO(){ return new Date().toISOString().slice(0,10); }
+function fmtDate(d){ const dt=new Date(d+'T00:00:00'); return `${dt.getMonth()+1}/${dt.getDate()}(${['일','월','화','수','목','금','토'][dt.getDay()]})`; }
+
+/* ---------------- 초기 명단 · 커리큘럼 시드 데이터 ---------------- */
+const SEED_DATA = {
+  "classes": [
+    {"name":"월수330","dayGroup":"mon-wed","students":[{"name":"김세아","grade":"초2"},{"name":"이도준","grade":"초4"}]},
+    {"name":"월수430","dayGroup":"mon-wed","students":[{"name":"김세현","grade":"초5"},{"name":"박성현","grade":"초5"},{"name":"이선빈","grade":"초5"},{"name":"주민재","grade":"초5"},{"name":"주민후","grade":"초5"}]},
+    {"name":"화목430","dayGroup":"tue-thu","students":[{"name":"홍기표","grade":"초6"},{"name":"안수한","grade":"초6"}]},
+    {"name":"월수530","dayGroup":"mon-wed","students":[{"name":"고유정","grade":"중2"},{"name":"김건우","grade":"중2"},{"name":"김창현","grade":"중2"},{"name":"조이정","grade":"중2"},{"name":"조혜린","grade":"중2"},{"name":"최재일","grade":"중2"}]},
+    {"name":"월수610","dayGroup":"mon-wed","students":[{"name":"정승환","grade":"중3"},{"name":"정우진","grade":"중3"},{"name":"홍지완","grade":"중3"},{"name":"이로운","grade":"중1"}]},
+    {"name":"화목530","dayGroup":"tue-thu","students":[{"name":"강서율","grade":"중3"},{"name":"이시현","grade":"중3"},{"name":"이지훈","grade":"중3"}]},
+    {"name":"화목610","dayGroup":"tue-thu","students":[{"name":"김서준","grade":"중1"},{"name":"김현서","grade":"중1"},{"name":"김다연","grade":"중1"},{"name":"심진우","grade":"중1"},{"name":"신윤성","grade":"중1"}]},
+    {"name":"화목730","dayGroup":"tue-thu","students":[{"name":"최재욱","grade":"고1"},{"name":"김예은","grade":"고2"},{"name":"조혜원","grade":"고2"}]}
+  ],
+  "courses": [
+    {"name":"[초등] 초2-2학기","steps":["Unit 1. 네자리수 > STEP 1 네자리수","Unit 1. 네자리수 > STEP 2 뛰어세기와 크기비교","Unit 2. 곱셈구구 > STEP 1 곱셈구구와 그 원리","Unit 2. 곱셈구구 > STEP 2 곱셈의 비밀과 그 특징","Unit 3. 길이재기 > STEP 1 길이의 단위","Unit 3. 길이재기 > STEP 2 길이의 연산","Unit 4. 시각과 시간 > STEP 1 시각과 시간","Unit 4. 시각과 시간 > STEP 2 시간의 연산","Unit 5. 표와 그래프 > STEP 1 표와 그래프","Unit 6. 규칙찾기 > STEP 1 무늬규칙","Unit 6. 규칙찾기 > STEP 2 식의 규칙"]},
+    {"name":"[초등] 초3-1학기","steps":["Unit 1. 덧셈과 뺄셈 > STEP 1 덧셈","Unit 1. 덧셈과 뺄셈 > STEP 2 뺄셈","Unit 2. 평면도형 > STEP 1 선분과 각","Unit 2. 평면도형 > STEP 2 도형","Unit 3. 나눗셈 > STEP 1 나눗셈","Unit 4. 곱셈(기본세로식) > STEP 1 10의 곱","Unit 4. 곱셈(기본세로식) > STEP 2 복잡한 곱셈","Unit 5. 길이와 시간 > STEP 1 길이","Unit 5. 길이와 시간 > STEP 2 시간","Unit 6. 분수와 소수 > STEP 1 분수","Unit 6. 분수와 소수 > STEP 2 소수"]},
+    {"name":"[초등] 초3-2학기","steps":["Unit 1. 곱셈(복잡한) > STEP 1 곱셈 세자리수","Unit 1. 곱셈(복잡한) > STEP 2 두자리수 X 두자리수","Unit 2. 나눗셈(나머지와 검산식) > STEP 1 가로식과 세로식","Unit 2. 나눗셈(나머지와 검산식) > STEP 2 나머지와 검산식","Unit 3. 원 > STEP 1 원","Unit 4. 분수의 이해 > STEP 1 분수의 개념 이해","Unit 4. 분수의 이해 > STEP 2 분수의 변신과 크기비교","Unit 5. 들이와 무게 > STEP 1 들이","Unit 5. 들이와 무게 > STEP 2 무게","Unit 6. 그림그래프 > STEP 1 그림그래프"]},
+    {"name":"[초등] 초4-1학기","steps":["Unit 1. 큰 수 > STEP 1 숫자와 수 / 벽세우기","Unit 1. 큰 수 > STEP 2 만, 억, 조","Unit 2. 각도 > STEP 1 각의 종류","Unit 2. 각도 > STEP 2 각의 활용","Unit 3. 곱셈과 나눗셈 > STEP 1 고난도 연산훈련","Unit 4. 평면도형의 이동 > STEP 1 이동/ 밀기/ 뒤집기","Unit 4. 평면도형의 이동 > STEP 2 돌리기","Unit 5. 막대그래프 > STEP 1 막대그래프","Unit 6. 규칙찾기 > STEP 1 규칙찾기","Unit 6. 규칙찾기 > STEP 2 등식"]},
+    {"name":"[초등] 초4-2학기","steps":["Unit 1. 분수의 덧셈과 뺄셈 > STEP 1 덧셈","Unit 1. 분수의 덧셈과 뺄셈 > STEP 2 뺄셈","Unit 2. 삼각형 > STEP 1 삼각형의 종류","Unit 2. 삼각형 > STEP 2 삼각형의 응용","Unit 3. 소수의 덧셈과 뺄셈 > STEP 1 소수점의 이해","Unit 3. 소수의 덧셈과 뺄셈 > STEP 2 소수의 덧셈과 뺄셈","Unit 3. 소수의 덧셈과 뺄셈 > STEP 3 소수의 크기비교","Unit 4. 사각형 > STEP 1 평행선","Unit 4. 사각형 > STEP 2 사각형의 종류","Unit 5. 꺾은선 그래프 > STEP 1 꺾은선 그래프","Unit 6. 다각형 > STEP 1 정다각형","Unit 6. 다각형 > STEP 2 대각선과 각의 총합"]},
+    {"name":"[초등] 초5-1학기","steps":["Unit 1. 자연수의 혼합계산 > STEP 1 계산순서","Unit 1. 자연수의 혼합계산 > STEP 2 복잡한 혼합계산","Unit 1. 자연수의 혼합계산 > STEP 3 문장제","Unit 2. 약수와 배수 > STEP 1 약수와 배수","Unit 2. 약수와 배수 > STEP 2 최대공약수와 최소공배수","Unit 3. 약분과 통분 > STEP 1 같은 분수","Unit 3. 약분과 통분 > STEP 2 분수와 소수의 크기비교","Unit 4. 분수의 덧셈과 뺄셈 (통분) > STEP 1 분모가 다른 분수의 덧셈","Unit 4. 분수의 덧셈과 뺄셈 (통분) > STEP 2 분모가 다른 분수의 뺄셈","Unit 5. 대응관계 > STEP 1 대응관계","Unit 6. 다각형의 둘레와 넓이 > STEP 1 단위","Unit 6. 다각형의 둘레와 넓이 > STEP 2 둘레와 넓이"]},
+    {"name":"[초등] 초5-2학기","steps":["Unit 1. 수의 범위와 어림하기 > STEP 1 범위","Unit 1. 수의 범위와 어림하기 > STEP 2 올림, 반올림, 버림","Unit 1. 수의 범위와 어림하기 > STEP 3 역방향의 이해","Unit 2. 분수의 곱셈 > STEP 1 분수의 곱셈","Unit 2. 분수의 곱셈 > STEP 2 문장제","Unit 3. 소수의 곱셈 > STEP 1 소수점의 이동","Unit 3. 소수의 곱셈 > STEP 2 복잡한 연산과 문장제","Unit 4. 도형의 합동과 대칭 > STEP 1 합동","Unit 4. 도형의 합동과 대칭 > STEP 2 대칭","Unit 5. 직육면체와 정육면체 > STEP 1 육면체의 특징","Unit 5. 직육면체와 정육면체 > STEP 2 육면체의 전개도","Unit 6. 평균과 가능성 > STEP 1 평균","Unit 6. 평균과 가능성 > STEP 2 가능성"]},
+    {"name":"[초등] 초6-1학기","steps":["Unit 1. 분수의 나눗셈 > STEP 1 분수의 나눗셈","Unit 1. 분수의 나눗셈 > STEP 2 문장제","Unit 2. 소수의 나눗셈 > STEP 1 소수의 나눗셈","Unit 2. 소수의 나눗셈 > STEP 2 문장제","Unit 3. 비와 비율 > STEP 1 비와 비율","Unit 3. 비와 비율 > STEP 2 백분률","Unit 4. 여러가지 그래프 > STEP 1 여러가지 그래프","Unit 5. 각기둥과 각뿔 > STEP 1 각기둥","Unit 5. 각기둥과 각뿔 > STEP 2 각뿔","Unit 6. 부피와 겉넓이 > STEP 1 부피","Unit 6. 부피와 겉넓이 > STEP 2 겉넓이"]},
+    {"name":"[초등] 초6-2학기","steps":["Unit 1. 분수의 나눗셈 (분수/분수) > STEP 1 분수의 나눗셈","Unit 1. 분수의 나눗셈 (분수/분수) > STEP 2 문장제","Unit 2. 소수의 나눗셈 (소수/소수) > STEP 1 소수의 나눗셈","Unit 2. 소수의 나눗셈 (소수/소수) > STEP 2 문장제","Unit 3. 공간과 입체 > STEP 1 쌓기나무","Unit 4. 비례식과 비례배분 > STEP 1 비례식","Unit 4. 비례식과 비례배분 > STEP 2 비례배분","Unit 5. 원의 둘레와 넓이 > STEP 1 원의 둘레","Unit 5. 원의 둘레와 넓이 > STEP 2 원의 넓이","Unit 6. 원기둥, 원뿔, 구 > STEP 1 원기둥, 원뿔, 구"]},
+    {"name":"[중등] 중1-1학기","steps":["Unit 1. 소인수분해 > STEP 1 소수와 합성수","Unit 1. 소인수분해 > STEP 2 소인수분해","Unit 1. 소인수분해 > STEP 3 소인수분해를 이용하여 약수 구하기","Unit 1. 소인수분해 > STEP 4 공약수와 최대공약수","Unit 1. 소인수분해 > STEP 5 공배수와 최소공배수","Unit 1. 소인수분해 > STEP 6 최대공약수와 최소공배수의 응용","Unit 1. 소인수분해 > STEP 7 최대공약수와 최소공배수의 실생활 문제","Unit 1. 소인수분해 > STEP 8 최대공약수와 최소공배수의 관계","Unit 2. 정수와 유리수 > STEP 1 양수와 음수","Unit 2. 정수와 유리수 > STEP 2 정수와 유리수","Unit 2. 정수와 유리수 > STEP 3 수직선","Unit 2. 정수와 유리수 > STEP 4 절댓값","Unit 2. 정수와 유리수 > STEP 5 수와 대소 관계","Unit 2. 정수와 유리수 > STEP 6 부등호의 사용","Unit 2. 정수와 유리수 > STEP 7 유리수의 덧셈과 뺄셈","Unit 2. 정수와 유리수 > STEP 8 유리수의 곱셈과 나눗셈","Unit 2. 정수와 유리수 > STEP 9 덧셈, 뺄셈, 곱셈, 나눗셈의 혼합계산","Unit 2. 정수와 유리수 > STEP 10 유리수 계산의 활용","Unit 3. 문자와 식 > STEP 1 곱셈과 나눗셈 기호의 생략","Unit 3. 문자와 식 > STEP 2 문자를 사용한 식","Unit 3. 문자와 식 > STEP 3 식의 값","Unit 3. 문자와 식 > STEP 4 다항식과 일차식","Unit 3. 문자와 식 > STEP 5 방정식과 항등식","Unit 3. 문자와 식 > STEP 6 등식의 성질","Unit 3. 문자와 식 > STEP 7 일차방정식의 풀이","Unit 3. 문자와 식 > STEP 8 일차방정식 활용 문제","Unit 3. 문자와 식 > STEP 9 거리, 속력, 시간에 대한 문제","Unit 3. 문자와 식 > STEP 10 농도에 대한 문제","Unit 4. 좌표평면과 그래프 > STEP 1 순서쌍과 좌표평면","Unit 4. 좌표평면과 그래프 > STEP 2 사분면","Unit 4. 좌표평면과 그래프 > STEP 3 그래프","Unit 4. 좌표평면과 그래프 > STEP 4 정비례","Unit 4. 좌표평면과 그래프 > STEP 5 반비례","Unit 4. 좌표평면과 그래프 > STEP 6 정비례 관계와 반비례 관계의 활용"]},
+    {"name":"[중등] 중1-2학기","steps":["Unit 1. 기본 도형과 작도 > STEP 1 점, 선, 면","Unit 1. 기본 도형과 작도 > STEP 2 각","Unit 1. 기본 도형과 작도 > STEP 3 점, 직선, 평면의 위치 관계","Unit 1. 기본 도형과 작도 > STEP 4 평행선의 성질","Unit 1. 기본 도형과 작도 > STEP 5 삼각형의 작도","Unit 1. 기본 도형과 작도 > STEP 6 삼각형의 합동","Unit 2. 평면도형의 성질 > STEP 1 다각형","Unit 2. 평면도형의 성질 > STEP 2 삼각형의 내각과 외각","Unit 2. 평면도형의 성질 > STEP 3 다각형의 내각과 외각","Unit 2. 평면도형의 성질 > STEP 4 원과 부채꼴","Unit 2. 평면도형의 성질 > STEP 5 부채꼴의 호의 길이와 넓이","Unit 3. 입체도형의 성질 > STEP 1 다면체","Unit 3. 입체도형의 성질 > STEP 2 회전체","Unit 3. 입체도형의 성질 > STEP 3 기둥의 겉넓이와 부피","Unit 3. 입체도형의 성질 > STEP 4 뿔의 겉넓이와 부피","Unit 3. 입체도형의 성질 > STEP 5 구의 겉넓이와 부피","Unit 4. 자료의 정리와 해석 > STEP 1 대푯값","Unit 4. 자료의 정리와 해석 > STEP 2 줄기와 잎 그림","Unit 4. 자료의 정리와 해석 > STEP 3 도수분포표","Unit 4. 자료의 정리와 해석 > STEP 4 히스토그램과 도수분포다각형","Unit 4. 자료의 정리와 해석 > STEP 5 상대도수와 그 그래프"]},
+    {"name":"[중등] 중2-1학기","steps":["Unit 1. 수와 식 > STEP 1 유리수의 소수표현","Unit 1. 수와 식 > STEP 2 순환소수의 분수표현","Unit 1. 수와 식 > STEP 3 지수법칙","Unit 1. 수와 식 > STEP 4 단항식의 곱셈과 나눗셈","Unit 1. 수와 식 > STEP 5 다항식의 덧셈과 뺄셈","Unit 1. 수와 식 > STEP 6 다항식의 곱셈과 나눗셈","Unit 2. 부등식 > STEP 1 부등식","Unit 2. 부등식 > STEP 2 일차부등식","Unit 2. 부등식 > STEP 3 일차부등식의 활용1","Unit 2. 부등식 > STEP 4 일차부등식의 활용2","Unit 3. 방정식 > STEP 1 일차방정식","Unit 3. 방정식 > STEP 2 연립일차방정식","Unit 3. 방정식 > STEP 3 여러 가지 연립방정식의 풀이","Unit 3. 방정식 > STEP 4 연립방정식의 활용1","Unit 3. 방정식 > STEP 5 연립방정식의 활용2","Unit 4. 함수 > STEP 1 함수와 함숫값","Unit 4. 함수 > STEP 2 일차함수와 그 그래프","Unit 4. 함수 > STEP 3 일차함수의 그래프의 성질","Unit 4. 함수 > STEP 4 일차함수의 식 구하기","Unit 4. 함수 > STEP 5 일차함수의 활용","Unit 4. 함수 > STEP 6 일차함수와 일차방정식","Unit 4. 함수 > STEP 7 일차함수의 그래프와 일차방정식","Unit 4. 함수 > STEP 8 일차함수의 그래프와 연립방정식"]},
+    {"name":"[중등] 중2-2학기","steps":["Unit 1. 도형의 성질 > STEP 1 이등변삼각형의 성질","Unit 1. 도형의 성질 > STEP 2 삼각형의 외심과 내심","Unit 1. 도형의 성질 > STEP 3 평행사변형","Unit 1. 도형의 성질 > STEP 4 여러 가지 사각형","Unit 2. 도형의 닮음 > STEP 5 닮은 도형","Unit 2. 도형의 닮음 > STEP 6 삼각형의 닮음 조건","Unit 2. 도형의 닮음 > STEP 7 평행선과 선분의 길이의 비","Unit 2. 도형의 닮음 > STEP 8 삼각형의 무게중심","Unit 2. 도형의 닮음 > STEP 9 닮은 도형의 넓이와 부피","Unit 2. 도형의 닮음 > STEP 10 피타고라스 정리","Unit 2. 도형의 닮음 > STEP 11 피타고라스 정리의 활용","Unit 3. 확률 > STEP 1 경우의 수","Unit 3. 확률 > STEP 2 확률의 뜻과 성질","Unit 3. 확률 > STEP 3 확률의 계산"]},
+    {"name":"[중등] 중3-1학기","steps":["Unit 1. 실수와 그 계산 > STEP 1 제곱근의 뜻과 성질","Unit 1. 실수와 그 계산 > STEP 2 무리수와 실수","Unit 1. 실수와 그 계산 > STEP 3 실수의 대소 관계","Unit 1. 실수와 그 계산 > STEP 4 제곱근의 곱셈과 나눗셈","Unit 1. 실수와 그 계산 > STEP 5 제곱근의 덧셈과 뺄셈","Unit 1. 실수와 그 계산 > STEP 6 근호를 포함한 복잡한 식의 계산","Unit 2. 다항식의 곱셈과 인수분해 > STEP 1 다항식과 다항식의 곱셈","Unit 2. 다항식의 곱셈과 인수분해 > STEP 2 곱셈 공식","Unit 2. 다항식의 곱셈과 인수분해 > STEP 3 곱셈 공식을 이용한 수의 계산","Unit 2. 다항식의 곱셈과 인수분해 > STEP 4 곱셈 공식의 변형","Unit 2. 다항식의 곱셈과 인수분해 > STEP 5 인수분해","Unit 2. 다항식의 곱셈과 인수분해 > STEP 6 인수분해 공식","Unit 2. 다항식의 곱셈과 인수분해 > STEP 7 복잡한 식의 인수분해","Unit 2. 다항식의 곱셈과 인수분해 > STEP 8 인수분해 공식의 활용","Unit 3. 이차방정식 > STEP 1 이차방정식과 그 해","Unit 3. 이차방정식 > STEP 2 인수분해를 이용한 이차방정식의 풀이","Unit 3. 이차방정식 > STEP 3 이차방정식의 중근","Unit 3. 이차방정식 > STEP 4 제곱을 이용한 이차방정식의 풀이","Unit 3. 이차방정식 > STEP 5 완전 제곱식을 이용한 이차방정식의 풀이","Unit 3. 이차방정식 > STEP 6 이차방정식의 근의 공식","Unit 3. 이차방정식 > STEP 7 복잡한 이차방정식의 풀이","Unit 3. 이차방정식 > STEP 8 이차방정식의 근의 판별","Unit 3. 이차방정식 > STEP 9 이차방정식 구하기","Unit 3. 이차방정식 > STEP 10 이차방정식의 활용","Unit 4. 이차함수 > STEP 1 이차함수의 뜻","Unit 4. 이차함수 > STEP 2 이차함수 y=ax^2의 그래프","Unit 4. 이차함수 > STEP 3 이차함수 y=ax^2+q의 그래프","Unit 4. 이차함수 > STEP 4 이차함수 y=a(x-p)^2의 그래프","Unit 4. 이차함수 > STEP 5 이차함수 y=a(x-p)^2+q의 그래프","Unit 4. 이차함수 > STEP 6 이차함수 y=ax^2+bx+c의 그래프","Unit 4. 이차함수 > STEP 7 이차함수의 식 구하기","Unit 4. 이차함수 > STEP 8 이차함수의 최댓값과 최솟값","Unit 4. 이차함수 > STEP 9 이차함수의 활용"]},
+    {"name":"[중등] 중3-2학기","steps":["Unit 1. 삼각비 > STEP 1 삼각비","Unit 1. 삼각비 > STEP 2 특수한 각의 삼각비","Unit 1. 삼각비 > STEP 3 예각의 삼각비의 값","Unit 1. 삼각비 > STEP 4 삼각비의 활용1 : 길이","Unit 1. 삼각비 > STEP 5 삼각비의 활용2 : 넓이","Unit 2. 원의 성질 > STEP 1 원에 현","Unit 2. 원의 성질 > STEP 2 원에 접선1","Unit 2. 원의 성질 > STEP 3 원에 접선2","Unit 2. 원의 성질 > STEP 4 원주각","Unit 2. 원의 성질 > STEP 5 원에 내접하는 사각형","Unit 2. 원의 성질 > STEP 6 원에 접선과 현이 이루는각","Unit 3. 통계 > STEP 1 대푯값","Unit 3. 통계 > STEP 2 산포도","Unit 3. 통계 > STEP 3 산점도와 상관관계"]},
+    {"name":"[고등] 공수 1","steps":["Unit 1. 다항식 > STEP 1 다항식의 사칙연산","Unit 1. 다항식 > STEP 2 항등식과 나머지 정리","Unit 1. 다항식 > STEP 3 다항식의 인수분해","Unit 2. 방정식과 부등식 > STEP 1 복소수의 뜻과 성질","Unit 2. 방정식과 부등식 > STEP 2 이차방정식의 풀이","Unit 2. 방정식과 부등식 > STEP 3 이차방정식의 근과 계수와의 관계","Unit 2. 방정식과 부등식 > STEP 4 이차방정식과 이차함수의 관계","Unit 2. 방정식과 부등식 > STEP 5 이차함수의 그래프와 직선의 위치 관계","Unit 2. 방정식과 부등식 > STEP 6 이차함수의 최대/최소","Unit 2. 방정식과 부등식 > STEP 7 삼차방정식과 사차방정식의 풀이","Unit 2. 방정식과 부등식 > STEP 8 미지수가 2개인 연립이차부등식","Unit 2. 방정식과 부등식 > STEP 9 미지수가 1개인 연립일차부등식","Unit 2. 방정식과 부등식 > STEP 10 절댓값을 포함한 일차부등식","Unit 2. 방정식과 부등식 > STEP 11 이차부등식과 연립이차부등식","Unit 3. 경우의 수 > STEP 1 합의 법칙과 곱의 법칙","Unit 3. 경우의 수 > STEP 2 순열","Unit 3. 경우의 수 > STEP 3 조합","Unit 4. 행렬 > STEP 1 행렬","Unit 4. 행렬 > STEP 2 행렬의 연산"]},
+    {"name":"[고등] 공수 2","steps":["Unit 1. 도형의 방정식 > STEP 1 선분의 내분, 내분점의 좌표","Unit 1. 도형의 방정식 > STEP 2 두직선의 평행 조건과 수직 조건","Unit 1. 도형의 방정식 > STEP 3 점과 직선 사이의 거리","Unit 1. 도형의 방정식 > STEP 4 원의 방정식과 그래프","Unit 1. 도형의 방정식 > STEP 5 좌표평면에서 원과 직선의 위치관계","Unit 1. 도형의 방정식 > STEP 6 평행이동","Unit 1. 도형의 방정식 > STEP 7 대칭이동","Unit 2. 집합과 명제 > STEP 1 집합의 개념과 표현","Unit 2. 집합과 명제 > STEP 2 두 집합 사이의 포함 관계","Unit 2. 집합과 명제 > STEP 3 집합의 연산과 벤 다이어그램","Unit 2. 집합과 명제 > STEP 4 명제와 조건","Unit 2. 집합과 명제 > STEP 5 명제의 역과 대우","Unit 2. 집합과 명제 > STEP 6 충분조건과 필요조건","Unit 2. 집합과 명제 > STEP 7 대우를 이용한 증명법과 귀류법","Unit 2. 집합과 명제 > STEP 8 절대부등식","Unit 3. 함수와 그래프 > STEP 1 함수의 개념과 그래프","Unit 3. 함수와 그래프 > STEP 2 함수의 합성","Unit 3. 함수와 그래프 > STEP 3 역함수","Unit 3. 함수와 그래프 > STEP 4 유리함수의 그래프","Unit 3. 함수와 그래프 > STEP 5 무리함수의 그래프"]},
+    {"name":"[고등] 대수","steps":["Unit 1. 지수함수와 로그함수 > STEP 1 거듭제곱과 거듭제곱근","Unit 1. 지수함수와 로그함수 > STEP 2 지수의 확장과 지수법칙","Unit 1. 지수함수와 로그함수 > STEP 3 로그의 뜻과 성질","Unit 1. 지수함수와 로그함수 > STEP 4 상용로그","Unit 1. 지수함수와 로그함수 > STEP 5 지수함수의 뜻과 그래프","Unit 1. 지수함수와 로그함수 > STEP 6 로그함수의 뜻과 그래프","Unit 1. 지수함수와 로그함수 > STEP 7 지수함수의 활용","Unit 1. 지수함수와 로그함수 > STEP 8 로그함수의 활용","Unit 2. 삼각함수 > STEP 1 일반각과 호도법","Unit 2. 삼각함수 > STEP 2 삼각함수","Unit 2. 삼각함수 > STEP 3 삼각함수의 그래프","Unit 2. 삼각함수 > STEP 4 사인법칙과 코사인법칙","Unit 3. 수열 > STEP 1 수열의 뜻","Unit 3. 수열 > STEP 2 등차수열","Unit 3. 수열 > STEP 3 등비수열","Unit 3. 수열 > STEP 4 합의 기호","Unit 3. 수열 > STEP 5 여러 가지 수열의 합","Unit 3. 수열 > STEP 6 수열의 귀납적 정의","Unit 3. 수열 > STEP 7 수학적 귀납법"]},
+    {"name":"[고등] 미적분","steps":["Unit 1. 함수의 극한과 연속 > STEP 1 함수의 수렴과 발산","Unit 1. 함수의 극한과 연속 > STEP 2 함수의 극한값의 존재","Unit 1. 함수의 극한과 연속 > STEP 3 함수의 극한값 구하기","Unit 1. 함수의 극한과 연속 > STEP 4 절댓값 기호를 포함한 함수의 극한","Unit 1. 함수의 극한과 연속 > STEP 5 가우스 기호를 포함한 함수의 극한","Unit 1. 함수의 극한과 연속 > STEP 6 합성함수의 극한","Unit 1. 함수의 극한과 연속 > STEP 7 함수의 극한에 대한 성질","Unit 1. 함수의 극한과 연속 > STEP 8 0/0꼴의 극한(1)유리식","Unit 1. 함수의 극한과 연속 > STEP 9 0/0꼴의 극한(2)무리식","Unit 1. 함수의 극한과 연속 > STEP 10 무한/무한 꼴의 극한","Unit 1. 함수의 극한과 연속 > STEP 11 무한-무한 꼴의 극한","Unit 1. 함수의 극한과 연속 > STEP 12 무한X0 꼴의 극한","Unit 1. 함수의 극한과 연속 > STEP 13 미정계수의 결정","Unit 1. 함수의 극한과 연속 > STEP 14 다항함수의 결정","Unit 1. 함수의 극한과 연속 > STEP 15 함수의 극한의 대소 관계","Unit 1. 함수의 극한과 연속 > STEP 16 함수의 극한의 활용","Unit 1. 함수의 극한과 연속 > STEP 17 함수의 연속","Unit 1. 함수의 극한과 연속 > STEP 18 연속함수의 성질","Unit 2. 미분 > STEP 1 미분계수","Unit 2. 미분 > STEP 2 도함수","Unit 2. 미분 > STEP 3 접선의 방정식","Unit 2. 미분 > STEP 4 평균값 정리","Unit 2. 미분 > STEP 5 함수의 증가와 감소, 극대와 극소","Unit 2. 미분 > STEP 6 함수의 그래프","Unit 2. 미분 > STEP 7 방정식과 부등식에의 활용","Unit 2. 미분 > STEP 8 속도와 가속도","Unit 3. 적분 > STEP 1 부정적분","Unit 3. 적분 > STEP 2 정적분","Unit 3. 적분 > STEP 3 넓이","Unit 3. 적분 > STEP 4 속도와 거리"]},
+    {"name":"[고등] 확통","steps":["Unit 1. 경우의 수 > STEP 1 여러 가지 순열","Unit 1. 경우의 수 > STEP 2 중복조합","Unit 1. 경우의 수 > STEP 3 이항정리","Unit 2. 확률 > STEP 1 확률의 뜻","Unit 2. 확률 > STEP 2 확률의 덧셈정리","Unit 2. 확률 > STEP 3 조건부확률","Unit 2. 확률 > STEP 4 사건의 독립과 종속","Unit 3. 통계 > STEP 1 확률변수와 확률분포","Unit 3. 통계 > STEP 2 이산확률변수의 기댓값과 표준편차","Unit 3. 통계 > STEP 3 이항분포","Unit 3. 통계 > STEP 4 정규분포","Unit 3. 통계 > STEP 5 모집단과 표본","Unit 3. 통계 > STEP 6 모평균의 추정","Unit 3. 통계 > STEP 7 모비율의 추정"]}
+  ]
+};
+
+/* ---------------- FIRESTORE INIT & REAL-TIME LISTENERS ---------------- */
+async function initFirebase(){
+  try{
+    await fauth.signInAnonymously();
+  }catch(e){
+    showFatalError('로그인 서버에 연결하지 못했어요. 인터넷 연결을 확인한 뒤 새로고침 해주세요.');
+    return;
+  }
+  attachListeners();
+}
+
+function showFatalError(msg){
+  document.getElementById('loadingScreen').innerHTML = `
+    <div style="text-align:center;padding:20px;max-width:340px;">
+      <div style="font-size:36px;margin-bottom:10px;">⚠️</div>
+      <div style="margin-bottom:16px;">${msg}</div>
+      <button class="btn-gold" onclick="location.reload()">다시 시도</button>
+    </div>`;
+}
+
+function setConnStatus(ok){
+  const dot = document.getElementById('connDot'); const txt = document.getElementById('connText');
+  if(!dot) return;
+  dot.classList.toggle('off', !ok);
+  txt.textContent = ok ? '실시간 연결됨' : '연결 끊김 - 재시도 중';
+}
+
+function attachListeners(){
+  const subs = [
+    fsdb.collection('meta').doc('settings').onSnapshot(async doc=>{
+      if(doc.exists){ db.settings = doc.data(); }
+      else{
+        db.settings = { adminPassword:'0000', isDefaultPassword:true };
+        try{ await fsdb.collection('meta').doc('settings').set(db.settings); }catch(e){}
+      }
+      listenersReady.settings = true;
+      maybeFinishLoading();
+      render();
+    }, err=>{ setConnStatus(false); }),
+
+    fsdb.collection('students').onSnapshot(snap=>{
+      db.students = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      listenersReady.students = true;
+      maybeFinishLoading();
+      render();
+    }, err=>{ setConnStatus(false); }),
+
+    fsdb.collection('classes').onSnapshot(snap=>{ db.classes = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
+    fsdb.collection('courses').onSnapshot(snap=>{ db.courses = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
+    fsdb.collection('videos').onSnapshot(snap=>{ db.videos = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
+    fsdb.collection('classRecords').onSnapshot(snap=>{
+      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.classRecords=m; render();
+      if(session && session.mode==='director') checkAutoWarnings();
+    }),
+    fsdb.collection('weeklyPlans').onSnapshot(snap=>{
+      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.weeklyPlans=m; render();
+    }),
+    fsdb.collection('fridaySupp').onSnapshot(snap=>{
+      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.fridaySupp=m; render();
+    }),
+    fsdb.collection('submissions').onSnapshot(snap=>{
+      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.submissions=m; render();
+      if(session && session.mode==='director') checkAutoWarnings();
+    }),
+    fsdb.collection('questions').onSnapshot(snap=>{ db.questions = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
+    fsdb.collection('feedbacks').onSnapshot(snap=>{ db.feedbacks = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
+    fsdb.collection('kmm').onSnapshot(snap=>{ db.kmm = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
+  ];
+  unsubscribers = subs;
+  setConnStatus(true);
+}
+
+let appEntered = false;
+function maybeFinishLoading(){
+  if(!(listenersReady.settings && listenersReady.students)) return;
+  document.getElementById('loadingScreen').style.display='none';
+  if(appEntered) return;
+  if(!session){
+    // 저장된 로그인 상태가 있으면 자동으로 복원 (화면 꺼짐/백그라운드 새로고침으로 로그인이 풀리는 것 방지)
+    try{
+      const saved = JSON.parse(localStorage.getItem('mnm_session') || 'null');
+      if(saved && saved.mode==='director'){ session = saved; }
+      else if(saved && saved.mode==='student'){
+        const stu = studentById(saved.studentId);
+        if(stu && stu.status!=='withdrawn'){ session = saved; }
+      }
+    }catch(e){}
+  }
+  if(session){ enterApp(); return; }
+  document.getElementById('loginScreen').style.display='flex';
+  if(db.settings.isDefaultPassword){
+    document.getElementById('pwSetupNote').textContent = '최초 접속이에요. 기본 비밀번호(0000)로 먼저 로그인한 뒤, 대시보드에서 비밀번호를 변경해주세요.';
+  }
+}
+
+/* ---------------- LOGIN ---------------- */
+function setLoginMode(m){
+  loginMode = m;
+  document.getElementById('tabDirector').classList.toggle('active', m==='director');
+  document.getElementById('tabStudent').classList.toggle('active', m==='student');
+  document.getElementById('directorLogin').style.display = m==='director' ? 'block':'none';
+  document.getElementById('studentLogin').style.display = m==='student' ? 'block':'none';
+}
+function tryDirectorLogin(){
+  const v = document.getElementById('pwInput').value;
+  if(v === db.settings.adminPassword){ session = {mode:'director'}; saveSessionLocal(); enterApp(); }
+  else{ document.getElementById('pwErr').textContent = '비밀번호가 올바르지 않아요. 다시 확인해주세요.'; }
+}
+function tryStudentLogin(){
+  const v = document.getElementById('codeInput').value.trim();
+  const stu = db.students.find(s=>s.code===v);
+  if(stu && stu.status==='withdrawn'){ document.getElementById('codeErr').textContent = '더 이상 사용할 수 없는 코드예요. 선생님께 문의해주세요.'; return; }
+  if(stu){ session = {mode:'student', studentId:stu.id}; saveSessionLocal(); enterApp(); }
+  else{ document.getElementById('codeErr').textContent = '등록되지 않은 코드예요. 선생님께 코드를 다시 확인해주세요.'; }
+}
+function saveSessionLocal(){ try{ localStorage.setItem('mnm_session', JSON.stringify(session)); }catch(e){} }
+function logout(){
+  session = null;
+  try{ localStorage.removeItem('mnm_session'); }catch(e){}
+  document.getElementById('appShell').style.display='none';
+  document.getElementById('loginScreen').style.display='flex';
+  document.getElementById('pwInput').value=''; document.getElementById('codeInput').value='';
+  document.getElementById('pwErr').textContent=''; document.getElementById('codeErr').textContent='';
+}
+function studentLessonRecords(stuId){
+  const seen = new Set();
+  const recs = [];
+  Object.entries(db.classRecords).forEach(([key,obj])=>{
+    if(!obj[stuId]) return;
+    const date = key.slice(-10);
+    const clsId = key.slice(0, key.length-11);
+    const k = date+'_'+clsId;
+    if(seen.has(k)) return;
+    seen.add(k);
+    recs.push({date, clsId});
+  });
+  recs.sort((a,b)=>a.date.localeCompare(b.date));
+  return recs;
+}
+function lessonHadHomeworkSubmission(stuId, clsId, date){
+  const cls = classById(clsId);
+  const range = cls ? homeworkDateRangeDates(cls.dayGroup, date) : [];
+  if(!range.length) return !!db.submissions[stuId+'_'+date];
+  return range.some(d => !!db.submissions[stuId+'_'+d]);
+}
+async function checkAutoWarnings(){
+  if(!db.students || !db.students.length) return;
+  for(const s of db.students){
+    if(s.status==='withdrawn') continue;
+    const lessons = studentLessonRecords(s.id);
+    if(lessons.length < 3) continue;
+    const last3 = lessons.slice(-3);
+    const allMissing = last3.every(l => !lessonHadHomeworkSubmission(s.id, l.clsId, l.date));
+    if(!allMissing) continue;
+    const streakEnd = last3[last3.length-1].date;
+    if(s.autoWarnLastDate === streakEnd) continue;
+    const newWarnings = [...(s.warnings||[]), {id:uid('warn'), date:streakEnd, reason:'숙제 3회 연속 미제출 (자동 기록)'}];
+    await fsUpdate('students', s.id, {warnings:newWarnings, autoWarnLastDate:streakEnd});
+  }
+}
+function enterApp(){
+  appEntered = true;
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('appShell').style.display='block';
+  currentView = session.mode==='director' ? 'dashboard' : 'studentHome';
+  buildNav();
+  render();
+  if(session.mode==='director') checkAutoWarnings();
+}
+
+/* ---------------- NAV ---------------- */
+const DIRECTOR_NAV = [
+  {id:'dashboard', label:'대시보드', icon:'🏠'},
+  {id:'classes', label:'반 관리', icon:'📚'},
+  {id:'curriculum', label:'커리큘럼 설정', icon:'🧭'},
+  {id:'videolib', label:'영상 보관함', icon:'🎬'},
+  {id:'students', label:'학생별 관리', icon:'🧑‍🎓'},
+  {id:'hwreview', label:'숙제 확인', icon:'📸'},
+  {id:'qna', label:'질문 게시판', icon:'💬'},
+  {id:'feedback', label:'학부모 피드백', icon:'📨'},
+  {id:'backup', label:'데이터 백업', icon:'🗂️'},
+];
+function buildNav(){
+  const el = document.getElementById('navItems');
+  if(!session) return;
+  if(session.mode==='director'){
+    el.innerHTML = DIRECTOR_NAV.map(n=>`<div class="nav-item ${currentView===n.id?'active':''}" onclick="goto('${n.id}')">${n.icon} ${n.label}</div>`).join('');
+  }else{
+    el.innerHTML = `<div class="nav-item active">🧑‍🎓 내 학습 페이지</div>`;
+  }
+}
+function goto(v){ currentView=v; currentSubState={}; buildNav(); render(); toggleSidebar(false); }
+function toggleSidebar(open){ document.getElementById('sidebar').classList.toggle('open', open); }
+
+/* ---------------- MODAL / CONFIRM ---------------- */
+function openConfirm(title, body, onConfirm){
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalBody').textContent = body;
+  const btn = document.getElementById('modalConfirmBtn');
+  btn.onclick = async ()=>{ closeModal(); await onConfirm(); };
+  document.getElementById('modalBg').style.display='flex';
+}
+function closeModal(){ document.getElementById('modalBg').style.display='none'; }
+
+/* ---------------- LIGHTBOX (여러 장 넘겨보기 지원) ---------------- */
+let lbArray = [];
+let lbIndex = 0;
+function getPhotoArray(kind, a, b){
+  if(kind==='sub'){ const s = db.submissions[a]; return s ? (s[b]||[]) : []; }
+  if(kind==='draft'){ return currentSubState._draftSub ? (currentSubState._draftSub[a]||[]) : []; }
+  if(kind==='newq'){ return currentSubState._newQDraftPhotos || []; }
+  if(kind==='editq'){ return currentSubState._editQDraft ? currentSubState._editQDraft.photos : []; }
+  if(kind==='q'){ const q = db.questions.find(x=>x.id===a); return q ? (q[b]||[]) : []; }
+  return [];
+}
+function openLightboxSet(kind, a, b, idx){
+  lbArray = getPhotoArray(kind, a, b);
+  if(!lbArray.length) return;
+  lbIndex = idx;
+  showLightboxImage();
+  document.getElementById('lightbox').style.display='flex';
+}
+function openLightbox(src){ lbArray=[src]; lbIndex=0; showLightboxImage(); document.getElementById('lightbox').style.display='flex'; }
+function showLightboxImage(){
+  if(!lbArray.length) return;
+  document.getElementById('lightboxImg').src = lbArray[lbIndex];
+  document.getElementById('lbCounter').textContent = lbArray.length>1 ? `${lbIndex+1} / ${lbArray.length}` : '';
+  const showNav = lbArray.length>1;
+  document.getElementById('lbPrev').style.display = showNav ? 'flex':'none';
+  document.getElementById('lbNext').style.display = showNav ? 'flex':'none';
+}
+function lbGoPrev(e){ if(e) e.stopPropagation(); if(lbArray.length<2) return; lbIndex=(lbIndex-1+lbArray.length)%lbArray.length; showLightboxImage(); }
+function lbGoNext(e){ if(e) e.stopPropagation(); if(lbArray.length<2) return; lbIndex=(lbIndex+1)%lbArray.length; showLightboxImage(); }
+function downloadLightboxImage(e){
+  if(e) e.stopPropagation();
+  if(!lbArray.length) return;
+  const a = document.createElement('a');
+  a.href = lbArray[lbIndex];
+  a.download = `mnm_${Date.now()}_${lbIndex+1}.jpg`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+async function downloadAllPhotos(photos, baseName, btn){
+  if(!photos || !photos.length){ return; }
+  if(photos.length===1){
+    const a = document.createElement('a'); a.href=photos[0]; a.download=`${baseName}.jpg`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    return;
+  }
+  const originalText = btn ? btn.textContent : null;
+  if(btn){ btn.textContent='압축 중...'; btn.disabled=true; }
+  try{
+    const zip = new JSZip();
+    photos.forEach((p,i)=>{
+      const base64 = p.split(',')[1] || '';
+      zip.file(`${baseName}_${i+1}.jpg`, base64, {base64:true});
+    });
+    const blob = await zip.generateAsync({type:'blob'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download=`${baseName}.zip`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 4000);
+  }catch(e){ alert('압축 파일을 만드는 중 문제가 생겼어요. 사진을 하나씩 저장해주세요.'); }
+  if(btn){ btn.textContent=originalText; btn.disabled=false; }
+}
+function closeLightbox(e){ if(e.target.id==='lightbox' || e.target.classList.contains('close')){ document.getElementById('lightbox').style.display='none'; } }
+let lbTouchStartX = null;
+document.addEventListener('touchstart', e=>{
+  if(document.getElementById('lightbox').style.display!=='flex') return;
+  lbTouchStartX = e.touches[0].clientX;
+}, {passive:true});
+document.addEventListener('touchend', e=>{
+  if(lbTouchStartX===null) return;
+  if(document.getElementById('lightbox').style.display!=='flex'){ lbTouchStartX=null; return; }
+  const dx = e.changedTouches[0].clientX - lbTouchStartX;
+  if(Math.abs(dx) > 40){ dx>0 ? lbGoPrev() : lbGoNext(); }
+  lbTouchStartX = null;
+}, {passive:true});
+
+/* ---------------- IMAGE HELPERS (사진은 Firestore 문서 안에 압축 저장 — 문서당 1MB 제한 고려해 강하게 압축) ---------------- */
+function fileToCompressedDataURL(file, maxW=480, quality=0.4){
+  return new Promise((resolve,reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onload = ()=>{
+        const scale = Math.min(1, maxW/img.width);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width*scale; canvas.height = img.height*scale;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img,0,0,canvas.width,canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+async function handleMultiPhotoInput(inputEl, targetArrPush, maxW=480, quality=0.4){
+  const files = Array.from(inputEl.files || []);
+  for(const f of files){
+    try{ const durl = await fileToCompressedDataURL(f, maxW, quality); targetArrPush(durl); }catch(e){}
+  }
+}
+
+/* ---------------- DOMAIN LOGIC ---------------- */
+function studentById(id){ return db.students.find(s=>s.id===id); }
+function classById(id){ return db.classes.find(c=>c.id===id); }
+function courseById(id){ return db.courses.find(c=>c.id===id); }
+
+function nextStudentCode(grade){
+  const levelMap = {'초':'0','중':'1','고':'2'};
+  const level = levelMap[grade[0]] || '0';
+  const gradeNum = grade[1];
+  const seqPrefix = level+gradeNum;
+  const existing = db.students.filter(s=>s.code && s.code.startsWith(seqPrefix)).map(s=>parseInt(s.code.slice(2),10));
+  const next = (existing.length? Math.max(...existing):0)+1;
+  return seqPrefix + String(next).padStart(2,'0');
+}
+
+function studentDailyScores(studentId){
+  const rows = [];
+  Object.entries(db.classRecords).forEach(([key,recObj])=>{
+    const date = key.split('_').slice(1).join('_');
+    const rec = recObj[studentId];
+    if(rec && rec.dailyTestScore !== undefined && rec.dailyTestScore !== '' && rec.dailyTestScore !== null){
+      rows.push({date, score:Number(rec.dailyTestScore)});
+    }
+  });
+  rows.sort((a,b)=> a.date.localeCompare(b.date));
+  return rows;
+}
+function studentStatus(studentId){
+  const scores = studentDailyScores(studentId);
+  const last3 = scores.slice(-3);
+  let dailyStatus = 'PASS';
+  if(last3.length===3 && last3.every(r=>r.score<60)) dailyStatus = 'STOP';
+  else if(last3.length===3 && last3.every(r=>r.score<80)) dailyStatus = 'SLOW';
+
+  const latestKmm = db.kmm.filter(k=>k.studentId===studentId).sort((a,b)=>b.date.localeCompare(a.date))[0];
+  let kmmStatus = 'PASS';
+  if(latestKmm){
+    if(latestKmm.score < 60) kmmStatus = 'STOP';
+    else if(latestKmm.score < 80) kmmStatus = 'SLOW';
+  }
+  const rank = {PASS:0, SLOW:1, STOP:2};
+  return rank[dailyStatus] >= rank[kmmStatus] ? dailyStatus : kmmStatus;
+}
+function statusBadge(status){
+  if(status==='STOP') return `<span class="badge red">STOP</span>`;
+  if(status==='SLOW') return `<span class="badge yellow">SLOW</span>`;
+  return `<span class="badge green">순항중</span>`;
+}
+function warningCountBadge(count){
+  if(count>=3) return `<span class="badge red">OUT 대상 (${count}회)</span>`;
+  if(count===2) return `<span class="badge red">경고 2회 (다음이 마지막)</span>`;
+  if(count===1) return `<span class="badge yellow">경고 1회</span>`;
+  return `<span class="badge gray">경고 없음</span>`;
+}
+function trafficForStudent(studentId){
+  const status = studentStatus(studentId);
+  if(status==='STOP') return 'red';
+  if(status==='SLOW') return 'yellow';
+  const scores = studentDailyScores(studentId);
+  const avg = scores.length? scores.reduce((a,b)=>a+b.score,0)/scores.length : 100;
+  return avg>=85 ? 'green' : (avg>=70? 'yellow':'green');
+}
+const FUTURE_TEXT_STOP = '잠시 멈추고 기본 개념부터 다시 짚어나가겠습니다.';
+const FUTURE_TEXT_SLOW = '속도를 늦춰 더 정확하게 학습시켜나갈 예정입니다.';
+const FUTURE_TEXT_PASS = '충분히 잘 하고 있으니 좀 더 심층적인 학습이 될 수 있도록 다양한 문제 노출을 유도하겠습니다.';
+const FUTURE_TEXT_KNOWN = [FUTURE_TEXT_STOP, FUTURE_TEXT_SLOW, FUTURE_TEXT_PASS];
+function defaultTextForTraffic(traffic){
+  if(traffic==='red') return FUTURE_TEXT_STOP;
+  if(traffic==='yellow') return FUTURE_TEXT_SLOW;
+  return FUTURE_TEXT_PASS;
+}
+function defaultFutureDirectionText(studentId){
+  const stu = studentById(studentId);
+  if(stu && stu.goal && stu.goal.trim()) return stu.goal.trim();
+  const status = studentStatus(studentId);
+  if(status==='STOP') return FUTURE_TEXT_STOP;
+  if(status==='SLOW') return FUTURE_TEXT_SLOW;
+  return FUTURE_TEXT_PASS;
+}
+
+const DAY_KEYS = ['sun','mon','tue','wed','thu','fri','sat'];
+const DAY_LABEL = {sun:'일',mon:'월',tue:'화',wed:'수',thu:'목',fri:'금',sat:'토'};
+function homeworkRangeForClassDate(dayGroup, dateISO){
+  const dow = new Date(dateISO+'T00:00:00').getDay();
+  const lessonDays = dayGroup==='mon-wed' ? [1,3] : [2,4];
+  if(!lessonDays.includes(dow)) return [];
+  const idx = lessonDays.indexOf(dow);
+  const prevDow = idx===0 ? lessonDays[lessonDays.length-1] : lessonDays[idx-1];
+  let gap = dow - prevDow; if(gap<=0) gap += 7;
+  const result = [];
+  for(let back = gap; back>=1; back--){
+    const d = new Date(dateISO+'T00:00:00'); d.setDate(d.getDate()-back);
+    result.push(DAY_KEYS[d.getDay()]);
+  }
+  return result;
+}
+function homeworkDateRangeDates(dayGroup, dateISO){
+  const dow = new Date(dateISO+'T00:00:00').getDay();
+  const lessonDays = dayGroup==='mon-wed' ? [1,3] : [2,4];
+  if(!lessonDays.includes(dow)) return [];
+  const idx = lessonDays.indexOf(dow);
+  const prevDow = idx===0 ? lessonDays[lessonDays.length-1] : lessonDays[idx-1];
+  let gap = dow - prevDow; if(gap<=0) gap += 7;
+  const result = [];
+  for(let back = gap; back>=1; back--){
+    const d = new Date(dateISO+'T00:00:00'); d.setDate(d.getDate()-back);
+    result.push(d.toISOString().slice(0,10));
+  }
+  return result; // 실제 날짜(YYYY-MM-DD), 오래된 순
+}
+function weekStartISO(dateISO){
+  const d = new Date(dateISO+'T00:00:00');
+  const dow = d.getDay();
+  const diff = dow===0? -6 : 1-dow;
+  d.setDate(d.getDate()+diff);
+  return d.toISOString().slice(0,10);
+}
+function weekDates(weekStart){
+  const arr=[]; for(let i=0;i<7;i++){ const d=new Date(weekStart+'T00:00:00'); d.setDate(d.getDate()+i); arr.push(d.toISOString().slice(0,10)); } return arr;
+}
+
+/* ---------------- FIRESTORE WRITE HELPERS ---------------- */
+async function fsSet(col, id, data, merge=true){
+  try{ await fsdb.collection(col).doc(id).set(data, {merge}); return true; }
+  catch(e){ alert('저장에 실패했어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.'); return false; }
+}
+async function fsAdd(col, data){
+  try{ const ref = await fsdb.collection(col).add(data); return ref.id; }
+  catch(e){ alert('저장에 실패했어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.'); return null; }
+}
+async function fsDelete(col, id){
+  try{ await fsdb.collection(col).doc(id).delete(); return true; }
+  catch(e){ alert('삭제에 실패했어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.'); return false; }
+}
+async function fsUpdate(col, id, data){
+  try{ await fsdb.collection(col).doc(id).update(data); return true; }
+  catch(e){ try{ await fsdb.collection(col).doc(id).set(data,{merge:true}); return true; }catch(e2){ alert('저장에 실패했어요.'); return false; } }
+}
+
+/* ---------------- RENDER DISPATCH ---------------- */
+function render(){
+  if(!session) { buildNav(); return; }
+  try{ renderInner(); }
+  catch(err){
+    console.error('render error:', err);
+    const main = document.getElementById('mainArea');
+    if(main) main.innerHTML = `
+      <div class="card" style="border-color:var(--red);text-align:center;padding:40px 20px;">
+        <div style="font-size:36px;margin-bottom:10px;">⚠️</div>
+        <h3 style="color:var(--red);margin:0 0 8px;">화면을 불러오는 중 문제가 생겼어요</h3>
+        <p style="font-size:13px;color:#7a7666;margin:0 0 16px;">데이터는 안전하게 저장돼 있어요. 아래 버튼으로 다시 시도해주세요.</p>
+        <button class="btn gold" onclick="render()">다시 시도</button>
+      </div>`;
+  }
+}
+function renderInner(){
+  buildNav();
+  const main = document.getElementById('mainArea');
+  let html = '';
+  if(session.mode==='director'){
+    switch(currentView){
+      case 'dashboard': html+=renderDashboard(); break;
+      case 'classes': html+=renderClasses(); break;
+      case 'curriculum': html+=renderCurriculum(); break;
+      case 'videolib': html+=renderVideoLib(); break;
+      case 'students': html+=renderStudents(); break;
+      case 'hwreview': html+=renderHomeworkReview(); break;
+      case 'qna': html+=renderQnaDirector(); break;
+      case 'feedback': html+=renderFeedback(); break;
+      case 'backup': html+=renderBackup(); break;
+      default: html+=renderDashboard();
+    }
+  }else{
+    html+=renderStudentHome();
+  }
+  main.innerHTML = html;
+}
+
+/* ---------------- DASHBOARD ---------------- */
+function getTodaysFridaySupp(){
+  const thisWeek = weekStartISO(todayISO());
+  const rows = [];
+  Object.entries(db.fridaySupp).forEach(([key, byStu])=>{
+    const weekPart = key.slice(-10);
+    if(weekPart !== thisWeek) return;
+    const clsId = key.slice(0, key.length - 11);
+    const cls = classById(clsId);
+    Object.entries(byStu||{}).forEach(([stuId, supp])=>{
+      if(!supp || !supp.needed) return;
+      const s = studentById(stuId);
+      rows.push({ studentName: s? s.name : '(삭제된 학생)', className: cls? cls.name : '-', time: supp.time||'', note: supp.note||'' });
+    });
+  });
+  rows.sort((a,b)=>{
+    if(a.time && b.time) return a.time.localeCompare(b.time);
+    if(a.time) return -1;
+    if(b.time) return 1;
+    return a.studentName.localeCompare(b.studentName);
+  });
+  return rows;
+}
+function renderDashboard(){
+  const dow = new Date().getDay();
+  const todaysClasses = db.classes.filter(c=> (c.dayGroup==='mon-wed'&&(dow===1||dow===3)) || (c.dayGroup==='tue-thu'&&(dow===2||dow===4)) );
+  let pendingHw=0, pendingQ=0, watchCount=0;
+  Object.values(db.submissions).forEach(s=>{ if(s.status==='대기') pendingHw++; });
+  db.questions.forEach(q=>{ if(q.status==='대기') pendingQ++; });
+  db.students.forEach(s=>{ const st=studentStatus(s.id); if(st!=='PASS') watchCount++; });
+  const outStudents = db.students.filter(s=>(s.warnings||[]).length>=3);
+  const pwWarn = db.settings.isDefaultPassword;
+  const fridayRows = dow===5 ? getTodaysFridaySupp() : [];
+
+  return `
+  <h1 class="page-title">대시보드</h1>
+  <p class="page-sub">${new Date().toLocaleDateString('ko-KR',{year:'numeric',month:'long',day:'numeric',weekday:'long'})} · 오늘은 ${todaysClasses.length? todaysClasses.map(c=>c.name).join(', ')+' 수업일이에요.' : '등록된 수업이 없는 날이에요.'}</p>
+  <div class="grid-stats">
+    <div class="stat-card"><div class="num">${todaysClasses.length}</div><div class="lbl">오늘 수업 반</div></div>
+    <div class="stat-card" style="cursor:pointer;" onclick="goto('hwreview')"><div class="num">${pendingHw}</div><div class="lbl">숙제 인증 확인 대기</div></div>
+    <div class="stat-card"><div class="num">${pendingQ}</div><div class="lbl">답변 대기 질문</div></div>
+    <div class="stat-card"><div class="num">${watchCount}</div><div class="lbl">SLOW·STOP 관찰 필요</div></div>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0;">오늘 수업 반</h3>
+    ${todaysClasses.length ? todaysClasses.map(c=>`<div class="row between" style="padding:8px 0;border-bottom:1px solid var(--line);"><span>${c.name} <span style="color:#9c9880;font-size:12px;">(${(c.studentIds||[]).length}명)</span></span><button class="btn sm outline" onclick="goto('classes');openClass('${c.id}')">바로 열기</button></div>`).join('') : `<div class="empty" style="padding:20px;">오늘 수업이 없어요.</div>`}
+  </div>
+  ${dow===5 ? `<div class="card">
+    <h3 style="margin-top:0;">🕓 오늘 금요일 보강 (시간순)</h3>
+    ${fridayRows.length ? `<table><tr><th>시간</th><th>학생</th><th>반</th><th>메모</th></tr>
+      ${fridayRows.map(r=>`<tr><td><b>${r.time||'시간 미정'}</b></td><td>${r.studentName}</td><td>${r.className}</td><td style="font-size:12px;color:#6b6858;">${r.note||'-'}</td></tr>`).join('')}
+      </table>` : `<div class="empty" style="padding:20px;">오늘 보강이 필요한 학생이 없어요.</div>`}
+  </div>` : ''}
+  <div class="card">
+    <h3 style="margin-top:0;">확인이 필요해요</h3>
+    <div style="font-size:13px;line-height:2;">
+      <div>📸 숙제 인증 미확인 <b>${pendingHw}건</b></div>
+      <div>💬 답변 대기 질문 <b>${pendingQ}건</b></div>
+      <div>📨 이번 주 발송한 피드백 <b>${db.feedbacks.filter(f=>weekStartISO(f.date)===weekStartISO(todayISO())).length}건</b></div>
+    </div>
+  </div>
+  ${outStudents.length ? `<div class="card" style="border-color:var(--red);">
+    <h3 style="margin-top:0;color:var(--red);">🚨 OUT 대상 학생 (경고 3회 이상)</h3>
+    <div style="font-size:13px;line-height:2;">
+      ${outStudents.map(s=>`<div class="row between"><span>${s.name} (${s.grade}) · 경고 ${(s.warnings||[]).length}회</span><button class="btn sm outline" onclick="goto('students');currentSubState.studentDetail='${s.id}';render();">확인하기</button></div>`).join('')}
+    </div>
+  </div>` : ''}
+  ${pwWarn ? `<div class="card" style="border-color:var(--red);">
+    <h3 style="margin-top:0;color:var(--red);">⚠️ 기본 비밀번호를 계속 사용하고 있어요</h3>
+    <p style="font-size:13px;color:#7a7666;">보안을 위해 비밀번호를 변경해주세요.</p>
+    <div class="row">
+      <input type="password" id="newPw1" placeholder="새 비밀번호">
+      <input type="password" id="newPw2" placeholder="새 비밀번호 확인">
+      <button class="btn gold" onclick="changePassword()">변경하기</button>
+    </div>
+  </div>` : ''}
+  `;
+}
+async function changePassword(){
+  const p1=document.getElementById('newPw1').value, p2=document.getElementById('newPw2').value;
+  if(!p1 || p1.length<4){ alert('4자 이상의 비밀번호를 입력해주세요.'); return; }
+  if(p1!==p2){ alert('두 비밀번호가 일치하지 않아요.'); return; }
+  await fsSet('meta','settings',{adminPassword:p1, isDefaultPassword:false});
+}
+
+/* ---------------- SEED LOADER ---------------- */
+async function loadSeedData(){
+  const batchArr = [];
+  let batch = fsdb.batch();
+  let opCount = 0;
+  function pushOp(fn){ fn(batch); opCount++; if(opCount>=400){ batchArr.push(batch); batch=fsdb.batch(); opCount=0; } }
+
+  const courseIdByName = {};
+  SEED_DATA.courses.forEach(c=>{
+    const existing = db.courses.find(x=>x.name===c.name);
+    if(existing){ courseIdByName[c.name]=existing.id; return; }
+    const newId = uid('course');
+    const steps = c.steps.map(s=>({id:uid('step'), name:s}));
+    pushOp(b=> b.set(fsdb.collection('courses').doc(newId), {name:c.name, steps}));
+    courseIdByName[c.name]=newId;
+  });
+
+  SEED_DATA.classes.forEach(c=>{
+    let cls = db.classes.find(x=>x.name===c.name);
+    let clsId = cls ? cls.id : uid('cls');
+    const studentIds = cls ? [...(cls.studentIds||[])] : [];
+    if(!cls){ pushOp(b=> b.set(fsdb.collection('classes').doc(clsId), {name:c.name, dayGroup:c.dayGroup, studentIds:[]})); }
+    c.students.forEach(st=>{
+      let existing = db.students.find(x=>x.name===st.name && x.grade===st.grade);
+      let stuId = existing ? existing.id : uid('stu');
+      if(!existing){
+        const code = nextStudentCode(st.grade);
+        // reflect locally so subsequent nextStudentCode calls see it
+        db.students.push({id:stuId, code, name:st.name, grade:st.grade, classId:clsId, memo:'', goal:'', diligence:80, warnings:[], status:'active'});
+        pushOp(b=> b.set(fsdb.collection('students').doc(stuId), {code, name:st.name, grade:st.grade, classId:clsId, memo:'', goal:'', diligence:80, warnings:[], status:'active'}));
+      }else{
+        pushOp(b=> b.update(fsdb.collection('students').doc(stuId), {classId:clsId}));
+      }
+      if(!studentIds.includes(stuId)) studentIds.push(stuId);
+    });
+    pushOp(b=> b.set(fsdb.collection('classes').doc(clsId), {studentIds}, {merge:true}));
+  });
+
+  batchArr.push(batch);
+  try{
+    for(const b of batchArr){ await b.commit(); }
+  }catch(e){ alert('명단을 불러오는 중 문제가 생겼어요. 다시 시도해주세요.'); }
+}
+function promptLoadSeed(){
+  openConfirm('처음 세팅했던 명단·커리큘럼을 불러올까요?',
+    '반 8개, 학생 30명, 커리큘럼 20개 과정(341개 STEP)이 한 번에 등록돼요. 학생 코드는 학년 규칙에 따라 자동으로 발급돼요.',
+    async ()=>{ await loadSeedData(); }
+  );
+}
+
+/* ---------------- CLASSES ---------------- */
+function renderClasses(){
+  const selId = currentSubState.classId || (db.classes[0] && db.classes[0].id);
+  currentSubState.classId = selId;
+  const cls = classById(selId);
+  return `
+  <h1 class="page-title">반 관리</h1>
+  <p class="page-sub">반을 등록하고, 학생을 배정하고, 날짜별 수업 기록을 남겨보세요.</p>
+  <div class="card">
+    <div class="row between">
+      <div class="row">${db.classes.map(c=>`<button class="btn sm ${c.id===selId?'':'outline'}" onclick="openClass('${c.id}')">${c.name}</button>`).join('') || '<span style="color:#9c9880;font-size:13px;">등록된 반이 없어요.</span>'}</div>
+      <button class="btn sm gold" onclick="promptNewClass()">+ 반 등록</button>
+    </div>
+  </div>
+  ${db.classes.length===0 ? `<div class="card" style="border-color:var(--gold);">
+    <div class="row between">
+      <div>
+        <h3 style="margin:0 0 4px;">처음 세팅했던 명단·커리큘럼 불러오기</h3>
+        <p style="margin:0;font-size:12.5px;color:#7a7666;">반 8개 · 학생 30명 · 커리큘럼 20개 과정(341개 STEP)을 한 번에 불러와요.</p>
+      </div>
+      <button class="btn gold sm" onclick="promptLoadSeed()">불러오기</button>
+    </div>
+  </div>` : ''}
+  ${cls ? renderClassDetail(cls) : `<div class="empty"><div class="big">📚</div>반을 먼저 등록해주세요.</div>`}
+  `;
+}
+function openClass(id){ currentSubState.classId = id; currentSubState.classDate = currentSubState.classDate || todayISO(); render(); }
+async function promptNewClass(){
+  const name = prompt('반 이름을 입력해주세요 (예: 월수 A반)');
+  if(!name) return;
+  const dayGroup = confirm('월수반이면 확인, 화목반이면 취소를 눌러주세요.') ? 'mon-wed' : 'tue-thu';
+  const newId = uid('cls');
+  await fsSet('classes', newId, {name, dayGroup, studentIds:[]});
+  currentSubState.classId = newId;
+}
+function deleteClass(id){
+  openConfirm('반을 삭제할까요?', '이 반과 관련된 학생 배정 정보가 함께 사라져요. 수업 기록은 남아있지만 반 목록에서는 보이지 않게 돼요.', async ()=>{
+    await fsDelete('classes', id);
+    currentSubState.classId = db.classes.find(c=>c.id!==id)?.id;
+  });
+}
+
+function renderClassDetail(cls){
+  const date = currentSubState.classDate || todayISO();
+  const dayGroupLabel = cls.dayGroup==='mon-wed' ? '월수반' : '화목반';
+  const students = (cls.studentIds||[]).map(studentById).filter(Boolean);
+  const key = cls.id+'_'+date;
+  const rec = db.classRecords[key] || {};
+  const unassigned = db.students.filter(s=>!(cls.studentIds||[]).includes(s.id) && s.status!=='withdrawn');
+
+  const hwDays = homeworkRangeForClassDate(cls.dayGroup, date);
+  function studentHwText(stuId){
+    const wk = weekStartISO(date);
+    const plan = db.weeklyPlans[cls.id+'_'+wk];
+    if(!plan || !hwDays.length) return '';
+    const per = plan[stuId] || {};
+    return hwDays.map(d=> per[d] ? `[${DAY_LABEL[d]}] ${per[d]}` : '').filter(Boolean).join('  ');
+  }
+  const bookNames = new Set();
+  Object.values(db.classRecords).forEach(obj=>{ Object.values(obj).forEach(r=>{ if(r.practiceBook) bookNames.add(r.practiceBook); }); });
+
+  return `
+  <div class="card">
+    <div class="row between">
+      <div><h3 style="margin:0;">${cls.name} <span class="badge gray">${dayGroupLabel}</span></h3></div>
+      <button class="btn sm danger" onclick="deleteClass('${cls.id}')">반 삭제</button>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <label style="font-size:12px;color:#8a8674;">수업 날짜</label>
+      <input type="date" value="${date}" onchange="currentSubState.classDate=this.value;render();">
+      <span style="flex:1;"></span>
+      <select id="addStuSel"><option value="">학생 배정...</option>${unassigned.map(s=>`<option value="${s.id}">${s.name} (${s.grade})</option>`).join('')}</select>
+      <button class="btn sm outline" onclick="assignStudent('${cls.id}')">배정</button>
+      <button class="btn sm outline" onclick="promptNewStudentToClass('${cls.id}')">+ 신규 학생 등록</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">일괄 적용 (반 전체)</h3>
+    <div class="row">
+      <select id="bulkAtt"><option value="">출석</option><option>출석</option><option>지각</option><option>결석</option></select>
+      <select id="bulkCourseSel" onchange="onBulkCourseChange()"><option value="">학년학기</option>${db.courses.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
+      <select id="bulkStep"><option value="">STEP (학년학기 먼저 선택)</option></select>
+      <select id="bulkHwComp"><option value="">숙제완성도</option><option>상</option><option>중</option><option>하</option></select>
+      <select id="bulkStudyComp"><option value="">학습완성도</option><option>상</option><option>중</option><option>하</option></select>
+      <button class="btn sm gold" onclick="applyBulk('${cls.id}','${date}')">전체 적용</button>
+    </div>
+  </div>
+
+  <div class="card" style="overflow-x:auto;">
+    <h3 style="margin-top:0;">수업 기록 · ${fmtDate(date)}</h3>
+    ${students.length? `<table>
+      <tr><th>학생</th><th>출석</th><th>일일테스트</th><th>KMM</th><th>개념학습(STEP)</th><th>문제 적용</th><th>동영상 과제</th><th>숙제 내용</th><th>숙제완성도</th><th>학습완성도</th><th>특이사항</th><th></th></tr>
+      ${students.map(s=>renderClassRow(cls,s,date,rec,studentHwText(s.id),bookNames)).join('')}
+    </table>` : `<div class="empty">이 반에 배정된 학생이 없어요.</div>`}
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">📋 오늘의 일일 리포트</h3>
+    <p style="font-size:12px;color:#8a8674;margin:0 0 10px;">위 수업 기록 표에 입력하신 내용을 바탕으로, 바로 카톡에 보낼 수 있는 문구가 자동으로 만들어져요.</p>
+    ${students.length ? students.map(s=>{
+      const r = rec[s.id] || {};
+      const text = buildDailyReportText(s, date, r, cls.dayGroup);
+      return `<div style="padding:10px 0;border-bottom:1px solid var(--line);">
+        <div class="row between"><b>${s.name}</b><button class="btn sm outline" onclick="copyText(this)" data-text="${encodeURIComponent(text)}">복사하기</button></div>
+        <pre style="white-space:pre-wrap;font-family:inherit;font-size:12px;line-height:1.6;margin:6px 0 0;color:#4a4636;">${text}</pre>
+      </div>`;
+    }).join('') : `<div class="empty">이 반에 배정된 학생이 없어요.</div>`}
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">요일별 숙제 계획표</h3>
+    ${renderWeeklyPlan(cls, date)}
+  </div>
+
+  <div class="card" style="overflow-x:auto;">
+    <h3 style="margin-top:0;">금요일 보강 체크</h3>
+    ${renderFridaySupp(cls, date)}
+  </div>
+  `;
+}
+function buildDailyReportText(s, date, r, dayGroup){
+  const trafficEmoji = {green:'🟢',yellow:'🟡',red:'🔴'}[trafficForStudent(s.id)];
+  const stepTxt = r.stepId ? stepShortLabel(r.stepId) : '-';
+  const extraStepsTxt = (r.extraSteps&&r.extraSteps.length) ? ' + '+r.extraSteps.map(id=>stepShortLabel(id)).filter(Boolean).join(', ') : '';
+  const hwLevel = r.homeworkCompletionLevel || suggestedHomeworkLevel(s.id, dayGroup, date);
+  const hwTxt = hwLevel ? `${hwLevel} — ${homeworkLevelPhrase(hwLevel)}` : '-';
+  const todayKmm = db.kmm.find(k=>k.studentId===s.id && k.date===date);
+  const hasScore = r.dailyTestScore!==undefined && r.dailyTestScore!=='' && r.dailyTestScore!==null;
+  let examLine;
+  let kmmMakeupTxt = '';
+  if(todayKmm){
+    const awardTxt = kmmAwardText(todayKmm.score);
+    examLine = `· KMM 결과: ${todayKmm.score}점 (${todayKmm.score>=80?'PASS':'FAIL'})${awardTxt? ' — '+awardTxt:''}`;
+    if(todayKmm.score < 70){
+      kmmMakeupTxt = `\n📌 KMM 기본 점수(70점) 미달로, 수업 전후 30분 보강이 진행될 예정입니다.`;
+    }
+  }else if(hasScore){
+    examLine = `· 일일테스트: ${r.dailyTestScore}점 (${Number(r.dailyTestScore)>=80?'PASS':'FAIL'})`;
+  }else{
+    examLine = `· 일일테스트: 오늘은 시험이 없었어요`;
+  }
+  const autoWarnToday = (s.warnings||[]).find(w => w.date===date && w.reason && w.reason.includes('자동 기록'));
+  let warnTxt = '';
+  if(autoWarnToday){
+    const count = s.warnings.length;
+    if(count>=3){
+      warnTxt = `\n⚠️ 숙제가 3회 연속 제출되지 않아 세 번째 경고를 받아 퇴원 조치 대상이 되었습니다.`;
+    }else if(count===2){
+      warnTxt = `\n⚠️ 숙제가 3회 연속 제출되지 않아 경고 2회를 받게 되었습니다. 다음 번 한 번 더 경고를 받으면 퇴원 조치됩니다.`;
+    }else{
+      warnTxt = `\n⚠️ 숙제가 3회 연속 제출되지 않아 경고 1회를 받게 되었습니다.`;
+    }
+  }
+  return `[M&m 수학훈련소] ${s.name} 학생 오늘의 학습 리포트 · ${fmtDate(date)}
+${trafficEmoji} 출석: ${r.attendance||'-'}
+${examLine}${kmmMakeupTxt}
+· 오늘 개념학습: ${stepTxt}${extraStepsTxt}
+${r.practiceBook? `· 문제 적용: ${r.practiceBook}${r.practiceRange? ' '+r.practiceRange : ''}${(r.extraPractice&&r.extraPractice.length)? ', '+r.extraPractice.map(e=>`${e.book}${e.range?' '+e.range:''}`).join(', ') : ''}` : ((r.extraPractice&&r.extraPractice.length)? `· 문제 적용: ${r.extraPractice.map(e=>`${e.book}${e.range?' '+e.range:''}`).join(', ')}` : '')}
+· 숙제완성도: ${hwTxt}
+${r.note? `· 특이사항: ${r.note}` : ''}${warnTxt}`;
+}
+function allStepOptions(){
+  let opts=''; db.courses.forEach(c=>{ c.steps.forEach(st=>{ opts+=`<option value="${st.id}">[${c.name}] ${st.name}</option>`; }); }); return opts;
+}
+function stepLabel(stepId){
+  for(const c of db.courses){ const st=(c.steps||[]).find(x=>x.id===stepId); if(st) return `[${c.name}] ${st.name}`; }
+  return '';
+}
+function stepShortLabel(stepId){
+  for(const c of db.courses){
+    const st = (c.steps||[]).find(x=>x.id===stepId);
+    if(st){
+      const parts = st.name.split('>');
+      let tail = parts.length>1 ? parts[parts.length-1].trim() : st.name.trim();
+      tail = tail.replace(/^STEP\s*\d+\s*/i, '').trim();
+      return `[${c.name}] ${tail || st.name}`;
+    }
+  }
+  return '';
+}
+function courseIdForStep(stepId){
+  if(!stepId) return null;
+  for(const c of db.courses){ if((c.steps||[]).some(st=>st.id===stepId)) return c.id; }
+  return null;
+}
+function lastRecordedStep(stuId, beforeDate){
+  let best = null;
+  Object.entries(db.classRecords).forEach(([key,obj])=>{
+    const rec = obj[stuId];
+    if(!rec || !rec.stepId) return;
+    const date = key.slice(-10);
+    if(date >= beforeDate) return;
+    if(!best || date > best.date) best = {date, stepId: rec.stepId};
+  });
+  return best;
+}
+function renderStepCascadeSelect(clsId, date, stuId, currentStepId){
+  const rowKey = `${clsId}_${date}_${stuId}`;
+  currentSubState._stepCourseSel = currentSubState._stepCourseSel || {};
+  let selCourseId = currentSubState._stepCourseSel[rowKey];
+  if(selCourseId===undefined){
+    selCourseId = courseIdForStep(currentStepId) || '';
+    if(!selCourseId){
+      const last = lastRecordedStep(stuId, date);
+      if(last) selCourseId = courseIdForStep(last.stepId) || '';
+    }
+  }
+  const course = courseById(selCourseId);
+  const steps = course ? (course.steps||[]) : [];
+  return `
+  <select style="max-width:150px;font-size:11px;" onchange="currentSubState._stepCourseSel['${rowKey}']=this.value;render();">
+    <option value="">학년학기 선택</option>
+    ${db.courses.map(c=>`<option value="${c.id}" ${c.id===selCourseId?'selected':''}>${c.name}</option>`).join('')}
+  </select>
+  <select style="max-width:150px;font-size:11px;margin-top:4px;" onchange="updateClassRec('${clsId}','${date}','${stuId}','stepId',this.value)" ${!course?'disabled':''}>
+    <option value="">${course?'STEP 선택':'학년학기 먼저 선택'}</option>
+    ${steps.map(st=>`<option value="${st.id}" ${currentStepId===st.id?'selected':''}>${st.name}</option>`).join('')}
+  </select>`;
+}
+function renderExtraSteps(clsId, date, stuId, extraSteps){
+  const rowKey = `${clsId}_${date}_${stuId}`;
+  currentSubState._addingExtraStep = currentSubState._addingExtraStep || {};
+  const isAdding = !!currentSubState._addingExtraStep[rowKey];
+  const chips = (extraSteps||[]).map(id=>`<div class="step-chip" style="margin:2px 4px 2px 0;">${stepLabel(id)||'(삭제된 STEP)'} <span style="cursor:pointer;margin-left:4px;" onclick="removeExtraStep('${clsId}','${date}','${stuId}','${id}')">✕</span></div>`).join('');
+  return `<div style="margin-top:6px;">
+    ${chips}
+    ${isAdding ? renderExtraStepPicker(clsId,date,stuId) : `<button class="btn sm outline" style="font-size:10px;padding:3px 8px;" onclick="toggleAddExtraStep('${clsId}','${date}','${stuId}')">+ 진도 추가</button>`}
+  </div>`;
+}
+function renderExtraStepPicker(clsId,date,stuId){
+  const rowKey = 'extra_'+clsId+'_'+date+'_'+stuId;
+  currentSubState._stepCourseSel = currentSubState._stepCourseSel || {};
+  const selCourseId = currentSubState._stepCourseSel[rowKey] || '';
+  const course = courseById(selCourseId);
+  const steps = course ? (course.steps||[]) : [];
+  return `<div style="margin-top:4px;padding:6px;background:#f7f5ee;border-radius:8px;">
+    <select style="max-width:140px;font-size:11px;" onchange="currentSubState._stepCourseSel['${rowKey}']=this.value;render();">
+      <option value="">학년학기</option>
+      ${db.courses.map(c=>`<option value="${c.id}" ${c.id===selCourseId?'selected':''}>${c.name}</option>`).join('')}
+    </select>
+    <select style="max-width:140px;font-size:11px;margin-top:4px;" onchange="addExtraStepValue('${clsId}','${date}','${stuId}',this.value)" ${!course?'disabled':''}>
+      <option value="">${course?'STEP 선택':'학년학기 먼저'}</option>
+      ${steps.map(st=>`<option value="${st.id}">${st.name}</option>`).join('')}
+    </select>
+    <button class="btn sm outline" style="margin-top:4px;font-size:10px;padding:3px 8px;" onclick="toggleAddExtraStep('${clsId}','${date}','${stuId}')">취소</button>
+  </div>`;
+}
+function toggleAddExtraStep(clsId,date,stuId){
+  const rowKey = `${clsId}_${date}_${stuId}`;
+  currentSubState._addingExtraStep = currentSubState._addingExtraStep || {};
+  currentSubState._addingExtraStep[rowKey] = !currentSubState._addingExtraStep[rowKey];
+  render();
+}
+async function addExtraStepValue(clsId,date,stuId,stepId){
+  if(!stepId) return;
+  const key = clsId+'_'+date;
+  const cur = (db.classRecords[key]||{})[stuId] || {};
+  const extra = [...(cur.extraSteps||[])];
+  if(!extra.includes(stepId)) extra.push(stepId);
+  await fsSet('classRecords', key, {[stuId]: {extraSteps: extra}});
+  currentSubState._addingExtraStep = currentSubState._addingExtraStep || {};
+  currentSubState._addingExtraStep[`${clsId}_${date}_${stuId}`] = false;
+  render();
+}
+async function removeExtraStep(clsId,date,stuId,stepId){
+  const key = clsId+'_'+date;
+  const cur = (db.classRecords[key]||{})[stuId] || {};
+  const extra = (cur.extraSteps||[]).filter(id=>id!==stepId);
+  await fsSet('classRecords', key, {[stuId]: {extraSteps: extra}});
+}
+function suggestedHomeworkLevel(stuId, dayGroup, date){
+  const hwDateRange = homeworkDateRangeDates(dayGroup, date);
+  const totalRangeDays = hwDateRange.length;
+  if(!totalRangeDays) return '';
+  const submittedCount = hwDateRange.filter(d=>db.submissions[stuId+'_'+d]).length;
+  const ratio = submittedCount/totalRangeDays;
+  return ratio>=0.8?'상':ratio>=0.5?'중':'하';
+}
+const BOOK_PRESETS = {
+  '초': ['유형책','쎈','최상위','에이급'],
+  '중': ['본교재','부교재','최상위','일품','내신대비'],
+  '고': ['디딤돌','라쎈','시너지','올림포스','내신대비']
+};
+function renderBookSelect(clsId, date, stuId, currentBook, bookOptions){
+  const rowKey = `${clsId}_${date}_${stuId}`;
+  currentSubState._bookCustomMode = currentSubState._bookCustomMode || {};
+  const isKnownPreset = bookOptions.includes(currentBook);
+  let customMode = currentSubState._bookCustomMode[rowKey];
+  if(customMode===undefined){ customMode = !!currentBook && !isKnownPreset; }
+  if(customMode){
+    return `<input type="text" placeholder="교재명 직접 입력" style="width:130px;font-size:11px;" value="${currentBook||''}" onchange="updateClassRec('${clsId}','${date}','${stuId}','practiceBook',this.value)">
+    <button class="btn sm outline" style="font-size:10px;padding:2px 6px;margin-top:3px;" onclick="currentSubState._bookCustomMode['${rowKey}']=false;render();">목록에서 선택</button>`;
+  }
+  return `<select style="width:130px;font-size:11px;" onchange="if(this.value==='__custom__'){currentSubState._bookCustomMode['${rowKey}']=true;render();}else{updateClassRec('${clsId}','${date}','${stuId}','practiceBook',this.value);}">
+    <option value="">교재 선택</option>
+    ${bookOptions.map(b=>`<option value="${b}" ${currentBook===b?'selected':''}>${b}</option>`).join('')}
+    <option value="__custom__">✏️ 직접 입력</option>
+  </select>`;
+}
+function renderExtraPractice(clsId, date, stuId, extra, bookOptions){
+  const rowKey = `${clsId}_${date}_${stuId}`;
+  currentSubState._addingExtraPractice = currentSubState._addingExtraPractice || {};
+  const isAdding = !!currentSubState._addingExtraPractice[rowKey];
+  const chips = (extra||[]).map((e,i)=>`<div class="step-chip" style="margin:2px 4px 2px 0;">${e.book}${e.range?' '+e.range:''} <span style="cursor:pointer;margin-left:4px;" onclick="removeExtraPractice('${clsId}','${date}','${stuId}',${i})">✕</span></div>`).join('');
+  return `<div style="margin-top:6px;">
+    ${chips}
+    ${isAdding ? renderExtraPracticePicker(clsId,date,stuId,bookOptions) : `<button class="btn sm outline" style="font-size:10px;padding:3px 8px;" onclick="toggleAddExtraPractice('${clsId}','${date}','${stuId}')">+ 문제 추가</button>`}
+  </div>`;
+}
+function renderExtraPracticePicker(clsId,date,stuId,bookOptions){
+  const rowKey = `${clsId}_${date}_${stuId}`;
+  currentSubState._extraPracticeDraft = currentSubState._extraPracticeDraft || {};
+  const draft = currentSubState._extraPracticeDraft[rowKey] = currentSubState._extraPracticeDraft[rowKey] || {book:'', range:'', custom:false};
+  const bookInput = draft.custom
+    ? `<input type="text" placeholder="교재명 직접 입력" style="width:130px;font-size:11px;" value="${draft.book}" oninput="currentSubState._extraPracticeDraft['${rowKey}'].book=this.value;">
+       <button class="btn sm outline" style="font-size:10px;padding:2px 6px;margin-top:2px;" onclick="currentSubState._extraPracticeDraft['${rowKey}'].custom=false;render();">목록에서 선택</button>`
+    : `<select style="width:130px;font-size:11px;" onchange="if(this.value==='__custom__'){currentSubState._extraPracticeDraft['${rowKey}'].custom=true;render();}else{currentSubState._extraPracticeDraft['${rowKey}'].book=this.value;}">
+        <option value="">교재 선택</option>
+        ${bookOptions.map(b=>`<option value="${b}" ${draft.book===b?'selected':''}>${b}</option>`).join('')}
+        <option value="__custom__">✏️ 직접 입력</option>
+      </select>`;
+  return `<div style="margin-top:4px;padding:6px;background:#f7f5ee;border-radius:8px;">
+    ${bookInput}
+    <input type="text" placeholder="범위 (예: p.24~31)" style="width:130px;font-size:11px;margin-top:4px;" value="${draft.range}" oninput="currentSubState._extraPracticeDraft['${rowKey}'].range=this.value;">
+    <div class="row" style="margin-top:4px;gap:4px;">
+      <button class="btn sm gold" style="font-size:10px;padding:3px 8px;" onclick="confirmAddExtraPractice('${clsId}','${date}','${stuId}')">추가</button>
+      <button class="btn sm outline" style="font-size:10px;padding:3px 8px;" onclick="toggleAddExtraPractice('${clsId}','${date}','${stuId}')">취소</button>
+    </div>
+  </div>`;
+}
+function toggleAddExtraPractice(clsId,date,stuId){
+  const rowKey = `${clsId}_${date}_${stuId}`;
+  currentSubState._addingExtraPractice = currentSubState._addingExtraPractice || {};
+  currentSubState._addingExtraPractice[rowKey] = !currentSubState._addingExtraPractice[rowKey];
+  if(currentSubState._addingExtraPractice[rowKey]){
+    currentSubState._extraPracticeDraft = currentSubState._extraPracticeDraft || {};
+    currentSubState._extraPracticeDraft[rowKey] = {book:'', range:'', custom:false};
+  }
+  render();
+}
+async function confirmAddExtraPractice(clsId,date,stuId){
+  const rowKey = `${clsId}_${date}_${stuId}`;
+  const draft = currentSubState._extraPracticeDraft[rowKey];
+  if(!draft || !draft.book){ alert('교재명을 선택하거나 입력해주세요.'); return; }
+  const key = clsId+'_'+date;
+  const cur = (db.classRecords[key]||{})[stuId] || {};
+  const extra = [...(cur.extraPractice||[]), {book:draft.book, range:draft.range||''}];
+  await fsSet('classRecords', key, {[stuId]: {extraPractice: extra}});
+  currentSubState._addingExtraPractice[rowKey] = false;
+  delete currentSubState._extraPracticeDraft[rowKey];
+  render();
+}
+async function removeExtraPractice(clsId,date,stuId,idx){
+  const key = clsId+'_'+date;
+  const cur = (db.classRecords[key]||{})[stuId] || {};
+  const extra = (cur.extraPractice||[]).filter((_,i)=>i!==idx);
+  await fsSet('classRecords', key, {[stuId]: {extraPractice: extra}});
+}
+function renderClassRow(cls, s, date, rec, hwText, bookNames){
+  const r = rec[s.id] || {attendance:'출석', dailyTestScore:'', stepId:'', videoAssignments:[], homeworkCompletionLevel:'', studyCompletionLevel:'', note:''};
+  const doneCount = (r.videoAssignments||[]).filter(v=>v.done).length;
+  const videoTotal = (r.videoAssignments||[]).length;
+  const hwDateRange = homeworkDateRangeDates(cls.dayGroup, date);
+  const dayChecklist = hwDateRange.map(d=>{
+    const daySub = db.submissions[s.id+'_'+d];
+    const dowKey = DAY_KEYS[new Date(d+'T00:00:00').getDay()];
+    const cls2 = daySub ? (daySub.status==='확인'?'green':'yellow') : 'red';
+    return `<span class="badge ${cls2}" style="margin:2px 3px 0 0;font-size:9px;padding:2px 6px;">${DAY_LABEL[dowKey]} ${daySub?'✓':'✗'}</span>`;
+  }).join('');
+  const submittedCount = hwDateRange.filter(d=>db.submissions[s.id+'_'+d]).length;
+  const totalRangeDays = hwDateRange.length;
+  const hwLevel = r.homeworkCompletionLevel || suggestedHomeworkLevel(s.id, cls.dayGroup, date);
+  const status = studentStatus(s.id);
+  const nameBg = status==='STOP' ? '#fbe6e2' : status==='SLOW' ? '#fdf2df' : '';
+  const warnCount = (s.warnings||[]).length;
+  const gradeLevel = s.grade ? s.grade[0] : '';
+  const bookOptions = [...new Set([...(BOOK_PRESETS[gradeLevel]||[]), ...Array.from(bookNames||[])])];
+  return `<tr>
+    <td style="${nameBg?`background:${nameBg};border-left:3px solid ${status==='STOP'?'var(--red)':'var(--gold)'};`:''}">
+      <b>${s.name}</b>${warnCount? ` <span class="badge red" style="font-size:9px;">경고${warnCount}</span>`:''}
+      <br><span class="studentcode" style="font-size:10px;">${s.code}</span>
+    </td>
+    <td><select onchange="updateClassRec('${cls.id}','${date}','${s.id}','attendance',this.value)">
+      ${['출석','지각','결석'].map(o=>`<option ${r.attendance===o?'selected':''}>${o}</option>`).join('')}</select></td>
+    <td><input type="number" style="width:56px;" value="${r.dailyTestScore}" onchange="updateClassRec('${cls.id}','${date}','${s.id}','dailyTestScore',this.value)"></td>
+    <td><input type="number" style="width:56px;" value="${(db.kmm.find(k=>k.studentId===s.id && k.date===date)||{}).score ?? ''}" placeholder="KMM" onchange="updateKmmScore('${s.id}','${date}',this.value)">${(()=>{ const k=db.kmm.find(k=>k.studentId===s.id && k.date===date); return k? `<div style="font-size:10px;margin-top:2px;">${kmmAwardText(k.score)}</div>` : ''; })()}</td>
+    <td>${(()=>{
+      const last = lastRecordedStep(s.id, date);
+      const hint = last ? `<div style="font-size:10px;color:#8a8674;margin-bottom:4px;">지난 시간(${fmtDate(last.date)}): ${stepShortLabel(last.stepId)}</div>` : '';
+      return hint + renderStepCascadeSelect(cls.id, date, s.id, r.stepId) + renderExtraSteps(cls.id, date, s.id, r.extraSteps);
+    })()}</td>
+    <td>
+      ${renderBookSelect(cls.id, date, s.id, r.practiceBook, bookOptions)}
+      <input type="text" placeholder="범위 (예: p.24~31)" style="width:130px;font-size:11px;margin-top:4px;" value="${r.practiceRange||''}" onchange="updateClassRec('${cls.id}','${date}','${s.id}','practiceRange',this.value)">
+      ${renderExtraPractice(cls.id, date, s.id, r.extraPractice, bookOptions)}
+    </td>
+    <td>
+      <div style="font-size:11px;color:#8a8674;margin-bottom:4px;">${doneCount}/${videoTotal} 완료</div>
+      <div class="row" style="gap:4px;">
+        <select style="max-width:110px;font-size:11px;" id="vidsel_${cls.id}_${date}_${s.id}"><option value="">보관함에서 선택</option>${db.videos.map(v=>`<option value="${v.id}">${v.title}</option>`).join('')}</select>
+        <button class="btn sm outline" onclick="addVideoAssign('${cls.id}','${date}','${s.id}')">+</button>
+      </div>
+      ${(r.videoAssignments||[]).map((v,i)=>`<div style="font-size:11px;margin-top:3px;"><label><input type="checkbox" ${v.done?'checked':''} onchange="toggleVideoDone('${cls.id}','${date}','${s.id}',${i})"> ${v.title}</label></div>`).join('')}
+    </td>
+    <td style="max-width:170px;font-size:11px;color:#6b6858;">
+      ${hwText||'-'}
+      ${totalRangeDays? `<div style="margin-top:6px;">${dayChecklist}</div><div style="font-size:10px;color:#8a8674;margin-top:3px;">${submittedCount}/${totalRangeDays} 제출</div>` : ''}
+    </td>
+    <td><select onchange="updateClassRec('${cls.id}','${date}','${s.id}','homeworkCompletionLevel',this.value)">
+      <option value="">-</option>${['상','중','하'].map(o=>`<option ${hwLevel===o?'selected':''}>${o}</option>`).join('')}</select></td>
+    <td><select onchange="updateClassRec('${cls.id}','${date}','${s.id}','studyCompletionLevel',this.value)">
+      <option value="">-</option>${['상','중','하'].map(o=>`<option ${r.studyCompletionLevel===o?'selected':''}>${o}</option>`).join('')}</select></td>
+    <td><textarea style="width:130px;height:40px;font-size:11px;" onchange="updateClassRec('${cls.id}','${date}','${s.id}','note',this.value)">${r.note||''}</textarea></td>
+    <td><button class="btn sm outline" onclick="unassignStudent('${cls.id}','${s.id}')">해제</button></td>
+  </tr>`;
+}
+async function updateClassRec(clsId,date,stuId,field,val){
+  const key=clsId+'_'+date;
+  await fsSet('classRecords', key, {[stuId]: {[field]: val}});
+}
+async function addVideoAssign(clsId,date,stuId){
+  const sel = document.getElementById(`vidsel_${clsId}_${date}_${stuId}`);
+  const vid = db.videos.find(v=>v.id===sel.value);
+  if(!vid) return;
+  const key=clsId+'_'+date;
+  const cur = (db.classRecords[key]||{})[stuId] || {videoAssignments:[]};
+  const newArr = [...(cur.videoAssignments||[]), {title:vid.title,url:vid.url,done:false}];
+  await fsSet('classRecords', key, {[stuId]: {videoAssignments:newArr}});
+}
+async function toggleVideoDone(clsId,date,stuId,idx){
+  const key=clsId+'_'+date;
+  const cur = (db.classRecords[key]||{})[stuId];
+  if(!cur) return;
+  const newArr = [...cur.videoAssignments]; newArr[idx] = {...newArr[idx], done: !newArr[idx].done};
+  await fsSet('classRecords', key, {[stuId]: {videoAssignments:newArr}});
+}
+async function assignStudent(clsId){
+  const sel=document.getElementById('addStuSel'); if(!sel.value) return;
+  const cls=classById(clsId);
+  const newIds = [...(cls.studentIds||[]), sel.value];
+  await fsSet('classes', clsId, {studentIds:newIds});
+  await fsUpdate('students', sel.value, {classId:clsId});
+}
+async function unassignStudent(clsId,stuId){
+  const cls=classById(clsId);
+  const newIds = (cls.studentIds||[]).filter(id=>id!==stuId);
+  await fsSet('classes', clsId, {studentIds:newIds});
+}
+async function promptNewStudentToClass(clsId){
+  const name=prompt('학생 이름을 입력해주세요'); if(!name) return;
+  const grade=prompt('학년을 입력해주세요 (예: 초5, 중2, 고1)'); if(!grade) return;
+  const code=nextStudentCode(grade);
+  const newId = uid('stu');
+  await fsSet('students', newId, {code,name,grade,classId:clsId,memo:'',goal:'',diligence:80,warnings:[],status:'active'});
+  const cls=classById(clsId);
+  await fsSet('classes', clsId, {studentIds:[...(cls.studentIds||[]), newId]});
+}
+function onBulkCourseChange(){
+  const courseId = document.getElementById('bulkCourseSel').value;
+  const course = courseById(courseId);
+  const sel = document.getElementById('bulkStep');
+  sel.innerHTML = `<option value="">${course?'STEP 선택':'STEP (학년학기 먼저 선택)'}</option>` + (course ? (course.steps||[]).map(st=>`<option value="${st.id}">${st.name}</option>`).join('') : '');
+}
+async function applyBulk(clsId,date){
+  const cls=classById(clsId);
+  const att=document.getElementById('bulkAtt').value;
+  const step=document.getElementById('bulkStep').value;
+  const hw=document.getElementById('bulkHwComp').value;
+  const study=document.getElementById('bulkStudyComp').value;
+  const key=clsId+'_'+date;
+  const upd = {};
+  (cls.studentIds||[]).forEach(stuId=>{
+    const patch = {};
+    if(att) patch.attendance=att;
+    if(step) patch.stepId=step;
+    if(hw) patch.homeworkCompletionLevel=hw;
+    if(study) patch.studyCompletionLevel=study;
+    upd[stuId]=patch;
+  });
+  await fsSet('classRecords', key, upd);
+}
+
+function renderWeeklyPlan(cls, date){
+  const wk = weekStartISO(date);
+  const dates = weekDates(wk);
+  const students = (cls.studentIds||[]).map(studentById).filter(Boolean);
+  const plan = db.weeklyPlans[cls.id+'_'+wk] || {};
+  const order = ['mon','tue','wed','thu','fri','sat','sun'];
+  return `
+  <div class="row between" style="margin-bottom:10px;">
+    <button class="btn sm outline" onclick="shiftWeek('${cls.id}','${date}',-7)">← 이전 주</button>
+    <b>${dates[0]} ~ ${dates[6]}</b>
+    <button class="btn sm outline" onclick="shiftWeek('${cls.id}','${date}',7)">다음 주 →</button>
+  </div>
+  <div class="weekgrid" style="margin-bottom:8px;">
+    <div></div>${order.map(k=>`<div class="hd">${DAY_LABEL[k]}</div>`).join('')}
+    <div style="font-weight:700;font-size:11px;">전체 적용</div>
+    ${order.map(k=>`<textarea placeholder="공통 숙제" onchange="setWeekAll('${cls.id}','${wk}','${k}',this.value)"></textarea>`).join('')}
+  </div>
+  ${students.map(s=>{
+    const sp = plan[s.id]||{};
+    return `<div class="weekgrid" style="margin-bottom:4px;align-items:center;">
+    <div style="font-weight:600;">${s.name}</div>
+    ${order.map(k=>`<textarea onchange="setWeekOne('${cls.id}','${wk}','${s.id}','${k}',this.value)">${sp[k]||''}</textarea>`).join('')}
+    </div>`;
+  }).join('')}
+  `;
+}
+function shiftWeek(clsId,date,days){
+  const d=new Date(date+'T00:00:00'); d.setDate(d.getDate()+days);
+  currentSubState.classDate = d.toISOString().slice(0,10);
+  render();
+}
+async function setWeekAll(clsId,wk,dayKey,val){
+  const cls=classById(clsId);
+  const upd = {};
+  (cls.studentIds||[]).forEach(stuId=>{ upd[stuId]={[dayKey]:val}; });
+  await fsSet('weeklyPlans', clsId+'_'+wk, upd);
+}
+async function setWeekOne(clsId,wk,stuId,dayKey,val){
+  await fsSet('weeklyPlans', clsId+'_'+wk, {[stuId]:{[dayKey]:val}});
+}
+
+function renderFridaySupp(cls,date){
+  const key=cls.id+'_'+weekStartISO(date);
+  const suppByStu = db.fridaySupp[key] || {};
+  const students = (cls.studentIds||[]).map(studentById).filter(Boolean);
+  if(!students.length) return `<div class="empty" style="padding:16px;">이 반에 배정된 학생이 없어요.</div>`;
+  return `<p style="font-size:12px;color:#8a8674;margin:0 0 8px;">이번 주(${weekStartISO(date)} 주) 기준으로 저장돼요. 어떤 요일에 체크하시든 같은 주 안이면 그대로 반영돼요.</p>
+  <table>
+    <tr><th>학생</th><th>보강 필요</th><th>시간</th><th>내용 메모</th></tr>
+    ${students.map(s=>{
+      const supp = suppByStu[s.id] || {needed:false,time:'',note:''};
+      return `<tr>
+        <td><b>${s.name}</b></td>
+        <td><input type="checkbox" ${supp.needed?'checked':''} onchange="updateFriday('${key}','${s.id}','needed',this.checked)"></td>
+        <td><input type="time" style="width:110px;" value="${/^\d{2}:\d{2}$/.test(supp.time||'')?supp.time:''}" onchange="updateFriday('${key}','${s.id}','time',this.value)"></td>
+        <td><input type="text" placeholder="내용 메모" style="width:100%;" value="${supp.note||''}" onchange="updateFriday('${key}','${s.id}','note',this.value)"></td>
+      </tr>`;
+    }).join('')}
+  </table>`;
+}
+async function updateFriday(key,stuId,field,val){ await fsSet('fridaySupp', key, {[stuId]: {[field]:val}}); }
+
+/* ---------------- CURRICULUM ---------------- */
+function renderCurriculum(){
+  return `
+  <h1 class="page-title">커리큘럼 설정</h1>
+  <p class="page-sub">학년·학기별 과정을 만들고, 그 안에 STEP을 순서대로 등록해주세요.</p>
+  <div class="card"><div class="row"><input type="text" id="newCourseName" placeholder="과정 이름 (예: 중2-1학기)"><button class="btn gold sm" onclick="addCourse()">+ 과정 추가</button></div></div>
+  ${db.courses.length? db.courses.map(c=>`
+    <div class="card">
+      <div class="row between"><h3 style="margin:0;">${c.name}</h3><button class="btn sm danger" onclick="deleteCourse('${c.id}')">과정 삭제</button></div>
+      <div style="margin-top:10px;">
+        ${(c.steps||[]).map((st,i)=>`<div class="step-chip" style="margin:3px 4px 3px 0;">
+          <b>${i+1}</b> ${st.name} <span style="cursor:pointer;margin-left:4px;" onclick="deleteStep('${c.id}','${st.id}')">✕</span></div>`).join('')}
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <input type="text" id="stepInput_${c.id}" placeholder="STEP 이름 (예: STEP 3 최대공약수)">
+        <button class="btn sm outline" onclick="addStep('${c.id}')">+ STEP 추가</button>
+      </div>
+    </div>
+  `).join('') : `<div class="empty"><div class="big">🧭</div>등록된 과정이 없어요.</div>`}
+  `;
+}
+async function addCourse(){
+  const el=document.getElementById('newCourseName'); if(!el.value.trim())return;
+  await fsSet('courses', uid('course'), {name:el.value.trim(), steps:[]});
+}
+function deleteCourse(id){
+  openConfirm('과정을 삭제할까요?','이 과정에 포함된 모든 STEP 정보가 함께 사라져요.', async()=>{ await fsDelete('courses', id); });
+}
+async function addStep(courseId){
+  const el=document.getElementById('stepInput_'+courseId); if(!el.value.trim())return;
+  const c = courseById(courseId);
+  const newSteps = [...(c.steps||[]), {id:uid('step'), name:el.value.trim()}];
+  await fsSet('courses', courseId, {steps:newSteps});
+}
+async function deleteStep(courseId,stepId){
+  const c = courseById(courseId);
+  const newSteps = (c.steps||[]).filter(s=>s.id!==stepId);
+  await fsSet('courses', courseId, {steps:newSteps});
+}
+
+/* ---------------- VIDEO LIBRARY ---------------- */
+function renderVideoLib(){
+  const filter = currentSubState.videoCourse || 'all';
+  const list = filter==='all'? db.videos : db.videos.filter(v=>v.courseId===filter);
+  return `
+  <h1 class="page-title">영상 보관함</h1>
+  <p class="page-sub">개념 설명 영상을 학기별로 등록해두면, 반 관리·학생 페이지에서 바로 골라 부여할 수 있어요.</p>
+  <div class="card">
+    <div class="row">
+      <input type="text" id="vTitle" placeholder="영상 제목">
+      <input type="text" id="vUrl" placeholder="영상 링크(URL)" style="flex:1;min-width:180px;">
+      <select id="vCourse"><option value="">과정 선택</option>${db.courses.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
+      <button class="btn gold sm" onclick="addVideo()">+ 등록</button>
+    </div>
+  </div>
+  <div class="tabs2">
+    <button class="${filter==='all'?'active':''}" onclick="currentSubState.videoCourse='all';render();">전체</button>
+    ${db.courses.map(c=>`<button class="${filter===c.id?'active':''}" onclick="currentSubState.videoCourse='${c.id}';render();">${c.name}</button>`).join('')}
+  </div>
+  <div class="card">
+    ${list.length? `<table><tr><th>제목</th><th>과정</th><th>링크</th><th></th></tr>
+      ${list.map(v=>`<tr><td>${v.title}</td><td>${courseById(v.courseId)?.name||'-'}</td><td><a class="link" href="${v.url}" target="_blank">열기</a></td><td><button class="btn sm outline" onclick="deleteVideo('${v.id}')">삭제</button></td></tr>`).join('')}
+      </table>` : `<div class="empty">등록된 영상이 없어요.</div>`}
+  </div>
+  `;
+}
+async function addVideo(){
+  const title=document.getElementById('vTitle').value.trim();
+  const url=document.getElementById('vUrl').value.trim();
+  const courseId=document.getElementById('vCourse').value;
+  if(!title||!url){alert('제목과 링크를 입력해주세요.');return;}
+  await fsSet('videos', uid('vid'), {title,url,courseId});
+}
+async function deleteVideo(id){ await fsDelete('videos', id); }
+
+/* ---------------- STUDENTS ---------------- */
+function renderStudents(){
+  if(currentSubState.studentDetail){ return renderStudentDetail(currentSubState.studentDetail, true); }
+  const filter = currentSubState.studentFilter || 'active';
+  const list = db.students.filter(s=> filter==='all' ? true : (s.status||'active')===filter);
+  return `
+  <h1 class="page-title">학생별 관리</h1>
+  <p class="page-sub">전체 학생 현황을 한눈에 확인해요.</p>
+  <div class="tabs2">
+    <button class="${filter==='active'?'active':''}" onclick="currentSubState.studentFilter='active';render();">재원생</button>
+    <button class="${filter==='withdrawn'?'active':''}" onclick="currentSubState.studentFilter='withdrawn';render();">퇴원생</button>
+    <button class="${filter==='all'?'active':''}" onclick="currentSubState.studentFilter='all';render();">전체</button>
+  </div>
+  <div class="card">
+    <div class="row between">
+      <span style="color:#7a7666;font-size:13px;">${filter==='active'?'재원':filter==='withdrawn'?'퇴원':'전체'} ${list.length}명</span>
+      <button class="btn sm outline" onclick="promptReissueAll()">학년 규칙으로 전체 코드 재발급</button>
+    </div>
+  </div>
+  <div class="card" style="overflow-x:auto;">
+    ${list.length? `<table>
+      <tr><th>이름</th><th>학년</th><th>코드</th><th>소속반</th><th>최근진도</th><th>상태</th><th>경고</th><th>미확인 인증</th><th></th></tr>
+      ${list.map(s=>{
+        const cls=classById(s.classId);
+        const pending = Object.entries(db.submissions).filter(([k,v])=>k.startsWith(s.id+'_') && v.status==='대기').length;
+        const lastScoreRow = studentDailyScores(s.id).slice(-1)[0];
+        const withdrawn = s.status==='withdrawn';
+        return `<tr style="${withdrawn?'opacity:.55;':''}">
+          <td><b>${s.name}</b>${withdrawn?' <span class="badge gray">퇴원</span>':''}</td><td>${s.grade}</td><td><span class="studentcode">${s.code}</span></td>
+          <td>${cls? cls.name : '-'}</td>
+          <td>${lastScoreRow? fmtDate(lastScoreRow.date) : '-'}</td>
+          <td>${statusBadge(studentStatus(s.id))}</td>
+          <td>${warningCountBadge((s.warnings||[]).length)}</td>
+          <td>${pending? `<span class="badge yellow">${pending}건</span>`:'-'}</td>
+          <td><button class="btn sm outline" onclick="currentSubState.studentDetail='${s.id}';render();">상세보기</button> <button class="btn sm danger" onclick="deleteStudentPermanently('${s.id}')">삭제</button></td>
+        </tr>`;
+      }).join('')}
+    </table>` : `<div class="empty"><div class="big">🧑‍🎓</div>${filter==='withdrawn'?'퇴원 처리된 학생이 없어요.':'등록된 학생이 없어요. 반 관리 탭에서 학생을 등록해주세요.'}</div>`}
+  </div>
+  `;
+}
+function deleteStudentPermanently(stuId){
+  const s = studentById(stuId);
+  openConfirm('이 학생을 완전히 삭제할까요?',
+    `${s.name} 학생과 관련된 모든 기록(출석·진도·시험·숙제인증·질문·경고·피드백)이 전부 영구적으로 사라져요. 이 작업은 되돌릴 수 없어요. 기록을 남기고 싶으시면 "퇴원 처리"를 이용해주세요.`,
+    async ()=>{
+      const batch = fsdb.batch();
+      batch.delete(fsdb.collection('students').doc(stuId));
+      db.classes.forEach(c=>{
+        if((c.studentIds||[]).includes(stuId)){
+          batch.set(fsdb.collection('classes').doc(c.id), {studentIds:c.studentIds.filter(id=>id!==stuId)}, {merge:true});
+        }
+      });
+      Object.entries(db.classRecords).forEach(([key,rec])=>{
+        if(rec[stuId]) batch.set(fsdb.collection('classRecords').doc(key), {[stuId]: firebase.firestore.FieldValue.delete()}, {merge:true});
+      });
+      Object.entries(db.weeklyPlans).forEach(([key,plan])=>{
+        if(plan[stuId]) batch.set(fsdb.collection('weeklyPlans').doc(key), {[stuId]: firebase.firestore.FieldValue.delete()}, {merge:true});
+      });
+      Object.keys(db.submissions).forEach(key=>{ if(key.startsWith(stuId+'_')) batch.delete(fsdb.collection('submissions').doc(key)); });
+      db.questions.filter(q=>q.studentId===stuId).forEach(q=> batch.delete(fsdb.collection('questions').doc(q.id)));
+      db.kmm.filter(k=>k.studentId===stuId).forEach(k=> batch.delete(fsdb.collection('kmm').doc(k.id)));
+      db.feedbacks.filter(f=>f.studentId===stuId).forEach(f=> batch.delete(fsdb.collection('feedbacks').doc(f.id)));
+      try{ await batch.commit(); }catch(e){ alert('삭제 중 문제가 발생했어요.'); }
+      currentSubState.studentDetail = null;
+    }
+  );
+}
+function withdrawStudent(stuId){
+  const s = studentById(stuId);
+  openConfirm('이 학생을 퇴원 처리할까요?',
+    `${s.name} 학생이 반에서 빠지고, 더 이상 학생 코드로 로그인할 수 없게 돼요. 그동안의 숙제·성적·경고 기록은 그대로 보존되고, 학생별 관리 > "퇴원생" 탭에서 언제든 다시 확인할 수 있어요.`,
+    async ()=>{
+      await fsUpdate('students', stuId, {status:'withdrawn'});
+      const cls = classById(s.classId);
+      if(cls) await fsSet('classes', cls.id, {studentIds:(cls.studentIds||[]).filter(id=>id!==stuId)});
+    }
+  );
+}
+function reinstateStudent(stuId){
+  const s = studentById(stuId);
+  openConfirm('이 학생을 다시 재원 처리할까요?', `${s.name} 학생의 상태가 "재원생"으로 돌아가요. (반 배정은 반 관리 탭에서 다시 해주셔야 해요)`,
+    async ()=>{ await fsUpdate('students', stuId, {status:'active'}); }
+  );
+}
+function promptReissueAll(){
+  openConfirm('전체 학생 코드를 재발급할까요?','기존에 학생에게 알려준 코드는 더 이상 작동하지 않아요. 학년 순서대로 새 코드가 발급돼요.', async ()=>{
+    const byGrade = {};
+    db.students.forEach(s=>{ (byGrade[s.grade] = byGrade[s.grade]||[]).push(s); });
+    const batch = fsdb.batch();
+    Object.keys(byGrade).forEach(grade=>{
+      const levelMap = {'초':'0','중':'1','고':'2'};
+      const level = levelMap[grade[0]] || '0'; const gradeNum = grade[1];
+      byGrade[grade].forEach((s,i)=>{ batch.update(fsdb.collection('students').doc(s.id), {code: level+gradeNum+String(i+1).padStart(2,'0')}); });
+    });
+    try{ await batch.commit(); }catch(e){ alert('재발급 중 문제가 발생했어요.'); }
+  });
+}
+
+function renderStudentDetail(stuId, directorView){
+  const s = studentById(stuId);
+  if(!s) return `<div class="empty">학생 정보를 찾을 수 없어요.</div>`;
+  const scores = studentDailyScores(stuId);
+  const status = studentStatus(stuId);
+  const cls = classById(s.classId);
+  const kmmRows = db.kmm.filter(k=>k.studentId===stuId).sort((a,b)=>a.date.localeCompare(b.date));
+
+  const histRows = [];
+  Object.entries(db.classRecords).forEach(([key,obj])=>{
+    if(!obj[stuId]) return;
+    const date = key.split('_').slice(1).join('_');
+    histRows.push({date, ...obj[stuId]});
+  });
+  histRows.sort((a,b)=>b.date.localeCompare(a.date));
+
+  const errorAgg = {};
+  Object.entries(db.submissions).forEach(([key,sub])=>{
+    if(!key.startsWith(stuId+'_')) return;
+    (sub.errorTypes||[]).forEach(et=>{ errorAgg[et.type] = (errorAgg[et.type]||0) + Number(et.percent||0); });
+  });
+
+  const videoAssignFlat = [];
+  Object.entries(db.classRecords).forEach(([key,obj])=>{
+    if(!obj[stuId]) return;
+    const date = key.split('_').slice(1).join('_');
+    (obj[stuId].videoAssignments||[]).forEach((v,i)=> videoAssignFlat.push({...v, date, key, idx:i}));
+  });
+
+  const wk = weekStartISO(todayISO());
+  const myWeekPlan = s.classId ? (db.weeklyPlans[s.classId+'_'+wk] || {})[stuId] || {} : {};
+
+  return `
+  ${directorView? `<button class="btn sm outline" style="margin-bottom:14px;" onclick="currentSubState.studentDetail=null;render();">← 목록으로</button>` : ''}
+  <div class="card">
+    <div class="row between">
+      <div>
+        <h2 style="margin:0 0 4px;">${s.name} <span style="font-size:14px;color:#9c9880;">(${s.grade})</span> ${s.status==='withdrawn'?'<span class="badge gray">퇴원생</span>':''}</h2>
+        <span class="studentcode">${s.code}</span> · ${cls? cls.name : '미배정'} · ${statusBadge(status)} ${warningCountBadge((s.warnings||[]).length)}
+      </div>
+      ${directorView? `<div class="row">
+        ${s.status==='withdrawn'
+          ? `<button class="btn sm outline" onclick="reinstateStudent('${stuId}')">복귀 처리</button>`
+          : `<button class="btn sm outline" onclick="withdrawStudent('${stuId}')">퇴원 처리</button>`}
+        <button class="btn sm danger" onclick="deleteStudentPermanently('${stuId}')">완전 삭제</button>
+      </div>` : ''}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">📊 오늘의 오답유형분석 (누적)</h3>
+    ${renderDonut(errorAgg)}
+  </div>
+
+  <div class="card" style="overflow-x:auto;">
+    <h3 style="margin-top:0;">출석·진도 이력</h3>
+    ${histRows.length? `<table><tr><th>날짜</th><th>출석</th><th>일일테스트</th><th>진도</th><th>숙제완성도</th><th>학습완성도</th><th>특이사항</th></tr>
+      ${histRows.slice(0,30).map(h=>`<tr><td>${fmtDate(h.date)}</td><td>${h.attendance||'-'}</td>
+      <td>${h.dailyTestScore!==undefined && h.dailyTestScore!=='' ? h.dailyTestScore + (Number(h.dailyTestScore)>=80?' <span class="badge green">PASS</span>':' <span class="badge red">FAIL</span>') : '-'}</td>
+      <td>${stepLabel(h.stepId)||'-'}${(h.extraSteps&&h.extraSteps.length)? '<br><span style="color:#9c9880;">+ '+h.extraSteps.map(id=>stepLabel(id)).filter(Boolean).join(', ')+'</span>':''}</td><td>${h.homeworkCompletionLevel||'-'}</td><td>${h.studyCompletionLevel||'-'}</td><td>${h.note||'-'}</td></tr>`).join('')}
+      </table>` : `<div class="empty">기록이 없어요.</div>`}
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">시험 기록 (KMM 월별)</h3>
+    ${directorView? `<div class="row">
+      <input type="date" id="kmmDate_${stuId}">
+      <input type="number" id="kmmScore_${stuId}" placeholder="점수" style="width:70px;">
+      <button class="btn sm outline" onclick="addKmm('${stuId}')">+ 등록</button>
+    </div>`:''}
+    ${kmmRows.length? `<table><tr><th>날짜</th><th>점수</th><th>결과</th><th>시상</th></tr>
+      ${kmmRows.map(k=>`<tr><td>${fmtDate(k.date)}</td><td>${k.score}</td><td>${k.score>=80?'<span class="badge green">PASS</span>':'<span class="badge red">FAIL</span>'}</td><td>${kmmAwardText(k.score)}</td></tr>`).join('')}
+      </table>`: `<div class="empty">등록된 KMM 기록이 없어요.</div>`}
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">🎬 동영상 개념학습 과제</h3>
+    ${videoAssignFlat.length? videoAssignFlat.map(v=>`<div class="row" style="padding:5px 0;border-bottom:1px solid var(--line);">
+      <input type="checkbox" ${v.done?'checked':''} onchange="toggleVideoDoneByKey('${v.key}','${stuId}',${v.idx})">
+      <a class="link" href="${v.url}" target="_blank">${v.title}</a><span style="color:#9c9880;font-size:11px;">(${fmtDate(v.date)})</span>
+    </div>`).join('') : `<div class="empty">부여된 영상 과제가 없어요.</div>`}
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">이번 주 숙제 계획</h3>
+    <div class="weekgrid" style="grid-template-columns:70px repeat(7,1fr);">
+      <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div class="hd">${DAY_LABEL[k]}</div>`).join('')}
+      <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div style="font-size:11px;padding:4px;border:1px solid var(--line);border-radius:6px;min-height:44px;">${myWeekPlan[k]||''}</div>`).join('')}
+    </div>
+  </div>
+
+  ${renderWarningsCard(stuId, directorView)}
+  ${renderSubmissionCard(stuId, directorView)}
+  ${renderMemoGoalCard(stuId, directorView)}
+  `;
+}
+async function addKmm(stuId){
+  const d=document.getElementById('kmmDate_'+stuId).value, sc=document.getElementById('kmmScore_'+stuId).value;
+  if(!d||sc==='') return;
+  await fsSet('kmm', stuId+'_'+d, {studentId:stuId,date:d,score:Number(sc)});
+  document.getElementById('kmmScore_'+stuId).value = '';
+}
+async function updateKmmScore(stuId, date, val){
+  if(val===''){ await fsDelete('kmm', stuId+'_'+date); return; }
+  await fsSet('kmm', stuId+'_'+date, {studentId:stuId, date, score:Number(val)});
+}
+async function toggleVideoDoneByKey(key,stuId,idx){
+  const cur = db.classRecords[key][stuId];
+  const newArr = [...cur.videoAssignments]; newArr[idx] = {...newArr[idx], done: !newArr[idx].done};
+  await fsSet('classRecords', key, {[stuId]: {videoAssignments:newArr}});
+}
+
+function renderDonut(agg){
+  const colors = {'개념부족':'#D65A4A','계산실수':'#E0A82E','문제해석':'#3EA55A','유형미숙':'#4a7fd6','성실부족':'#8a5fc9'};
+  const total = Object.values(agg).reduce((a,b)=>a+b,0);
+  if(!total) return `<div class="empty" style="padding:20px;">아직 데이터가 없어요.</div>`;
+  let cum=0; const R=48, C=2*Math.PI*R;
+  const circles = Object.entries(agg).map(([type,val])=>{
+    const frac = val/total; const dash = frac*C;
+    const el = `<circle cx="60" cy="60" r="${R}" fill="none" stroke="${colors[type]||'#999'}" stroke-width="16" stroke-dasharray="${dash} ${C-dash}" stroke-dashoffset="${-cum}" />`;
+    cum += dash; return el;
+  }).join('');
+  return `<div class="donut-wrap">
+    <svg width="120" height="120" viewBox="0 0 120 120" style="transform:rotate(-90deg);">${circles}</svg>
+    <div class="legend">${Object.entries(agg).map(([type,val])=>`<div><span class="sw" style="background:${colors[type]||'#999'};"></span>${type} ${Math.round(val/total*100)}%</div>`).join('')}</div>
+  </div>`;
+}
+
+/* ---------------- 숙제 확인 게시판 (원장용, 전체 학생 한 화면) ---------------- */
+function renderHomeworkReview(){
+  const filter = currentSubState.hwFilter || 'pending';
+  const rows = Object.entries(db.submissions).map(([key,sub])=>{
+    const idx = key.lastIndexOf('_');
+    const studentId = key.slice(0, idx);
+    const date = key.slice(idx+1);
+    return {key, studentId, date, ...sub};
+  }).filter(r=> filter==='all' ? true : r.status==='대기')
+    .sort((a,b)=> b.date.localeCompare(a.date) || (studentById(b.studentId)?.name||'').localeCompare(studentById(a.studentId)?.name||''));
+
+  return `
+  <h1 class="page-title">숙제 확인</h1>
+  <p class="page-sub">모든 학생의 숙제 인증을 한 화면에서 모아보고 확인 처리할 수 있어요.</p>
+  <div class="tabs2">
+    <button class="${filter==='pending'?'active':''}" onclick="currentSubState.hwFilter='pending';render();">확인대기</button>
+    <button class="${filter==='all'?'active':''}" onclick="currentSubState.hwFilter='all';render();">전체</button>
+  </div>
+  ${rows.length? rows.map(r=>{
+    const s = studentById(r.studentId);
+    const cls = s ? classById(s.classId) : null;
+    return `<div class="card">
+      <div class="row between">
+        <div><b>${s? s.name : '(삭제된 학생)'}</b> <span style="color:#9c9880;font-size:12px;">${cls? cls.name+' · ':''}${fmtDate(r.date)}</span></div>
+        <div class="row">
+          <span class="badge ${r.status==='확인'?'green':'yellow'}">${r.status==='확인'?'확인 완료':'확인 대기'}</span>
+          ${r.status!=='확인' ? `<button class="btn sm gold" onclick="confirmSubmission('${r.studentId}','${r.date}')">확인 처리</button>` : ''}
+          ${s ? `<button class="btn sm outline" onclick="goto('students');currentSubState.studentDetail='${r.studentId}';render();">학생 페이지</button>` : ''}
+        </div>
+      </div>
+      <div style="margin-top:8px;font-size:12px;color:#8a8674;">실측 시간: <b>${r.time||'-'}</b></div>
+      <div style="margin-top:6px;font-size:12px;color:#8a8674;">숙제 사진</div>
+      <div class="thumbs">${(r.hwPhotos||[]).map((p,i)=>`<img src="${p}" onclick="openLightboxSet('sub','${r.key}','hwPhotos',${i})">`).join('') || '-'}</div>
+      ${(r.hwPhotos||[]).length>1 ? `<button class="btn sm outline" style="margin-top:6px;" onclick="downloadAllPhotos(db.submissions['${r.key}'].hwPhotos, '${s?s.name:'student'}_${r.date}_숙제', this)">📥 숙제 사진 모두 받기</button>` : ''}
+      <div style="margin-top:6px;font-size:12px;color:#8a8674;">풀이연습장 사진</div>
+      <div class="thumbs">${(r.practicePhotos||[]).map((p,i)=>`<img src="${p}" onclick="openLightboxSet('sub','${r.key}','practicePhotos',${i})">`).join('') || '-'}</div>
+      ${(r.practicePhotos||[]).length>1 ? `<button class="btn sm outline" style="margin-top:6px;" onclick="downloadAllPhotos(db.submissions['${r.key}'].practicePhotos, '${s?s.name:'student'}_${r.date}_풀이연습장', this)">📥 풀이연습장 사진 모두 받기</button>` : ''}
+      ${(r.errorTypes||[]).length? `<div style="margin-top:8px;font-size:12px;color:#8a8674;">오답유형: ${r.errorTypes.map(e=>`${e.type} ${e.percent}%`).join(', ')}</div>` : ''}
+    </div>`;
+  }).join('') : `<div class="empty"><div class="big">📸</div>${filter==='pending'?'확인 대기 중인 숙제 인증이 없어요.':'등록된 숙제 인증이 없어요.'}</div>`}
+  `;
+}
+
+function renderSubmissionCard(stuId, directorView){
+  const date = currentSubState.subDate || todayISO();
+  const key = stuId+'_'+date;
+  const sub = db.submissions[key];
+  const statusBanner = (session.mode==='student' && sub) ? `<div style="background:#e8f5ea;border:1px solid #bfe3c6;color:#2c7a3d;padding:10px 14px;border-radius:10px;margin-bottom:12px;font-size:13px;font-weight:600;">
+      ✅ 오늘 숙제 인증이 잘 저장됐어요!${sub.submittedAt? ' ('+new Date(sub.submittedAt).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})+' 제출)' : ''}
+      <div style="font-weight:500;color:#4a4636;margin-top:2px;">${sub.status==='확인'? '선생님 확인까지 완료됐어요.' : '아직 선생님 확인 전이지만, 제출은 정상적으로 됐어요.'}</div>
+    </div>` : '';
+  return `
+  <div class="card">
+    <div class="row between"><h3 style="margin:0;">📸 숙제 인증</h3><input type="date" value="${date}" onchange="currentSubState.subDate=this.value;render();"></div>
+    ${statusBanner}
+    ${session.mode==='student' ? renderSubmissionForm(stuId,date,sub) : (sub? renderSubmissionReadonly(sub,stuId,date) : `<div class="empty">이 날짜에 제출된 인증이 없어요.</div>`)}
+  </div>`;
+}
+function renderSubmissionReadonly(sub,stuId,date){
+  return `
+  <div class="row between">
+    <div>실측 시간: <b>${sub.time||'-'}</b> · 상태: ${sub.status==='확인'?'<span class="badge green">확인 완료</span>':'<span class="badge yellow">확인 대기</span>'}</div>
+    ${sub.status!=='확인' ? `<button class="btn sm gold" onclick="confirmSubmission('${stuId}','${date}')">확인 처리</button>` : ''}
+  </div>
+  <div style="margin-top:8px;font-size:12px;color:#8a8674;">숙제 사진</div>
+  <div class="thumbs">${(sub.hwPhotos||[]).map((p,i)=>`<img src="${p}" onclick="openLightboxSet('sub','${stuId}_${date}','hwPhotos',${i})">`).join('') || '-'}</div>
+  <div style="margin-top:8px;font-size:12px;color:#8a8674;">풀이연습장 사진</div>
+  <div class="thumbs">${(sub.practicePhotos||[]).map((p,i)=>`<img src="${p}" onclick="openLightboxSet('sub','${stuId}_${date}','practicePhotos',${i})">`).join('') || '-'}</div>
+  <div style="margin-top:10px;font-size:12px;color:#8a8674;">오답유형: ${(sub.errorTypes||[]).map(e=>`${e.type} ${e.percent}%`).join(', ')||'-'}</div>
+  `;
+}
+async function confirmSubmission(stuId,date){ await fsUpdate('submissions', stuId+'_'+date, {status:'확인'}); }
+const ERROR_TYPES = ['개념부족','계산실수','문제해석','유형미숙','성실부족'];
+function draftStorageKey(stuId,date){ return `mnm_draft_${stuId}_${date}`; }
+function saveDraftLocal(stuId,date){
+  try{
+    if(!currentSubState._draftSub) return;
+    const payload = {...currentSubState._draftSub, _swRunStartTs:swRunStartTs, _swBaseSeconds:swBaseSeconds};
+    localStorage.setItem(draftStorageKey(stuId,date), JSON.stringify(payload));
+  }catch(e){}
+}
+function loadDraftLocal(stuId,date){
+  try{ const raw = localStorage.getItem(draftStorageKey(stuId,date)); return raw ? JSON.parse(raw) : null; }catch(e){ return null; }
+}
+function clearDraftLocal(stuId,date){ try{ localStorage.removeItem(draftStorageKey(stuId,date)); }catch(e){} }
+
+function renderSubmissionForm(stuId,date,sub){
+  const hasExisting = !!sub;
+  sub = sub || {time:'',hwPhotos:[],practicePhotos:[],errorTypes:[],status:'대기'};
+  const draftKey = stuId+'_'+date;
+  if(currentSubState._draftSubKey !== draftKey){
+    if(swDisplayInterval){ clearInterval(swDisplayInterval); swDisplayInterval=null; }
+    const local = loadDraftLocal(stuId, date);
+    if(local){
+      // 이전에 작성하다 만 내용(뒤로가기·새로고침·화면꺼짐 등)이 폰에 남아있으면 그걸 이어서 씀
+      currentSubState._draftSub = {
+        time: local.time || '00:00',
+        hwPhotos: local.hwPhotos || [],
+        practicePhotos: local.practicePhotos || [],
+        errorTypes: local.errorTypes || [],
+        status: sub.status || '대기'
+      };
+      swBaseSeconds = typeof local._swBaseSeconds === 'number' ? local._swBaseSeconds : parseTimeToSeconds(local.time);
+      swRunStartTs = local._swRunStartTs || null;
+      if(swRunStartTs){ swDisplayInterval = setInterval(swUpdateDisplay, 1000); }
+    }else{
+      currentSubState._draftSub = JSON.parse(JSON.stringify(sub));
+      swBaseSeconds = parseTimeToSeconds(sub.time || '00:00');
+      swRunStartTs = null;
+    }
+    currentSubState._draftSubKey = draftKey;
+    swActiveStuId = stuId; swActiveDate = date;
+    saveDraftLocal(stuId, date);
+  }
+  const draft = currentSubState._draftSub;
+  return `
+  <div class="stopwatch" id="swDisplay">${draft.time || '00:00'}</div>
+  <div class="row" style="justify-content:center;margin-bottom:12px;">
+    <button class="btn sm outline" onclick="swStart()">시작</button>
+    <button class="btn sm outline" onclick="swStop()">정지</button>
+    <button class="btn sm outline" onclick="swReset()">초기화</button>
+  </div>
+  <div style="font-size:12px;color:#8a8674;margin-bottom:4px;">숙제 사진</div>
+  <div class="row">
+    <label class="btn sm outline" style="cursor:pointer;">📷 카메라로 촬영<input type="file" accept="image/*" capture="environment" onchange="uploadSubPhoto(this,'hwPhotos')" style="display:none;"></label>
+    <label class="btn sm outline" style="cursor:pointer;">🖼️ 갤러리에서 선택<input type="file" accept="image/*" multiple onchange="uploadSubPhoto(this,'hwPhotos')" style="display:none;"></label>
+  </div>
+  <div class="thumbs">${draft.hwPhotos.map((p,i)=>`<div class="thumb-wrap"><img src="${p}" onclick="openLightboxSet('draft','hwPhotos','',${i})"><button class="thumb-x" onclick="removeDraftPhoto('hwPhotos',${i})">✕</button></div>`).join('')}</div>
+  <div style="font-size:12px;color:#8a8674;margin:10px 0 4px;">풀이연습장 사진</div>
+  <div class="row">
+    <label class="btn sm outline" style="cursor:pointer;">📷 카메라로 촬영<input type="file" accept="image/*" capture="environment" onchange="uploadSubPhoto(this,'practicePhotos')" style="display:none;"></label>
+    <label class="btn sm outline" style="cursor:pointer;">🖼️ 갤러리에서 선택<input type="file" accept="image/*" multiple onchange="uploadSubPhoto(this,'practicePhotos')" style="display:none;"></label>
+  </div>
+  <div class="thumbs">${draft.practicePhotos.map((p,i)=>`<div class="thumb-wrap"><img src="${p}" onclick="openLightboxSet('draft','practicePhotos','',${i})"><button class="thumb-x" onclick="removeDraftPhoto('practicePhotos',${i})">✕</button></div>`).join('')}</div>
+  <div style="font-size:12px;color:#8a8674;margin:14px 0 4px;">오늘의 오답유형분석</div>
+  ${ERROR_TYPES.map(t=>{
+    const existing = draft.errorTypes.find(e=>e.type===t);
+    return `<div class="row" style="margin-bottom:4px;">
+      <label style="width:80px;"><input type="checkbox" ${existing?'checked':''} onchange="toggleErrorType('${t}',this.checked)"> ${t}</label>
+      <select onchange="setErrorPercent('${t}',this.value)" ${existing?'':'disabled'}>
+        ${[10,20,30,40,50,60,70,80,90,100].map(p=>`<option value="${p}" ${existing&&existing.percent==p?'selected':''}>${p}%</option>`).join('')}
+      </select>
+    </div>`;
+  }).join('')}
+  ${renderDraftSizeIndicator(draft)}
+  <button class="btn gold" style="width:100%;margin-top:10px;" onclick="submitHomework('${stuId}','${date}')">${hasExisting ? '수정한 내용 다시 저장하기' : '숙제 인증 제출하기'}</button>
+  `;
+}
+/* 실제 시계(타임스탬프) 기반 스톱워치 — 화면이 꺼지거나 뒤로가기로 새로고침돼도 폰에 저장된 값으로 이어서 계산돼요 */
+let swRunStartTs = null;   // 현재 재생 중이면 시작 시각(ms), 아니면 null
+let swBaseSeconds = 0;     // 이전에 정지했던 시점까지 누적된 초
+let swDisplayInterval = null;
+let swActiveStuId = null, swActiveDate = null;
+function parseTimeToSeconds(t){ if(!t) return 0; const parts=t.split(':').map(Number); return (parts[0]||0)*60+(parts[1]||0); }
+function formatSeconds(sec){ const m=String(Math.floor(sec/60)).padStart(2,'0'); const s=String(sec%60).padStart(2,'0'); return `${m}:${s}`; }
+function swCurrentElapsed(){ return swBaseSeconds + (swRunStartTs ? Math.floor((Date.now()-swRunStartTs)/1000) : 0); }
+function swUpdateDisplay(){
+  const formatted = formatSeconds(swCurrentElapsed());
+  const el = document.getElementById('swDisplay'); if(el) el.textContent = formatted;
+  if(currentSubState._draftSub) currentSubState._draftSub.time = formatted;
+  if(swActiveStuId && swActiveDate) saveDraftLocal(swActiveStuId, swActiveDate);
+}
+function swStart(){
+  if(swRunStartTs) return;
+  swBaseSeconds = parseTimeToSeconds(currentSubState._draftSub ? currentSubState._draftSub.time : '00:00');
+  swRunStartTs = Date.now();
+  if(swDisplayInterval) clearInterval(swDisplayInterval);
+  swDisplayInterval = setInterval(swUpdateDisplay, 1000);
+  swUpdateDisplay();
+}
+function swStop(){
+  if(!swRunStartTs) return;
+  swBaseSeconds = swCurrentElapsed();
+  swRunStartTs = null;
+  if(swDisplayInterval){ clearInterval(swDisplayInterval); swDisplayInterval=null; }
+  swUpdateDisplay();
+}
+function swReset(){
+  swRunStartTs = null; swBaseSeconds = 0;
+  if(swDisplayInterval){ clearInterval(swDisplayInterval); swDisplayInterval=null; }
+  const el = document.getElementById('swDisplay'); if(el) el.textContent = '00:00';
+  if(currentSubState._draftSub) currentSubState._draftSub.time = '00:00';
+  if(swActiveStuId && swActiveDate) saveDraftLocal(swActiveStuId, swActiveDate);
+}
+function renderDraftSizeIndicator(draft){
+  const sizeKB = Math.round(new Blob([JSON.stringify({hwPhotos:draft.hwPhotos,practicePhotos:draft.practicePhotos})]).size/1024);
+  const limit = 850;
+  const pct = Math.min(100, Math.round(sizeKB/limit*100));
+  const color = pct>=90 ? 'var(--red)' : pct>=65 ? 'var(--gold)' : 'var(--green)';
+  const msg = pct>=90 ? '용량이 거의 다 찼어요! 사진을 몇 장 지워주세요 (✕ 버튼).' : pct>=65 ? '사진이 많이 쌓였어요. 계속 추가하면 저장이 안 될 수 있어요.' : '';
+  return `<div style="margin-top:14px;">
+    <div style="display:flex;justify-content:space-between;font-size:11px;color:#8a8674;margin-bottom:3px;"><span>사진 용량</span><span>${sizeKB}KB / ${limit}KB</span></div>
+    <div style="background:#eee;border-radius:6px;height:6px;overflow:hidden;"><div style="width:${pct}%;height:100%;background:${color};"></div></div>
+    ${msg? `<div style="font-size:11px;color:${color};margin-top:4px;">${msg}</div>`:''}
+  </div>`;
+}
+async function uploadSubPhoto(inputEl, field){
+  const files = Array.from(inputEl.files || []);
+  for(const f of files){
+    const totalCount = currentSubState._draftSub.hwPhotos.length + currentSubState._draftSub.practicePhotos.length;
+    const params = totalCount>=8 ? {maxW:340, quality:0.3} : totalCount>=4 ? {maxW:420, quality:0.35} : {maxW:480, quality:0.4};
+    try{ const durl = await fileToCompressedDataURL(f, params.maxW, params.quality); currentSubState._draftSub[field].push(durl); }catch(e){}
+  }
+  if(swActiveStuId && swActiveDate) saveDraftLocal(swActiveStuId, swActiveDate);
+  render();
+}
+function removeDraftPhoto(field, idx){
+  currentSubState._draftSub[field].splice(idx,1);
+  if(swActiveStuId && swActiveDate) saveDraftLocal(swActiveStuId, swActiveDate);
+  render();
+}
+function toggleErrorType(type,checked){
+  const draft=currentSubState._draftSub;
+  if(checked){ draft.errorTypes.push({type,percent:10}); } else { draft.errorTypes = draft.errorTypes.filter(e=>e.type!==type); }
+  if(swActiveStuId && swActiveDate) saveDraftLocal(swActiveStuId, swActiveDate);
+  render();
+}
+function setErrorPercent(type,val){
+  const e = currentSubState._draftSub.errorTypes.find(e=>e.type===type); if(e) e.percent=Number(val);
+  if(swActiveStuId && swActiveDate) saveDraftLocal(swActiveStuId, swActiveDate);
+}
+async function submitHomework(stuId,date){
+  const draft = currentSubState._draftSub;
+  const key = stuId+'_'+date;
+  const payload = {...draft, status:'대기', submittedAt: new Date().toISOString()};
+  const sizeKB = new Blob([JSON.stringify(payload)]).size/1024;
+  if(sizeKB > 850){
+    alert('사진 용량이 너무 커요. 사진 개수를 줄이거나 다시 찍어서 올려주세요.');
+    return;
+  }
+  const ok = await fsSet('submissions', key, payload, false);
+  if(ok){
+    db.submissions[key] = payload; // 즉시 화면에 확인 표시가 뜨도록 로컬에도 바로 반영
+    clearDraftLocal(stuId, date);
+    if(swDisplayInterval){ clearInterval(swDisplayInterval); swDisplayInterval=null; }
+    swRunStartTs = null; swBaseSeconds = 0; swActiveStuId=null; swActiveDate=null;
+    currentSubState._draftSub = null; currentSubState._draftSubKey = null;
+    render();
+  }
+}
+
+function renderMemoGoalCard(stuId, directorView){
+  const s = studentById(stuId);
+  return `
+  <div class="card">
+    <h3 style="margin-top:0;">📝 메모 · 목표</h3>
+    ${directorView ? `
+      <label style="font-size:12px;color:#8a8674;">학습 목표 / 향후 방향 메모</label>
+      <textarea rows="3" onchange="updateStudentField('${stuId}','goal',this.value)">${s.goal||''}</textarea>
+      <label style="font-size:12px;color:#8a8674;display:block;margin-top:8px;">원장 메모</label>
+      <textarea rows="2" onchange="updateStudentField('${stuId}','memo',this.value)">${s.memo||''}</textarea>
+      <label style="font-size:12px;color:#8a8674;display:block;margin-top:8px;">성실점수 (0~100)</label>
+      <input type="number" min="0" max="100" value="${s.diligence||0}" onchange="updateStudentField('${stuId}','diligence',this.value)">
+    ` : `<div style="font-size:13px;line-height:1.8;">${s.goal || '아직 등록된 목표가 없어요.'}</div>`}
+  </div>
+  ${renderQnaStudentSection(stuId, directorView)}
+  `;
+}
+async function updateStudentField(stuId,field,val){ await fsUpdate('students', stuId, {[field]:val}); }
+
+/* ---------------- 경고 기록 ---------------- */
+function renderWarningsCard(stuId, directorView){
+  const s = studentById(stuId);
+  const warnings = s.warnings || [];
+  const count = warnings.length;
+  return `
+  <div class="card">
+    <div class="row between"><h3 style="margin:0;">⚠️ 경고 기록</h3>${warningCountBadge(count)}</div>
+    ${directorView ? `
+      <div class="row" style="margin-top:10px;">
+        <input type="date" id="warnDate_${stuId}" value="${todayISO()}">
+        <input type="text" id="warnReason_${stuId}" placeholder="경고 사유를 적어주세요" style="flex:1;min-width:160px;">
+        <button class="btn sm gold" onclick="addWarning('${stuId}')">+ 경고 추가</button>
+      </div>
+    ` : ''}
+    ${count ? `<table style="margin-top:12px;">
+      <tr><th>순번</th><th>날짜</th><th>사유</th>${directorView?'<th></th>':''}</tr>
+      ${warnings.map((w,i)=>`<tr>
+        <td>${i+1}회${i+1>=3?' <span class="badge red">OUT</span>':''}</td>
+        <td>${fmtDate(w.date)}</td>
+        <td>${w.reason}</td>
+        ${directorView?`<td><button class="btn sm outline" onclick="deleteWarning('${stuId}','${w.id}')">삭제</button></td>`:''}
+      </tr>`).join('')}
+      </table>` : `<div class="empty" style="padding:16px;">아직 경고 기록이 없어요.</div>`}
+  </div>`;
+}
+async function addWarning(stuId){
+  const dateEl = document.getElementById('warnDate_'+stuId);
+  const reasonEl = document.getElementById('warnReason_'+stuId);
+  const date = dateEl.value || todayISO();
+  const reason = reasonEl.value.trim();
+  if(!reason){ alert('경고 사유를 입력해주세요.'); return; }
+  const s = studentById(stuId);
+  const newWarnings = [...(s.warnings||[]), {id:uid('warn'), date, reason}];
+  await fsUpdate('students', stuId, {warnings:newWarnings});
+}
+function deleteWarning(stuId, warnId){
+  openConfirm('경고 기록을 삭제할까요?', '이 경고 기록이 학생 페이지에서도 함께 사라져요. 신중히 선택해주세요.', async ()=>{
+    const s = studentById(stuId);
+    const newWarnings = (s.warnings||[]).filter(w=>w.id!==warnId);
+    await fsUpdate('students', stuId, {warnings:newWarnings});
+  });
+}
+
+/* Q&A section embedded on student page */
+function renderQnaStudentSection(stuId, directorView){
+  const myQs = db.questions.filter(q=>q.studentId===stuId).sort((a,b)=>b.date.localeCompare(a.date));
+  currentSubState._newQDraftPhotos = currentSubState._newQDraftPhotos || [];
+  const qd = currentSubState._newQDraftPhotos;
+  return `
+  <div class="card">
+    <h3 style="margin-top:0;">💬 질문 게시판</h3>
+    ${session.mode==='student' ? `
+      <div class="row"><textarea id="newQText" placeholder="질문 내용을 적어주세요" rows="2" style="flex:1;">${currentSubState._newQDraftText||''}</textarea></div>
+      <div class="row" style="margin-top:6px;">
+        <label class="btn sm outline" style="cursor:pointer;">📷 촬영<input type="file" accept="image/*" capture="environment" onchange="uploadNewQPhoto(this)" style="display:none;"></label>
+        <label class="btn sm outline" style="cursor:pointer;">🖼️ 갤러리<input type="file" accept="image/*" multiple onchange="uploadNewQPhoto(this)" style="display:none;"></label>
+      </div>
+      <div class="thumbs">${qd.map((p,i)=>`<div class="thumb-wrap"><img src="${p}" onclick="openLightboxSet('newq','','',${i})"><button class="thumb-x" onclick="removeNewQPhoto(${i})">✕</button></div>`).join('')}</div>
+      <button class="btn sm gold" style="margin-top:8px;" onclick="submitQuestion('${stuId}')">질문 등록</button>
+      <hr style="border:none;border-top:1px solid var(--line);margin:14px 0;">
+    ` : ''}
+    ${myQs.length? myQs.map(q=>{
+      if(session.mode==='student' && currentSubState.editingQId===q.id){
+        return renderQuestionEditForm(q);
+      }
+      return `
+      <div style="padding:10px 0;border-bottom:1px solid var(--line);">
+        <div class="row between"><span style="font-size:12px;color:#9c9880;">${fmtDate(q.date)}</span><span class="badge ${q.status==='답변완료'?'green':'yellow'}">${q.status}</span></div>
+        <div style="margin:6px 0;">${q.text}</div>
+        <div class="thumbs">${(q.photos||[]).map((p,i)=>`<img src="${p}" onclick="openLightboxSet('q','${q.id}','photos',${i})">`).join('')}</div>
+        ${q.answerText || (q.answerPhotos&&q.answerPhotos.length) ? `<div style="margin-top:8px;background:#f6f4ec;padding:8px 10px;border-radius:8px;">
+          <div style="font-size:12px;color:#8a8674;">선생님 답변</div>
+          <div>${q.answerText||''}</div>
+          <div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<img src="${p}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})">`).join('')}</div>
+        </div>` : ''}
+        ${session.mode==='student' ? `<button class="btn sm outline" style="margin-top:6px;" onclick="editQuestion('${q.id}')">수정</button>` : ''}
+      </div>
+    `;
+    }).join('') : `<div class="empty">등록된 질문이 없어요.</div>`}
+  </div>`;
+}
+function renderQuestionEditForm(q){
+  currentSubState._editQDraft = currentSubState._editQDraft || {text:q.text, photos:[...(q.photos||[])]};
+  const ed = currentSubState._editQDraft;
+  return `
+  <div style="padding:10px 0;border-bottom:1px solid var(--line);background:#fbfaf5;">
+    <div style="font-size:12px;color:#8a8674;margin-bottom:4px;">질문 수정 중</div>
+    <textarea id="editQText" rows="2">${ed.text}</textarea>
+    <div class="row" style="margin-top:6px;">
+      <label class="btn sm outline" style="cursor:pointer;">📷 촬영<input type="file" accept="image/*" capture="environment" onchange="uploadEditQPhoto(this)" style="display:none;"></label>
+      <label class="btn sm outline" style="cursor:pointer;">🖼️ 갤러리<input type="file" accept="image/*" multiple onchange="uploadEditQPhoto(this)" style="display:none;"></label>
+    </div>
+    <div class="thumbs">${ed.photos.map((p,i)=>`<div class="thumb-wrap"><img src="${p}" onclick="openLightboxSet('editq','','',${i})"><button class="thumb-x" onclick="removeEditQPhoto(${i})">✕</button></div>`).join('')}</div>
+    <div class="row" style="margin-top:8px;">
+      <button class="btn sm gold" onclick="saveEditQuestion('${q.id}')">저장</button>
+      <button class="btn sm outline" onclick="cancelEditQuestion()">취소</button>
+    </div>
+  </div>`;
+}
+async function uploadNewQPhoto(inputEl){
+  const ta = document.getElementById('newQText'); if(ta) currentSubState._newQDraftText = ta.value;
+  currentSubState._newQDraftPhotos = currentSubState._newQDraftPhotos || [];
+  await handleMultiPhotoInput(inputEl, (durl)=>currentSubState._newQDraftPhotos.push(durl), 900, 0.65);
+  render();
+}
+function removeNewQPhoto(idx){
+  const ta = document.getElementById('newQText'); if(ta) currentSubState._newQDraftText = ta.value;
+  currentSubState._newQDraftPhotos.splice(idx,1);
+  render();
+}
+async function submitQuestion(stuId){
+  const text = document.getElementById('newQText').value.trim();
+  const photos = currentSubState._newQDraftPhotos || [];
+  if(!text && !photos.length){ alert('질문 내용이나 사진을 등록해주세요.'); return; }
+  const payload = {studentId:stuId,date:todayISO(),text,photos,answerText:'',answerPhotos:[],status:'대기'};
+  if(new Blob([JSON.stringify(payload)]).size/1024 > 900){ alert('사진 용량이 너무 커요. ✕ 버튼으로 사진을 몇 장 지워주세요.'); return; }
+  const ok = await fsAdd('questions', payload);
+  if(ok){ currentSubState._newQDraftPhotos = []; currentSubState._newQDraftText = ''; render(); }
+}
+function editQuestion(qId){
+  const q = db.questions.find(x=>x.id===qId);
+  currentSubState.editingQId = qId;
+  currentSubState._editQDraft = {text:q.text, photos:[...(q.photos||[])]};
+  render();
+}
+function cancelEditQuestion(){
+  currentSubState.editingQId = null; currentSubState._editQDraft = null;
+  render();
+}
+async function uploadEditQPhoto(inputEl){
+  const ta = document.getElementById('editQText'); if(ta) currentSubState._editQDraft.text = ta.value;
+  await handleMultiPhotoInput(inputEl, (durl)=>currentSubState._editQDraft.photos.push(durl), 900, 0.65);
+  render();
+}
+function removeEditQPhoto(idx){
+  const ta = document.getElementById('editQText'); if(ta) currentSubState._editQDraft.text = ta.value;
+  currentSubState._editQDraft.photos.splice(idx,1);
+  render();
+}
+async function saveEditQuestion(qId){
+  const text = document.getElementById('editQText').value.trim();
+  const photos = currentSubState._editQDraft.photos;
+  const q = db.questions.find(x=>x.id===qId);
+  const patch = {text, photos};
+  if(q.status==='답변완료'){ patch.status='대기'; }
+  if(new Blob([JSON.stringify({...q, ...patch})]).size/1024 > 900){ alert('사진 용량이 너무 커요. ✕ 버튼으로 사진을 몇 장 지워주세요.'); return; }
+  const ok = await fsUpdate('questions', qId, patch);
+  if(ok){ currentSubState.editingQId = null; currentSubState._editQDraft = null; render(); }
+}
+
+/* ---------------- QNA DIRECTOR ---------------- */
+function renderQnaDirector(){
+  const filter = currentSubState.qnaFilter || 'pending';
+  const list = db.questions.filter(q=> filter==='all' ? true : q.status==='대기').sort((a,b)=>b.date.localeCompare(a.date));
+  return `
+  <h1 class="page-title">질문 게시판</h1>
+  <p class="page-sub">모든 학생의 질문을 한 화면에서 확인하고 답변해주세요.</p>
+  <div class="tabs2">
+    <button class="${filter==='pending'?'active':''}" onclick="currentSubState.qnaFilter='pending';render();">답변대기</button>
+    <button class="${filter==='all'?'active':''}" onclick="currentSubState.qnaFilter='all';render();">전체</button>
+  </div>
+  ${list.length? list.map(q=>{
+    const s=studentById(q.studentId);
+    return `<div class="card">
+      <div class="row between"><b>${s?s.name:'(삭제된 학생)'}</b><span class="badge ${q.status==='답변완료'?'green':'yellow'}">${q.status}</span></div>
+      <div style="font-size:12px;color:#9c9880;margin:2px 0 8px;">${fmtDate(q.date)}</div>
+      <div>${q.text}</div>
+      <div class="thumbs">${(q.photos||[]).map((p,i)=>`<img src="${p}" onclick="openLightboxSet('q','${q.id}','photos',${i})">`).join('')}</div>
+      ${(q.photos||[]).length>1 ? `<button class="btn sm outline" style="margin-top:6px;" onclick="downloadAllPhotos(db.questions.find(x=>x.id==='${q.id}').photos, '${s?s.name:'question'}_${q.date}', this)">📥 사진 모두 받기</button>` : ''}
+      <div style="margin-top:10px;">
+        <textarea rows="2" placeholder="답변 메모" id="ans_${q.id}">${q.answerText||''}</textarea>
+        <input type="file" accept="image/*" multiple id="ansPhoto_${q.id}" style="margin-top:6px;">
+        <div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<img src="${p}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})">`).join('')}</div>
+        <button class="btn sm gold" style="margin-top:8px;" onclick="answerQuestion('${q.id}')">답변 등록</button>
+      </div>
+    </div>`;
+  }).join('') : `<div class="empty"><div class="big">💬</div>표시할 질문이 없어요.</div>`}
+  `;
+}
+async function answerQuestion(qId){
+  const q = db.questions.find(x=>x.id===qId);
+  const answerText = document.getElementById('ans_'+qId).value;
+  const photosInput = document.getElementById('ansPhoto_'+qId);
+  const answerPhotos = [...(q.answerPhotos||[])];
+  await handleMultiPhotoInput(photosInput, (durl)=>answerPhotos.push(durl), 1000, 0.7);
+  if(new Blob([JSON.stringify({...q, answerText, answerPhotos})]).size/1024 > 950){ alert('답변 사진 용량이 너무 커요. 사진 개수를 줄여서 다시 시도해주세요.'); return; }
+  await fsUpdate('questions', qId, {answerText, answerPhotos, status:'답변완료'});
+}
+
+/* ---------------- FEEDBACK ---------------- */
+function renderFeedback(){
+  const mode = currentSubState.fbMode || 'individual';
+  return `
+  <h1 class="page-title">학부모 피드백</h1>
+  <p class="page-sub">주간 피드백과 월말 종합 리포트를 작성해요. 완성된 문구는 그대로 복사해서 보낼 수 있어요.</p>
+  <div class="tabs2">
+    <button class="${mode==='individual'?'active':''}" onclick="currentSubState.fbMode='individual';render();">개별 작성</button>
+    <button class="${mode==='bulk'?'active':''}" onclick="currentSubState.fbMode='bulk';render();">반별 일괄 생성</button>
+    <button class="${mode==='history'?'active':''}" onclick="currentSubState.fbMode='history';render();">이력 보기</button>
+  </div>
+  ${mode==='individual'? renderFbIndividual() : mode==='bulk'? renderFbBulk() : renderFbHistory()}
+  `;
+}
+function setIndividualTraffic(c){
+  if(FUTURE_TEXT_KNOWN.includes(currentSubState.fbComment)){
+    currentSubState.fbComment = defaultTextForTraffic(c);
+  }
+  currentSubState.fbTraffic = c;
+  render();
+}
+function renderFbIndividual(){
+  const stuId = currentSubState.fbStudent || (db.students[0]&&db.students[0].id);
+  currentSubState.fbStudent = stuId;
+  if(!stuId) return `<div class="empty">등록된 학생이 없어요.</div>`;
+  const type = currentSubState.fbType || 'weekly';
+  const traffic = currentSubState.fbTraffic || trafficForStudent(stuId);
+  const comment = currentSubState.fbComment !== undefined ? currentSubState.fbComment : defaultFutureDirectionText(stuId);
+  currentSubState.fbTraffic = traffic; currentSubState.fbComment = comment;
+  return `
+  <div class="card">
+    <div class="row">
+      <select onchange="currentSubState.fbStudent=this.value;currentSubState.fbTraffic=null;currentSubState.fbComment=undefined;render();">
+        ${db.students.filter(st=>st.status!=='withdrawn').map(st=>`<option value="${st.id}" ${st.id===stuId?'selected':''}>${st.name}</option>`).join('')}
+      </select>
+      <select onchange="currentSubState.fbType=this.value;render();">
+        <option value="weekly" ${type==='weekly'?'selected':''}>주간 피드백</option>
+        <option value="monthly" ${type==='monthly'?'selected':''}>월말 종합 리포트</option>
+      </select>
+    </div>
+  </div>
+  <div class="card">
+    <div class="row" style="margin-bottom:10px;">
+      <span>신호등:</span>
+      ${['green','yellow','red'].map(c=>`<button class="btn sm ${traffic===c?'':'outline'}" style="background:${traffic===c?({green:'#3EA55A',yellow:'#E0A82E',red:'#D65A4A'}[c]):'#fff'};color:${traffic===c?'#fff':'#333'};border-color:${({green:'#3EA55A',yellow:'#E0A82E',red:'#D65A4A'}[c])};" onclick="setIndividualTraffic('${c}')">${c==='green'?'🟢 순항중':c==='yellow'?'🟡 주의':'🔴 관찰필요'}</button>`).join('')}
+    </div>
+    <label style="font-size:12px;color:#8a8674;">향후 학습 방향 코멘트</label>
+    <textarea rows="4" onchange="currentSubState.fbComment=this.value;">${comment}</textarea>
+    <div class="row" style="margin-top:8px;">
+      <button class="btn sm outline" onclick="aiWriteComment('${stuId}')">✨ AI 자동 작성</button>
+      <button class="btn sm outline" onclick="aiPolishComment()">✨ AI 다듬기</button>
+      <span style="flex:1;"></span>
+      <button class="btn gold sm" onclick="generateFeedback('${stuId}','${type}')">완성하기</button>
+    </div>
+  </div>
+  <div class="card" id="fbPreview">${renderFeedbackPreview(stuId,type,traffic,comment)}</div>
+  `;
+}
+function dailyTestPhrase(avg, hasData){
+  if(!hasData) return '';
+  if(avg>=90) return '일일테스트에서 꾸준히 높은 점수를 유지하고 있습니다.';
+  if(avg>=80) return '일일테스트 성취도가 안정적인 편입니다.';
+  if(avg>=60) return '일일테스트 점수에 기복이 있어 꾸준한 복습이 필요합니다.';
+  return '일일테스트 점수가 낮은 편이라 기본 개념부터 다시 다져야 합니다.';
+}
+function kmmAward(score){
+  if(score===100) return {label:'대상', emoji:'🏆'};
+  if(score>=95) return {label:'금상', emoji:'🥇'};
+  if(score>=85) return {label:'은상', emoji:'🥈'};
+  if(score>=70) return {label:'동상', emoji:'🥉'};
+  if(score>=60) return {label:'장려상', emoji:'💪'};
+  return null;
+}
+function kmmAwardText(score){
+  const a = kmmAward(score);
+  return a ? `${a.emoji} ${a.label}` : '';
+}
+function kmmResultPhrase(kmmRow){
+  if(!kmmRow) return '';
+  if(kmmRow.score>=90) return `이번 KMM에서 ${kmmRow.score}점으로 매우 우수한 성취를 보였습니다.`;
+  if(kmmRow.score>=80) return `이번 KMM에서 ${kmmRow.score}점으로 PASS 기준을 충족했습니다.`;
+  if(kmmRow.score>=60) return `이번 KMM에서 ${kmmRow.score}점을 받아, 기준(80점)에는 다소 못 미쳐 보완이 필요합니다.`;
+  return `이번 KMM에서 ${kmmRow.score}점을 받아, 기초 개념부터 다시 점검이 필요한 상황입니다.`;
+}
+function homeworkLevelPhrase(level){
+  if(level==='상') return '숙제를 빠짐없이 성실하게 챙기고 있어요.';
+  if(level==='중') return '숙제는 대체로 챙기고 있으나, 간혹 놓치는 날이 있어 조금 더 신경 쓰도록 하겠습니다.';
+  if(level==='하') return '최근 숙제 제출이 뜸한 편이라, 학습 습관을 다시 점검해볼 필요가 있어 보입니다.';
+  return '';
+}
+function practiceNoteRatio(stuId){
+  const subs = Object.entries(db.submissions).filter(([k])=>k.startsWith(stuId+'_')).map(([,v])=>v);
+  if(!subs.length) return null;
+  const withPractice = subs.filter(s=>(s.practicePhotos||[]).length>0).length;
+  return withPractice/subs.length;
+}
+function practiceNotePhrase(ratio){
+  if(ratio===null) return '아직 숙제 인증 기록이 없어요.';
+  if(ratio>=0.7) return '풀이과정도 착실히 확인되고 있습니다.';
+  if(ratio>=0.3) return '풀이과정은 간헐적으로 확인되는 편이라, 조금 더 꾸준히 남길 수 있도록 유도하겠습니다.';
+  return '풀이과정 기록이 빈약한 편이라, 앞으로 풀이연습장을 함께 챙겨야한다고 강조하고 있습니다.';
+}
+function renderFeedbackPreview(stuId,type,traffic,comment){
+  const s = studentById(stuId);
+  const scores = studentDailyScores(stuId);
+  const avg = scores.length? Math.round(scores.reduce((a,b)=>a+b.score,0)/scores.length):0;
+  const attRows = Object.entries(db.classRecords).filter(([k,v])=>v[stuId]).map(([k,v])=>v[stuId].attendance);
+  const attRate = attRows.length? Math.round(attRows.filter(a=>a==='출석').length/attRows.length*100):0;
+  const lastStep = [...Object.entries(db.classRecords)].filter(([k,v])=>v[stuId]&&v[stuId].stepId).sort((a,b)=>a[0].localeCompare(b[0])).slice(-1)[0];
+  const stepTxt = lastStep? stepShortLabel(lastStep[1][stuId].stepId) : '-';
+  const trafficEmoji = {green:'🟢',yellow:'🟡',red:'🔴'}[traffic];
+  const kmm = db.kmm.filter(k=>k.studentId===stuId).sort((a,b)=>b.date.localeCompare(a.date))[0];
+  const hwLevelRows = Object.entries(db.classRecords)
+    .filter(([k,v])=>v[stuId]&&v[stuId].homeworkCompletionLevel)
+    .map(([k,v])=>({date:k.slice(-10), level:v[stuId].homeworkCompletionLevel}))
+    .sort((a,b)=>a.date.localeCompare(b.date));
+  const latestHwLevel = hwLevelRows.length ? hwLevelRows[hwLevelRows.length-1].level : '';
+  const practiceRatio = practiceNoteRatio(stuId);
+  const text = `[M&m 수학훈련소] ${s.name} 학생 ${type==='weekly'?'주간':'월말'} 리포트
+${trafficEmoji} 현재 상태: ${traffic==='green'?'순항중':traffic==='yellow'?'주의 관찰':'관찰 필요'}
+
+· 일일테스트 평균: ${scores.length? avg+'점' : '오늘은 KMM 시험일이라 일일테스트가 없었어요'}${scores.length? ' — '+dailyTestPhrase(avg, true) : ''}
+· 출석률: ${attRate}%
+· 현재 진도: ${stepTxt}
+· 숙제 완성도: ${latestHwLevel||'-'}${latestHwLevel? ' — '+homeworkLevelPhrase(latestHwLevel) : ''}
+· 풀이과정 확인: ${practiceNotePhrase(practiceRatio)}
+${kmm? `· 최근 KMM 점수: ${kmm.score}점 (${kmm.score>=80?'PASS':'FAIL'})${kmmAwardText(kmm.score)? ' — '+kmmAwardText(kmm.score):''} — ${kmmResultPhrase(kmm)}`:''}
+
+[특이사항]
+${(()=>{const notes=Object.values(db.classRecords).filter(v=>v[stuId]&&v[stuId].note).map(v=>v[stuId].note).filter(Boolean); return notes.slice(-3).join(' / ') || '특이사항 없음';})()}
+
+[향후 학습 방향]
+${comment}`;
+  return `<pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.7;margin:0;">${text}</pre>
+  <button class="btn sm outline" style="margin-top:10px;" onclick="copyText(this)" data-text="${encodeURIComponent(text)}">텍스트 복사하기</button>`;
+}
+function copyText(btn){
+  const text = decodeURIComponent(btn.getAttribute('data-text'));
+  navigator.clipboard.writeText(text).then(()=>{ btn.textContent='복사됨!'; setTimeout(()=>btn.textContent='텍스트 복사하기',1500); });
+}
+async function generateFeedback(stuId,type){
+  const traffic = currentSubState.fbTraffic;
+  const comment = currentSubState.fbComment;
+  await fsAdd('feedbacks', {studentId:stuId,type,date:todayISO(),traffic,comment});
+  currentSubState.fbComment=undefined; currentSubState.fbTraffic=null;
+}
+async function aiWriteComment(stuId){
+  const s=studentById(stuId);
+  const status=studentStatus(stuId);
+  const scores=studentDailyScores(stuId).slice(-5);
+  const errorAgg={};
+  Object.entries(db.submissions).forEach(([key,sub])=>{ if(key.startsWith(stuId+'_')) (sub.errorTypes||[]).forEach(e=>errorAgg[e.type]=(errorAgg[e.type]||0)+Number(e.percent||0)); });
+  const prompt = `너는 수학학원 원장이 학부모에게 보낼 피드백의 "향후 학습 방향" 코멘트를 대신 작성해주는 보조자야.
+아래는 실제 데이터야. 이 데이터에 있는 사실만 근거로 삼고, 없는 사실은 절대로 지어내지 마.
+학생 이름: ${s.name} (${s.grade})
+학습 상태: ${status}
+최근 일일테스트 점수(최근순): ${scores.map(r=>r.score).join(', ')||'기록 없음'}
+오답유형 누적: ${Object.entries(errorAgg).map(([t,v])=>`${t} ${v}%`).join(', ')||'기록 없음'}
+저장된 학습목표: ${s.goal||'없음'}
+원장 메모: ${s.memo||'없음'}
+
+위 데이터를 바탕으로, 학부모가 읽을 "향후 학습 방향" 코멘트를 3~4문장, 존댓말로 작성해줘. 코멘트 텍스트만 출력해.`;
+  try{
+    const res = await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({model:'claude-sonnet-4-6',max_tokens:400,messages:[{role:'user',content:prompt}]})});
+    const data = await res.json();
+    const txt = (data.content||[]).map(c=>c.text||'').join('');
+    if(txt){ currentSubState.fbComment = txt.trim(); render(); }
+  }catch(e){ alert('AI 작성 중 문제가 발생했어요. 잠시 후 다시 시도해주세요.'); }
+}
+async function aiPolishComment(){
+  const current = currentSubState.fbComment || '';
+  if(!current.trim()){ alert('먼저 코멘트를 입력해주세요.'); return; }
+  const prompt = `다음은 수학학원 원장이 학부모에게 보낼 코멘트 초안이야. 의미는 그대로 유지하면서 자연스럽고 정중한 존댓말 문장으로 다듬어줘. 다듬은 텍스트만 출력해.\n\n${current}`;
+  try{
+    const res = await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({model:'claude-sonnet-4-6',max_tokens:400,messages:[{role:'user',content:prompt}]})});
+    const data = await res.json();
+    const txt = (data.content||[]).map(c=>c.text||'').join('');
+    if(txt){ currentSubState.fbComment = txt.trim(); render(); }
+  }catch(e){ alert('AI 다듬기 중 문제가 발생했어요. 잠시 후 다시 시도해주세요.'); }
+}
+function setBulkTraffic(stuId, c){
+  const draft = currentSubState.fbBulkData[stuId];
+  if(FUTURE_TEXT_KNOWN.includes(draft.comment)){
+    draft.comment = defaultTextForTraffic(c);
+  }
+  draft.traffic = c;
+  render();
+}
+function renderFbBulk(){
+  const clsId = currentSubState.fbClass || (db.classes[0]&&db.classes[0].id);
+  currentSubState.fbClass = clsId;
+  const cls = classById(clsId);
+  if(!cls) return `<div class="empty">등록된 반이 없어요.</div>`;
+  currentSubState.fbBulkData = currentSubState.fbBulkData || {};
+  return `
+  <div class="card"><div class="row">${db.classes.map(c=>`<button class="btn sm ${c.id===clsId?'':'outline'}" onclick="currentSubState.fbClass='${c.id}';render();">${c.name}</button>`).join('')}</div></div>
+  ${(cls.studentIds||[]).map(studentById).filter(Boolean).map(s=>{
+    const draft = currentSubState.fbBulkData[s.id] = currentSubState.fbBulkData[s.id] || {traffic:trafficForStudent(s.id), comment:defaultFutureDirectionText(s.id)};
+    return `<div class="card">
+      <div class="row between"><b>${s.name}</b>
+        <div class="row">${['green','yellow','red'].map(c=>`<button class="btn sm ${draft.traffic===c?'':'outline'}" onclick="setBulkTraffic('${s.id}','${c}')">${c==='green'?'🟢':c==='yellow'?'🟡':'🔴'}</button>`).join('')}</div>
+      </div>
+      <textarea rows="2" style="margin-top:8px;" onchange="currentSubState.fbBulkData['${s.id}'].comment=this.value;">${draft.comment}</textarea>
+      <details style="margin-top:8px;">
+        <summary style="cursor:pointer;font-size:12px;color:#8a8674;">전체 리포트 미리보기 (숙제완성도·출석률·진도 포함)</summary>
+        <div style="margin-top:8px;">${renderFeedbackPreview(s.id, 'weekly', draft.traffic, draft.comment)}</div>
+      </details>
+    </div>`;
+  }).join('')}
+  <button class="btn gold" onclick="generateBulkFeedback('${clsId}')">이 반 전체 일괄 생성</button>
+  `;
+}
+async function generateBulkFeedback(clsId){
+  const cls = classById(clsId);
+  const data = currentSubState.fbBulkData || {};
+  const batch = fsdb.batch();
+  (cls.studentIds||[]).forEach(stuId=>{
+    const d = data[stuId]; if(!d) return;
+    const ref = fsdb.collection('feedbacks').doc();
+    batch.set(ref, {studentId:stuId,type:'weekly',date:todayISO(),traffic:d.traffic,comment:d.comment});
+  });
+  try{ await batch.commit(); }catch(e){ alert('일괄 생성 중 문제가 발생했어요.'); }
+  currentSubState.fbBulkData = {};
+}
+function renderFbHistory(){
+  const rows = [...db.feedbacks].sort((a,b)=>b.date.localeCompare(a.date));
+  return `<div class="card">${rows.length? `<table><tr><th>날짜</th><th>학생</th><th>유형</th><th>신호등</th><th>코멘트</th></tr>
+    ${rows.map(f=>{const s=studentById(f.studentId);return `<tr><td>${fmtDate(f.date)}</td><td>${s?s.name:'-'}</td><td>${f.type==='weekly'?'주간':'월말'}</td><td>${({green:'🟢',yellow:'🟡',red:'🔴'})[f.traffic]}</td><td style="max-width:280px;font-size:12px;">${f.comment}</td></tr>`;}).join('')}
+    </table>` : `<div class="empty">작성된 피드백 이력이 없어요.</div>`}</div>`;
+}
+
+/* ---------------- BACKUP ---------------- */
+function renderBackup(){
+  return `
+  <h1 class="page-title">데이터 백업</h1>
+  <p class="page-sub">이제 데이터는 Firebase(Firestore)에 실시간으로 안전하게 저장돼요. 아래는 보조 수단이에요.</p>
+  <div class="card">
+    <h3 style="margin-top:0;">전체 데이터 내보내기</h3>
+    <p style="font-size:12.5px;color:#7a7666;">지금 이 순간의 전체 데이터를 파일로 저장하거나 텍스트로 복사할 수 있어요.</p>
+    <div class="row">
+      <button class="btn gold sm" onclick="downloadBackup()">JSON 파일로 다운로드</button>
+      <button class="btn outline sm" onclick="showBackupText()">텍스트로 보기</button>
+    </div>
+    <div id="backupTextArea" style="display:none;margin-top:12px;">
+      <textarea id="backupTextContent" readonly rows="8" style="width:100%;font-size:10px;font-family:monospace;"></textarea>
+      <button class="btn sm gold" style="margin-top:8px;" onclick="copyBackupText()">전체 복사하기</button>
+    </div>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0;">Firebase 콘솔에서 직접 확인</h3>
+    <p style="font-size:13px;color:#7a7666;">console.firebase.google.com 에서 math-master 프로젝트 → Firestore Database로 들어가면, 원본 데이터를 언제든 직접 확인할 수 있어요. 이게 가장 확실한 백업이에요 — 구글 서버에 계속 안전하게 보관돼요.</p>
+  </div>
+  `;
+}
+function showBackupText(){
+  document.getElementById('backupTextArea').style.display='block';
+  document.getElementById('backupTextContent').value = JSON.stringify(db);
+}
+function copyBackupText(){
+  const el = document.getElementById('backupTextContent'); el.select();
+  navigator.clipboard.writeText(el.value).then(()=>{ alert('복사됐어요!'); }).catch(()=>{ alert('자동 복사가 안 됐어요. 텍스트를 길게 눌러 직접 복사해주세요.'); });
+}
+function downloadBackup(){
+  try{
+    const blob = new Blob([JSON.stringify(db,null,2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href=url; a.download = `mnm_backup_${todayISO()}.json`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 3000);
+  }catch(e){ alert('다운로드에 실패했어요. "텍스트로 보기"를 이용해주세요.'); }
+}
+
+/* ---------------- STUDENT HOME ---------------- */
+function renderStudentHome(){ return renderStudentDetail(session.studentId, false); }
+
+/* ---------------- INIT ---------------- */
+initFirebase();
+</script>
+</body>
+</html>
