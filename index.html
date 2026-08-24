@@ -180,7 +180,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-24 v2</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-24 v3 (문제추가)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -1066,7 +1066,7 @@ function buildDailyReportText(s, date, r, dayGroup){
 ${trafficEmoji} 출석: ${r.attendance||'-'}
 ${examLine}${kmmMakeupTxt}
 · 오늘 개념학습: ${stepTxt}${extraStepsTxt}
-${r.practiceBook? `· 문제 적용: ${r.practiceBook}${r.practiceRange? ' '+r.practiceRange : ''}` : ''}
+${r.practiceBook? `· 문제 적용: ${r.practiceBook}${r.practiceRange? ' '+r.practiceRange : ''}${(r.extraPractice&&r.extraPractice.length)? ', '+r.extraPractice.map(e=>`${e.book}${e.range?' '+e.range:''}`).join(', ') : ''}` : ((r.extraPractice&&r.extraPractice.length)? `· 문제 적용: ${r.extraPractice.map(e=>`${e.book}${e.range?' '+e.range:''}`).join(', ')}` : '')}
 · 숙제완성도: ${hwTxt}
 ${r.note? `· 특이사항: ${r.note}` : ''}${warnTxt}`;
 }
@@ -1192,6 +1192,81 @@ const BOOK_PRESETS = {
   '중': ['본교재','부교재','최상위','일품','내신대비'],
   '고': ['디딤돌','라쎈','시너지','올림포스','내신대비']
 };
+function renderBookSelect(clsId, date, stuId, currentBook, bookOptions){
+  const rowKey = `${clsId}_${date}_${stuId}`;
+  currentSubState._bookCustomMode = currentSubState._bookCustomMode || {};
+  const isKnownPreset = bookOptions.includes(currentBook);
+  let customMode = currentSubState._bookCustomMode[rowKey];
+  if(customMode===undefined){ customMode = !!currentBook && !isKnownPreset; }
+  if(customMode){
+    return `<input type="text" placeholder="교재명 직접 입력" style="width:130px;font-size:11px;" value="${currentBook||''}" onchange="updateClassRec('${clsId}','${date}','${stuId}','practiceBook',this.value)">
+    <button class="btn sm outline" style="font-size:10px;padding:2px 6px;margin-top:3px;" onclick="currentSubState._bookCustomMode['${rowKey}']=false;render();">목록에서 선택</button>`;
+  }
+  return `<select style="width:130px;font-size:11px;" onchange="if(this.value==='__custom__'){currentSubState._bookCustomMode['${rowKey}']=true;render();}else{updateClassRec('${clsId}','${date}','${stuId}','practiceBook',this.value);}">
+    <option value="">교재 선택</option>
+    ${bookOptions.map(b=>`<option value="${b}" ${currentBook===b?'selected':''}>${b}</option>`).join('')}
+    <option value="__custom__">✏️ 직접 입력</option>
+  </select>`;
+}
+function renderExtraPractice(clsId, date, stuId, extra, bookOptions){
+  const rowKey = `${clsId}_${date}_${stuId}`;
+  currentSubState._addingExtraPractice = currentSubState._addingExtraPractice || {};
+  const isAdding = !!currentSubState._addingExtraPractice[rowKey];
+  const chips = (extra||[]).map((e,i)=>`<div class="step-chip" style="margin:2px 4px 2px 0;">${e.book}${e.range?' '+e.range:''} <span style="cursor:pointer;margin-left:4px;" onclick="removeExtraPractice('${clsId}','${date}','${stuId}',${i})">✕</span></div>`).join('');
+  return `<div style="margin-top:6px;">
+    ${chips}
+    ${isAdding ? renderExtraPracticePicker(clsId,date,stuId,bookOptions) : `<button class="btn sm outline" style="font-size:10px;padding:3px 8px;" onclick="toggleAddExtraPractice('${clsId}','${date}','${stuId}')">+ 문제 추가</button>`}
+  </div>`;
+}
+function renderExtraPracticePicker(clsId,date,stuId,bookOptions){
+  const rowKey = `${clsId}_${date}_${stuId}`;
+  currentSubState._extraPracticeDraft = currentSubState._extraPracticeDraft || {};
+  const draft = currentSubState._extraPracticeDraft[rowKey] = currentSubState._extraPracticeDraft[rowKey] || {book:'', range:'', custom:false};
+  const bookInput = draft.custom
+    ? `<input type="text" placeholder="교재명 직접 입력" style="width:130px;font-size:11px;" value="${draft.book}" oninput="currentSubState._extraPracticeDraft['${rowKey}'].book=this.value;">
+       <button class="btn sm outline" style="font-size:10px;padding:2px 6px;margin-top:2px;" onclick="currentSubState._extraPracticeDraft['${rowKey}'].custom=false;render();">목록에서 선택</button>`
+    : `<select style="width:130px;font-size:11px;" onchange="if(this.value==='__custom__'){currentSubState._extraPracticeDraft['${rowKey}'].custom=true;render();}else{currentSubState._extraPracticeDraft['${rowKey}'].book=this.value;}">
+        <option value="">교재 선택</option>
+        ${bookOptions.map(b=>`<option value="${b}" ${draft.book===b?'selected':''}>${b}</option>`).join('')}
+        <option value="__custom__">✏️ 직접 입력</option>
+      </select>`;
+  return `<div style="margin-top:4px;padding:6px;background:#f7f5ee;border-radius:8px;">
+    ${bookInput}
+    <input type="text" placeholder="범위 (예: p.24~31)" style="width:130px;font-size:11px;margin-top:4px;" value="${draft.range}" oninput="currentSubState._extraPracticeDraft['${rowKey}'].range=this.value;">
+    <div class="row" style="margin-top:4px;gap:4px;">
+      <button class="btn sm gold" style="font-size:10px;padding:3px 8px;" onclick="confirmAddExtraPractice('${clsId}','${date}','${stuId}')">추가</button>
+      <button class="btn sm outline" style="font-size:10px;padding:3px 8px;" onclick="toggleAddExtraPractice('${clsId}','${date}','${stuId}')">취소</button>
+    </div>
+  </div>`;
+}
+function toggleAddExtraPractice(clsId,date,stuId){
+  const rowKey = `${clsId}_${date}_${stuId}`;
+  currentSubState._addingExtraPractice = currentSubState._addingExtraPractice || {};
+  currentSubState._addingExtraPractice[rowKey] = !currentSubState._addingExtraPractice[rowKey];
+  if(currentSubState._addingExtraPractice[rowKey]){
+    currentSubState._extraPracticeDraft = currentSubState._extraPracticeDraft || {};
+    currentSubState._extraPracticeDraft[rowKey] = {book:'', range:'', custom:false};
+  }
+  render();
+}
+async function confirmAddExtraPractice(clsId,date,stuId){
+  const rowKey = `${clsId}_${date}_${stuId}`;
+  const draft = currentSubState._extraPracticeDraft[rowKey];
+  if(!draft || !draft.book){ alert('교재명을 선택하거나 입력해주세요.'); return; }
+  const key = clsId+'_'+date;
+  const cur = (db.classRecords[key]||{})[stuId] || {};
+  const extra = [...(cur.extraPractice||[]), {book:draft.book, range:draft.range||''}];
+  await fsSet('classRecords', key, {[stuId]: {extraPractice: extra}});
+  currentSubState._addingExtraPractice[rowKey] = false;
+  delete currentSubState._extraPracticeDraft[rowKey];
+  render();
+}
+async function removeExtraPractice(clsId,date,stuId,idx){
+  const key = clsId+'_'+date;
+  const cur = (db.classRecords[key]||{})[stuId] || {};
+  const extra = (cur.extraPractice||[]).filter((_,i)=>i!==idx);
+  await fsSet('classRecords', key, {[stuId]: {extraPractice: extra}});
+}
 function renderClassRow(cls, s, date, rec, hwText, bookNames){
   const r = rec[s.id] || {attendance:'출석', dailyTestScore:'', stepId:'', videoAssignments:[], homeworkCompletionLevel:'', studyCompletionLevel:'', note:''};
   const doneCount = (r.videoAssignments||[]).filter(v=>v.done).length;
@@ -1211,7 +1286,6 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames){
   const warnCount = (s.warnings||[]).length;
   const gradeLevel = s.grade ? s.grade[0] : '';
   const bookOptions = [...new Set([...(BOOK_PRESETS[gradeLevel]||[]), ...Array.from(bookNames||[])])];
-  const bookDatalistId = `bookOpts_${s.id}`;
   return `<tr>
     <td style="${nameBg?`background:${nameBg};border-left:3px solid ${status==='STOP'?'var(--red)':'var(--gold)'};`:''}">
       <b>${s.name}</b>${warnCount? ` <span class="badge red" style="font-size:9px;">경고${warnCount}</span>`:''}
@@ -1227,9 +1301,9 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames){
       return hint + renderStepCascadeSelect(cls.id, date, s.id, r.stepId) + renderExtraSteps(cls.id, date, s.id, r.extraSteps);
     })()}</td>
     <td>
-      <datalist id="${bookDatalistId}">${bookOptions.map(b=>`<option value="${b}">`).join('')}</datalist>
-      <input type="text" list="${bookDatalistId}" placeholder="교재명 (목록 또는 직접입력)" style="width:130px;font-size:11px;" value="${r.practiceBook||''}" onchange="updateClassRec('${cls.id}','${date}','${s.id}','practiceBook',this.value)">
+      ${renderBookSelect(cls.id, date, s.id, r.practiceBook, bookOptions)}
       <input type="text" placeholder="범위 (예: p.24~31)" style="width:130px;font-size:11px;margin-top:4px;" value="${r.practiceRange||''}" onchange="updateClassRec('${cls.id}','${date}','${s.id}','practiceRange',this.value)">
+      ${renderExtraPractice(cls.id, date, s.id, r.extraPractice, bookOptions)}
     </td>
     <td>
       <div style="font-size:11px;color:#8a8674;margin-bottom:4px;">${doneCount}/${videoTotal} 완료</div>
