@@ -180,7 +180,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-25 v10 (문구수정)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-25 v12 (날짜버그수정)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -250,7 +250,13 @@ let db = {
 };
 
 function uid(prefix){ return prefix+'_'+Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-4); }
-function todayISO(){ return new Date().toISOString().slice(0,10); }
+function toLocalISODate(d){
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+function todayISO(){ return toLocalISODate(new Date()); }
 function fmtDate(d){ const dt=new Date(d+'T00:00:00'); return `${dt.getMonth()+1}/${dt.getDate()}(${['일','월','화','수','목','금','토'][dt.getDay()]})`; }
 
 /* ---------------- 초기 명단 · 커리큘럼 시드 데이터 ---------------- */
@@ -701,7 +707,7 @@ function homeworkDateRangeDates(dayGroup, dateISO){
   const result = [];
   for(let back = gap; back>=1; back--){
     const d = new Date(dateISO+'T00:00:00'); d.setDate(d.getDate()-back);
-    result.push(d.toISOString().slice(0,10));
+    result.push(toLocalISODate(d));
   }
   return result; // 실제 날짜(YYYY-MM-DD), 오래된 순
 }
@@ -710,10 +716,10 @@ function weekStartISO(dateISO){
   const dow = d.getDay();
   const diff = dow===0? -6 : 1-dow;
   d.setDate(d.getDate()+diff);
-  return d.toISOString().slice(0,10);
+  return toLocalISODate(d);
 }
 function weekDates(weekStart){
-  const arr=[]; for(let i=0;i<7;i++){ const d=new Date(weekStart+'T00:00:00'); d.setDate(d.getDate()+i); arr.push(d.toISOString().slice(0,10)); } return arr;
+  const arr=[]; for(let i=0;i<7;i++){ const d=new Date(weekStart+'T00:00:00'); d.setDate(d.getDate()+i); arr.push(toLocalISODate(d)); } return arr;
 }
 
 /* ---------------- FIRESTORE WRITE HELPERS ---------------- */
@@ -984,9 +990,6 @@ function renderClassDetail(cls){
         <button class="btn sm outline" onclick="toggleDayGroup('${cls.id}','${cls.dayGroup}')">요일그룹 ${cls.dayGroup==='mon-wed'?'화목반으로 변경':'월수반으로 변경'}</button>
         <button class="btn sm danger" onclick="deleteClass('${cls.id}')">반 삭제</button>
       </div>
-    </div>
-    <div style="font-size:10px;color:#b33;background:#fff3f3;padding:4px 8px;border-radius:6px;margin-bottom:6px;">
-      🔧디버그: id="${cls.id}" dayGroup="${cls.dayGroup}" date="${date}" 계산범위=[${homeworkDateRangeDates(cls.dayGroup, date).join(',')}]
     </div>
     <div class="row" style="margin-top:10px;">
       <label style="font-size:12px;color:#8a8674;">수업 날짜</label>
@@ -1432,7 +1435,7 @@ function renderWeeklyPlan(cls, date){
 }
 function shiftWeek(clsId,date,days){
   const d=new Date(date+'T00:00:00'); d.setDate(d.getDate()+days);
-  currentSubState.classDate = d.toISOString().slice(0,10);
+  currentSubState.classDate = toLocalISODate(d);
   render();
 }
 async function setWeekAll(clsId,wk,dayKey,val){
