@@ -180,7 +180,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-25 v8 (요일그룹수정)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-25 v9 (디버그)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -984,6 +984,9 @@ function renderClassDetail(cls){
         <button class="btn sm outline" onclick="toggleDayGroup('${cls.id}','${cls.dayGroup}')">요일그룹 ${cls.dayGroup==='mon-wed'?'화목반으로 변경':'월수반으로 변경'}</button>
         <button class="btn sm danger" onclick="deleteClass('${cls.id}')">반 삭제</button>
       </div>
+    </div>
+    <div style="font-size:10px;color:#b33;background:#fff3f3;padding:4px 8px;border-radius:6px;margin-bottom:6px;">
+      🔧디버그: id="${cls.id}" dayGroup="${cls.dayGroup}" date="${date}" 계산범위=[${homeworkDateRangeDates(cls.dayGroup, date).join(',')}]
     </div>
     <div class="row" style="margin-top:10px;">
       <label style="font-size:12px;color:#8a8674;">수업 날짜</label>
