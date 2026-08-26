@@ -180,7 +180,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-26 v21 (정렬)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-26 v23 (KMM재도전)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -486,6 +486,7 @@ const DIRECTOR_NAV = [
   {id:'curriculum', label:'커리큘럼 설정', icon:'🧭'},
   {id:'videolib', label:'영상 보관함', icon:'🎬'},
   {id:'students', label:'학생별 관리', icon:'🧑‍🎓'},
+  {id:'kmmMakeup', label:'KMM 보강', icon:'📐'},
   {id:'hwreview', label:'숙제 확인', icon:'📸'},
   {id:'qna', label:'질문 게시판', icon:'💬'},
   {id:'feedback', label:'학부모 피드백', icon:'📨'},
@@ -508,6 +509,7 @@ function openConfirm(title, body, onConfirm){
   document.getElementById('modalTitle').textContent = title;
   document.getElementById('modalBody').textContent = body;
   const btn = document.getElementById('modalConfirmBtn');
+  btn.textContent = '확인';
   btn.onclick = async ()=>{ closeModal(); await onConfirm(); };
   document.getElementById('modalBg').style.display='flex';
 }
@@ -803,6 +805,7 @@ function renderInner(){
       case 'curriculum': html+=renderCurriculum(); break;
       case 'videolib': html+=renderVideoLib(); break;
       case 'students': html+=renderStudents(); break;
+      case 'kmmMakeup': html+=renderKmmMakeup(); break;
       case 'hwreview': html+=renderHomeworkReview(); break;
       case 'qna': html+=renderQnaDirector(); break;
       case 'feedback': html+=renderFeedback(); break;
@@ -1861,10 +1864,11 @@ function renderStudentDetail(stuId, directorView){
     ${directorView? `<div class="row">
       <input type="date" id="kmmDate_${stuId}">
       <input type="number" id="kmmScore_${stuId}" placeholder="점수" style="width:70px;">
+      <input type="text" id="kmmRange_${stuId}" placeholder="범위 (예: 1~3단원)" style="width:130px;">
       <button class="btn sm outline" onclick="addKmm('${stuId}')">+ 등록</button>
     </div>`:''}
-    ${kmmRows.length? `<table><tr><th>날짜</th><th>점수</th><th>결과</th><th>시상</th></tr>
-      ${kmmRows.map(k=>`<tr><td>${fmtDate(k.date)}</td><td>${k.score}</td><td>${k.score>=80?'<span class="badge green">PASS</span>':'<span class="badge red">FAIL</span>'}</td><td>${kmmAwardText(k.score)}</td></tr>`).join('')}
+    ${kmmRows.length? `<table><tr><th>날짜</th><th>범위</th><th>점수</th><th>결과</th><th>시상</th>${(()=>{const hasRetry=kmmRows.some(k=>k.retryScore!=null); return hasRetry?'<th>재도전</th>':'';})()}</tr>
+      ${kmmRows.map(k=>`<tr><td>${fmtDate(k.date)}</td><td>${k.range||'-'}</td><td>${k.score}</td><td>${k.score>=80?'<span class="badge green">PASS</span>':'<span class="badge red">FAIL</span>'}</td><td>${kmmAwardText(k.score)}</td>${(()=>{const hasRetry=kmmRows.some(x=>x.retryScore!=null); if(!hasRetry) return ''; return `<td>${k.retryScore!=null? `${k.retryScore}점 (${fmtDate(k.retryDate)})${k.retryScore>=70?' <span class="badge green">통과</span>':''}` : '-'}</td>`;})()}</tr>`).join('')}
       </table>`: `<div class="empty">등록된 KMM 기록이 없어요.</div>`}
   </div>
 
@@ -1891,9 +1895,11 @@ function renderStudentDetail(stuId, directorView){
 }
 async function addKmm(stuId){
   const d=document.getElementById('kmmDate_'+stuId).value, sc=document.getElementById('kmmScore_'+stuId).value;
+  const range = document.getElementById('kmmRange_'+stuId).value;
   if(!d||sc==='') return;
-  await fsSet('kmm', stuId+'_'+d, {studentId:stuId,date:d,score:Number(sc)});
+  await fsSet('kmm', stuId+'_'+d, {studentId:stuId,date:d,score:Number(sc), range: range||''});
   document.getElementById('kmmScore_'+stuId).value = '';
+  document.getElementById('kmmRange_'+stuId).value = '';
 }
 async function updateKmmScore(stuId, date, val){
   if(val===''){ await fsDelete('kmm', stuId+'_'+date); return; }
@@ -2471,6 +2477,136 @@ function dailyTestPhrase(avg, hasData){
   if(avg>=80) return '일일테스트 성취도가 안정적인 편입니다.';
   if(avg>=60) return '일일테스트 점수에 기복이 있어 꾸준한 복습이 필요합니다.';
   return '일일테스트 점수가 낮은 편이라 기본 개념부터 다시 다져야 합니다.';
+}
+function latestKmmForStudent(stuId){
+  const rows = db.kmm.filter(k=>k.studentId===stuId).sort((a,b)=>b.date.localeCompare(a.date));
+  return rows[0] || null;
+}
+function isKmmMakeupActive(latest){
+  if(!latest) return false;
+  if(latest.score >= 70) return false;
+  if(latest.retryScore!=null && latest.retryScore>=70) return false;
+  return true;
+}
+const GRADE_ORDER = ['초2','초3','초4','초5','초6','중1','중2','중3','고1','고2','고3'];
+function kmmRetryPassMessage(studentName, range, score){
+  const rangeTxt = range ? `"${range}" 부분의 ` : '';
+  return `[M&m 수학훈련소] ${studentName} 학생 KMM 보강 종료 안내\n\n${studentName} 학생이 ${rangeTxt}재시험을 ${score}점으로 통과하여 보강이 종료됩니다.\n\n수고 많으셨습니다.`;
+}
+function renderKmmMakeup(){
+  const active = db.students
+    .filter(s=>s.status!=='withdrawn')
+    .map(s=>({s, latest: latestKmmForStudent(s.id)}))
+    .filter(x=>isKmmMakeupActive(x.latest));
+  const resolved = db.students
+    .filter(s=>s.status!=='withdrawn')
+    .map(s=>({s, latest: latestKmmForStudent(s.id)}))
+    .filter(x=>x.latest && x.latest.score<70 && x.latest.retryScore!=null && x.latest.retryScore>=70)
+    .sort((a,b)=> (b.latest.retryDate||'').localeCompare(a.latest.retryDate||''));
+
+  const groups = {};
+  active.forEach(x=>{ const g=x.s.grade||'기타'; groups[g]=groups[g]||[]; groups[g].push(x); });
+  const gradeKeys = Object.keys(groups).sort((a,b)=>{
+    const ia=GRADE_ORDER.indexOf(a), ib=GRADE_ORDER.indexOf(b);
+    if(ia===-1 && ib===-1) return a.localeCompare(b);
+    if(ia===-1) return 1; if(ib===-1) return -1;
+    return ia-ib;
+  });
+
+  return `
+  <h1 class="page-title">📐 KMM 보강 대상</h1>
+  <p class="page-sub">최근 KMM 점수가 70점 미만인 학생이 학년별로 자동으로 모여요. 재시험에서 70점 이상 받으면 자동으로 목록에서 빠지고, 학부모님께 보낼 안내 문자가 만들어져요.</p>
+  ${active.length ? gradeKeys.map(g=>`
+    <h3 style="margin:18px 0 8px;color:var(--navy2);">${g} (${groups[g].length}명)</h3>
+    ${groups[g].map(({s, latest})=>renderKmmMakeupCard(s, latest)).join('')}
+  `).join('') : `<div class="empty"><div class="big">🎉</div>지금 보강이 필요한 학생이 없어요.</div>`}
+  ${resolved.length ? `
+    <h3 style="margin:22px 0 8px;color:#8a8674;">✅ 최근 재시험 통과 (보강 종료)</h3>
+    ${resolved.map(({s, latest})=>`<div class="card" style="opacity:.85;">
+      <div class="row between">
+        <div>
+          <b>${s.name}</b> <span class="badge gray" style="font-size:11px;">${s.grade}</span>
+          <div style="font-size:12px;color:#8a8674;margin-top:2px;">${latest.range?`"${latest.range}" · `:''}최초 ${latest.score}점 → 재시험 <b style="color:var(--green);">${latest.retryScore}점</b> (${fmtDate(latest.retryDate)})</div>
+        </div>
+        <button class="btn sm outline" onclick="copyText(this)" data-text="${encodeURIComponent(kmmRetryPassMessage(s.name, latest.range, latest.retryScore))}">문자 복사</button>
+      </div>
+    </div>`).join('')}
+  ` : ''}
+  `;
+}
+function renderKmmMakeupCard(s, latest){
+  const cls = db.classes.find(c=>(c.studentIds||[]).includes(s.id));
+  return `<div class="card">
+    <div class="row between">
+      <div>
+        <b>${s.name}</b> <span class="badge gray" style="font-size:11px;">${cls?cls.name:'미배정'}</span>
+        <div style="font-size:12px;color:#8a8674;margin-top:2px;">최근 KMM: <b style="color:var(--red);">${latest.score}점</b> (${fmtDate(latest.date)})</div>
+      </div>
+      <button class="btn sm outline" onclick="goto('students');currentSubState.studentDetail='${s.id}';render();">학생 페이지</button>
+    </div>
+    <div class="row" style="margin-top:8px;gap:6px;">
+      <input type="text" id="kmmRangeEdit_${latest.id}" placeholder="시험 범위 (예: 1~3단원)" style="flex:1;font-size:12px;" value="${latest.range||''}">
+      <button class="btn sm outline" onclick="saveKmmRange('${latest.id}', this)">범위 저장</button>
+    </div>
+    <div style="margin-top:10px;">
+      <div style="font-size:12px;color:#8a8674;margin-bottom:4px;">✏️ 보강 시 해야 할 학습</div>
+      <textarea id="kmmNote_${s.id}" rows="2" placeholder="예: 유리수 계산 단원 다시 짚어주기">${s.kmmMakeupNote||''}</textarea>
+      <button class="btn sm gold" style="margin-top:6px;" onclick="saveKmmMakeupNote('${s.id}', this)">메모 저장</button>
+    </div>
+    <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);">
+      <div style="font-size:12px;color:#8a8674;margin-bottom:4px;">🔁 재도전 시험 결과</div>
+      <div class="row" style="gap:6px;">
+        <input type="number" id="kmmRetryScore_${latest.id}" placeholder="점수" style="width:80px;" value="${latest.retryScore ?? ''}">
+        <button class="btn sm gold" onclick="saveKmmRetry('${s.id}','${latest.id}','${latest.range||''}', this)">재도전 결과 저장</button>
+      </div>
+      ${latest.retryScore!=null ? `<div style="font-size:11px;color:#8a8674;margin-top:4px;">최근 저장: ${latest.retryScore}점 (${fmtDate(latest.retryDate)})${latest.retryScore<70?' — 아직 기준 미달, 보강 계속':''}</div>` : ''}
+    </div>
+  </div>`;
+}
+async function saveKmmMakeupNote(stuId, btn){
+  const text = document.getElementById(`kmmNote_${stuId}`).value;
+  const ok = await fsUpdate('students', stuId, {kmmMakeupNote: text});
+  if(btn){
+    const original = btn.textContent;
+    btn.textContent = ok ? '✅ 저장됐어요!' : '❌ 저장 실패';
+    setTimeout(()=>{ btn.textContent = original; }, 1500);
+  }
+}
+async function saveKmmRange(kmmId, btn){
+  const range = document.getElementById(`kmmRangeEdit_${kmmId}`).value;
+  const ok = await fsUpdate('kmm', kmmId, {range});
+  if(btn){
+    const original = btn.textContent;
+    btn.textContent = ok ? '✅ 저장됨' : '❌ 실패';
+    setTimeout(()=>{ btn.textContent = original; }, 1500);
+  }
+}
+async function saveKmmRetry(stuId, kmmId, range, btn){
+  const val = document.getElementById(`kmmRetryScore_${kmmId}`).value;
+  if(val===''){ alert('점수를 입력해주세요.'); return; }
+  const score = Number(val);
+  const ok = await fsUpdate('kmm', kmmId, {retryScore: score, retryDate: todayISO()});
+  if(!ok) return;
+  if(score>=70){
+    const s = studentById(stuId);
+    openMessagePreview(`${s.name} 학생 재시험 통과!`, kmmRetryPassMessage(s.name, range, score));
+  }else if(btn){
+    const original = btn.textContent;
+    btn.textContent = '저장됨 (아직 미달)';
+    setTimeout(()=>{ btn.textContent = original; }, 1800);
+  }
+}
+function openMessagePreview(title, text){
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalBody').innerHTML = `<textarea readonly rows="5" style="width:100%;font-size:12px;">${text}</textarea>`;
+  const btn = document.getElementById('modalConfirmBtn');
+  btn.textContent = '텍스트 복사하기';
+  btn.onclick = ()=>{
+    navigator.clipboard?.writeText(text).catch(()=>{});
+    btn.textContent = '✅ 복사됐어요!';
+    setTimeout(()=>{ closeModal(); btn.textContent='확인'; }, 1200);
+  };
+  document.getElementById('modalBg').style.display='flex';
 }
 function kmmAward(score){
   if(score===100) return {label:'대상', emoji:'🏆'};
