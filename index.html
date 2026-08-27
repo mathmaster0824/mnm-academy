@@ -180,7 +180,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-26 v25 (교재일괄등록)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-26 v30 (출석자동+대시보드미제출)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -246,7 +246,7 @@ let db = {
   settings:{ adminPassword:'0000', isDefaultPassword:true },
   classes:[], students:[], courses:[], videos:[],
   classRecords:{}, weeklyPlans:{}, fridaySupp:{}, submissions:{}, practiceProgress:{},
-  questions:[], feedbacks:[], kmm:[]
+  questions:[], feedbacks:[], kmm:[], schoolExams:[], schoolScores:{}
 };
 
 function uid(prefix){ return prefix+'_'+Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-4); }
@@ -365,6 +365,10 @@ function attachListeners(){
     fsdb.collection('questions').onSnapshot(snap=>{ db.questions = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
     fsdb.collection('feedbacks').onSnapshot(snap=>{ db.feedbacks = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
     fsdb.collection('kmm').onSnapshot(snap=>{ db.kmm = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
+    fsdb.collection('schoolExams').onSnapshot(snap=>{ db.schoolExams = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
+    fsdb.collection('schoolScores').onSnapshot(snap=>{
+      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.schoolScores=m; render();
+    }),
   ];
   unsubscribers = subs;
   setConnStatus(true);
@@ -487,6 +491,7 @@ const DIRECTOR_NAV = [
   {id:'videolib', label:'영상 보관함', icon:'🎬'},
   {id:'students', label:'학생별 관리', icon:'🧑‍🎓'},
   {id:'kmmMakeup', label:'KMM 보강', icon:'📐'},
+  {id:'schoolExams', label:'내신 성적', icon:'🏫'},
   {id:'hwreview', label:'숙제 확인', icon:'📸'},
   {id:'qna', label:'질문 게시판', icon:'💬'},
   {id:'feedback', label:'학부모 피드백', icon:'📨'},
@@ -806,6 +811,7 @@ function renderInner(){
       case 'videolib': html+=renderVideoLib(); break;
       case 'students': html+=renderStudents(); break;
       case 'kmmMakeup': html+=renderKmmMakeup(); break;
+      case 'schoolExams': html+=renderSchoolExams(); break;
       case 'hwreview': html+=renderHomeworkReview(); break;
       case 'qna': html+=renderQnaDirector(); break;
       case 'feedback': html+=renderFeedback(); break;
@@ -851,6 +857,18 @@ function renderDashboard(){
   const outStudents = db.students.filter(s=>(s.warnings||[]).length>=3);
   const pwWarn = db.settings.isDefaultPassword;
   const fridayRows = dow===5 ? getTodaysFridaySupp() : [];
+  const today = todayISO();
+  const missingHwToday = [];
+  todaysClasses.forEach(c=>{
+    const range = homeworkDateRangeDates(c.dayGroup, today);
+    (c.studentIds||[]).map(studentById).filter(Boolean).forEach(s=>{
+      if(!range.length) return;
+      const submittedCount = range.filter(d=>db.submissions[s.id+'_'+d]).length;
+      if(submittedCount < range.length){
+        missingHwToday.push({name:s.name, className:c.name, submitted:submittedCount, total:range.length});
+      }
+    });
+  });
 
   return `
   <h1 class="page-title">대시보드</h1>
@@ -865,6 +883,12 @@ function renderDashboard(){
     <h3 style="margin-top:0;">오늘 수업 반</h3>
     ${todaysClasses.length ? todaysClasses.map(c=>`<div class="row between" style="padding:8px 0;border-bottom:1px solid var(--line);"><span>${c.name} <span style="color:#9c9880;font-size:12px;">(${(c.studentIds||[]).length}명)</span></span><button class="btn sm outline" onclick="goto('classes');openClass('${c.id}')">바로 열기</button></div>`).join('') : `<div class="empty" style="padding:20px;">오늘 수업이 없어요.</div>`}
   </div>
+  ${todaysClasses.length ? `<div class="card" style="${missingHwToday.length?'border-color:var(--red);':''}">
+    <h3 style="margin-top:0;${missingHwToday.length?'color:var(--red);':''}">📸 오늘 수업 중 숙제 미제출 학생${missingHwToday.length? ` (${missingHwToday.length}명)`:''}</h3>
+    ${missingHwToday.length ? `<div style="font-size:13px;line-height:2;">
+      ${missingHwToday.map(x=>`<div class="row between"><span><b>${x.name}</b> <span style="color:#9c9880;font-size:12px;">${x.className}</span></span><span class="badge red">${x.submitted}/${x.total} 제출</span></div>`).join('')}
+    </div>` : `<div class="empty" style="padding:16px;">오늘 수업 학생 전원 숙제 제출 완료!</div>`}
+  </div>` : ''}
   ${dow===5 ? `<div class="card">
     <h3 style="margin-top:0;">🕓 오늘 금요일 보강 (시간순)</h3>
     ${fridayRows.length ? `<table><tr><th>시간</th><th>학생</th><th>반</th><th>메모</th></tr>
@@ -1002,6 +1026,15 @@ function toggleDayGroup(clsId, currentGroup){
   });
 }
 
+async function seedDefaultAttendance(clsId, date, students){
+  const key = clsId+'_'+date;
+  const rec = db.classRecords[key] || {};
+  for(const s of students){
+    if(!rec[s.id] || rec[s.id].attendance===undefined){
+      await fsSet('classRecords', key, {[s.id]: {attendance:'출석'}});
+    }
+  }
+}
 function renderClassDetail(cls){
   const date = currentSubState.classDate || todayISO();
   const dayGroupLabel = cls.dayGroup==='mon-wed' ? '월수반' : '화목반';
@@ -1009,6 +1042,12 @@ function renderClassDetail(cls){
   const key = cls.id+'_'+date;
   const rec = db.classRecords[key] || {};
   const unassigned = db.students.filter(s=>!(cls.studentIds||[]).includes(s.id) && s.status!=='withdrawn');
+
+  currentSubState._attSeeded = currentSubState._attSeeded || {};
+  if(!currentSubState._attSeeded[key]){
+    currentSubState._attSeeded[key] = true;
+    seedDefaultAttendance(cls.id, date, students);
+  }
 
   const hwDays = homeworkRangeForClassDate(cls.dayGroup, date);
   function studentHwText(stuId){
@@ -1121,7 +1160,7 @@ function buildDailyReportText(s, date, r, dayGroup){
   return `[M&m 수학훈련소] ${s.name} 학생 오늘의 학습 리포트 · ${fmtDate(date)}
 ${trafficEmoji} 출석: ${r.attendance||'-'}
 ${examLine}${kmmMakeupTxt}
-· 오늘 개념학습: ${stepTxt}${extraStepsTxt}
+· 오늘 ${r.stepType==='유형'?'유형학습':'개념학습'}: ${stepTxt}${extraStepsTxt}
 ${r.practiceBook? `· 문제 적용: ${r.practiceBook}${r.practiceRange? ' '+r.practiceRange : ''}${(r.extraPractice&&r.extraPractice.length)? ', '+r.extraPractice.map(e=>`${e.book}${e.range?' '+e.range:''}`).join(', ') : ''}` : ((r.extraPractice&&r.extraPractice.length)? `· 문제 적용: ${r.extraPractice.map(e=>`${e.book}${e.range?' '+e.range:''}`).join(', ')}` : '')}
 · 숙제완성도: ${hwTxt}
 ${r.note? `· 특이사항: ${r.note}` : ''}${warnTxt}${bookDoneTxt}`;
@@ -1497,12 +1536,16 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames){
     <td>${(()=>{
       const last = lastRecordedStep(s.id, date);
       const hint = last ? `<div style="font-size:10px;color:#8a8674;margin-bottom:4px;">지난 시간(${fmtDate(last.date)}): ${stepShortLabel(last.stepId)}</div>` : '';
-      return hint + renderStepCascadeSelect(cls.id, date, s.id, r.stepId) + renderExtraSteps(cls.id, date, s.id, r.extraSteps);
+      const memoBox = `<textarea placeholder="📝 다음 시간 메모 (나만 보임)" rows="1" style="font-size:10.5px;width:100%;margin-bottom:4px;background:#fffbea;" onchange="fsUpdate('students','${s.id}',{conceptMemo:this.value})">${s.conceptMemo||''}</textarea>`;
+      const typeSelect = `<select style="width:100%;font-size:10.5px;margin-bottom:4px;" onchange="updateClassRec('${cls.id}','${date}','${s.id}','stepType',this.value)">
+        <option value="개념" ${(r.stepType||'개념')==='개념'?'selected':''}>오늘: 개념학습</option>
+        <option value="유형" ${r.stepType==='유형'?'selected':''}>오늘: 유형학습</option>
+      </select>`;
+      return hint + memoBox + typeSelect + renderStepCascadeSelect(cls.id, date, s.id, r.stepId) + renderExtraSteps(cls.id, date, s.id, r.extraSteps);
     })()}</td>
     <td>
       ${renderBookSelect(cls.id, date, s.id, r.practiceBook, bookOptions)}
       <input type="text" placeholder="범위 (예: p.24~31)" style="width:130px;font-size:11px;margin-top:4px;" value="${r.practiceRange||''}" onchange="updateClassRec('${cls.id}','${date}','${s.id}','practiceRange',this.value)">
-      ${renderExtraPractice(cls.id, date, s.id, r.extraPractice, bookOptions)}
       ${renderPracticeTracks(s.id, date)}
     </td>
     <td>
@@ -2263,7 +2306,10 @@ function renderMemoGoalCard(stuId, directorView){
   <div class="card">
     <h3 style="margin-top:0;">📝 메모 · 목표</h3>
     ${directorView ? `
-      <label style="font-size:12px;color:#8a8674;">학습 목표 / 향후 방향 메모</label>
+      <label style="font-size:12px;color:#8a8674;">재학 학교</label>
+      <input type="text" list="allSchoolsList" placeholder="예: 서울중학교" value="${s.school||''}" onchange="updateStudentField('${stuId}','school',this.value)">
+      <datalist id="allSchoolsList">${[...new Set(db.students.map(x=>x.school).filter(Boolean))].map(sc=>`<option value="${sc}">`).join('')}</datalist>
+      <label style="font-size:12px;color:#8a8674;display:block;margin-top:8px;">학습 목표 / 향후 방향 메모</label>
       <textarea rows="3" onchange="updateStudentField('${stuId}','goal',this.value)">${s.goal||''}</textarea>
       <label style="font-size:12px;color:#8a8674;display:block;margin-top:8px;">원장 메모</label>
       <textarea rows="2" onchange="updateStudentField('${stuId}','memo',this.value)">${s.memo||''}</textarea>
@@ -2547,6 +2593,115 @@ function kmmRetryPassMessage(studentName, range, score){
   const rangeTxt = range ? `"${range}" 부분의 ` : '';
   return `[M&m 수학훈련소] ${studentName} 학생 KMM 보강 종료 안내\n\n${studentName} 학생이 ${rangeTxt}재시험을 ${score}점으로 통과하여 보강이 종료됩니다.\n\n수고 많으셨습니다.`;
 }
+function extractGradeNumber(gradeStr){
+  const m = (gradeStr||'').match(/\d+/);
+  return m ? parseInt(m[0],10) : null;
+}
+function renderSchoolExams(){
+  currentSubState.examCalMonth = currentSubState.examCalMonth || todayISO().slice(0,7); // 'YYYY-MM'
+  const [y,m] = currentSubState.examCalMonth.split('-').map(Number);
+  const firstDow = new Date(y, m-1, 1).getDay();
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const examsByDate = {};
+  db.schoolExams.forEach(e=>{ examsByDate[e.date] = examsByDate[e.date]||[]; examsByDate[e.date].push(e); });
+
+  let cells = '';
+  for(let i=0;i<firstDow;i++) cells += `<div></div>`;
+  for(let d=1; d<=daysInMonth; d++){
+    const dateStr = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const dayExams = examsByDate[dateStr] || [];
+    const isToday = dateStr === todayISO();
+    cells += `<div style="min-height:52px;border:1px solid var(--line);border-radius:6px;padding:3px;font-size:10px;${isToday?'background:#fdf2df;':''}">
+      <div style="font-weight:${isToday?'700':'400'};">${d}</div>
+      ${dayExams.map(e=>`<div style="background:var(--gold);color:#fff;border-radius:4px;padding:1px 3px;margin-top:2px;font-size:9px;cursor:pointer;" onclick="currentSubState.examScoreOpen='${e.id}';render();">${e.school} ${e.grade}학년</div>`).join('')}
+    </div>`;
+  }
+  const upcoming = [...db.schoolExams].sort((a,b)=>a.date.localeCompare(b.date));
+
+  return `
+  <h1 class="page-title">🏫 내신 성적</h1>
+  <p class="page-sub">학교별 시험 일정을 달력에 등록하고, 그 시험에 바로 점수를 입력할 수 있어요.</p>
+
+  <div class="card">
+    <div class="row between" style="margin-bottom:8px;">
+      <button class="btn sm outline" onclick="shiftExamMonth(-1)">← 이전 달</button>
+      <h3 style="margin:0;">${y}년 ${m}월</h3>
+      <button class="btn sm outline" onclick="shiftExamMonth(1)">다음 달 →</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;font-size:11px;text-align:center;margin-bottom:4px;color:#8a8674;">
+      <div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;">${cells}</div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">+ 시험 일정 추가</h3>
+    <div class="row">
+      <input type="text" id="examSchool" list="allSchoolsList" placeholder="학교명" style="width:140px;">
+      <datalist id="allSchoolsList">${[...new Set(db.students.map(x=>x.school).filter(Boolean))].map(sc=>`<option value="${sc}">`).join('')}</datalist>
+      <select id="examGrade"><option value="1">1학년</option><option value="2">2학년</option><option value="3">3학년</option></select>
+      <input type="text" id="examName" placeholder="시험명 (예: 2학기 기말고사)" style="width:150px;">
+      <input type="date" id="examDate" value="${todayISO()}">
+      <button class="btn sm gold" onclick="addSchoolExam()">등록</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">전체 시험 일정</h3>
+    ${upcoming.length ? upcoming.map(e=>`
+      <div style="padding:8px 0;border-bottom:1px solid var(--line);">
+        <div class="row between">
+          <div><b>${e.school}</b> ${e.grade}학년 · ${e.examName} <span style="color:#8a8674;font-size:12px;">(${fmtDate(e.date)})</span></div>
+          <div class="row" style="gap:4px;">
+            <button class="btn sm outline" onclick="currentSubState.examScoreOpen=currentSubState.examScoreOpen==='${e.id}'?null:'${e.id}';render();">${currentSubState.examScoreOpen===e.id?'닫기':'점수 입력'}</button>
+            <button class="btn sm outline" onclick="deleteSchoolExam('${e.id}')">삭제</button>
+          </div>
+        </div>
+        ${currentSubState.examScoreOpen===e.id ? renderExamScoreEntry(e) : ''}
+      </div>
+    `).join('') : `<div class="empty">등록된 시험 일정이 없어요.</div>`}
+  </div>
+  `;
+}
+function shiftExamMonth(delta){
+  const [y,m] = currentSubState.examCalMonth.split('-').map(Number);
+  const d = new Date(y, m-1+delta, 1);
+  currentSubState.examCalMonth = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  render();
+}
+async function addSchoolExam(){
+  const school = document.getElementById('examSchool').value.trim();
+  const grade = document.getElementById('examGrade').value;
+  const examName = document.getElementById('examName').value.trim();
+  const date = document.getElementById('examDate').value;
+  if(!school || !examName || !date){ alert('학교명, 시험명, 날짜를 모두 입력해주세요.'); return; }
+  await fsAdd('schoolExams', {school, grade:Number(grade), examName, date});
+  document.getElementById('examSchool').value=''; document.getElementById('examName').value='';
+}
+function deleteSchoolExam(id){
+  openConfirm('이 시험 일정을 삭제할까요?', '입력된 점수 기록도 더 이상 이 화면에서 안 보이게 돼요.', async ()=>{
+    await fsDelete('schoolExams', id);
+  });
+}
+function renderExamScoreEntry(exam){
+  const students = db.students.filter(s=>s.status!=='withdrawn' && s.school===exam.school && extractGradeNumber(s.grade)===exam.grade);
+  if(!students.length){
+    return `<div class="empty" style="padding:10px;font-size:12px;">"${exam.school}" ${exam.grade}학년으로 등록된 학생이 없어요. 학생 상세 페이지에서 "재학 학교"를 먼저 입력해주세요.</div>`;
+  }
+  return `<table style="margin-top:8px;">
+    <tr><th>학생</th><th>점수</th></tr>
+    ${students.map(s=>{
+      const key = exam.id+'_'+s.id;
+      const val = db.schoolScores[key]?.score ?? '';
+      return `<tr><td>${s.name}</td><td><input type="number" style="width:70px;" value="${val}" onchange="saveSchoolScore('${exam.id}','${s.id}',this.value)"></td></tr>`;
+    }).join('')}
+  </table>`;
+}
+async function saveSchoolScore(examId, stuId, val){
+  const key = examId+'_'+stuId;
+  if(val===''){ await fsDelete('schoolScores', key); return; }
+  await fsSet('schoolScores', key, {examId, studentId:stuId, score:Number(val)});
+}
 function renderKmmMakeup(){
   const active = db.students
     .filter(s=>s.status!=='withdrawn')
@@ -2696,7 +2851,92 @@ function practiceNotePhrase(ratio){
   if(ratio>=0.3) return '풀이과정은 간헐적으로 확인되는 편이라, 조금 더 꾸준히 남길 수 있도록 유도하겠습니다.';
   return '풀이과정 기록이 빈약한 편이라, 앞으로 풀이연습장을 함께 챙겨야한다고 강조하고 있습니다.';
 }
+function monthRangeDailyScores(stuId, yearMonth){
+  const rows = [];
+  Object.entries(db.classRecords).forEach(([key,obj])=>{
+    const rec = obj[stuId];
+    if(!rec) return;
+    const date = key.slice(-10);
+    if(!date.startsWith(yearMonth)) return;
+    if(rec.dailyTestScore!==undefined && rec.dailyTestScore!=='' && rec.dailyTestScore!==null){
+      rows.push({date, score:Number(rec.dailyTestScore)});
+    }
+  });
+  rows.sort((a,b)=>a.date.localeCompare(b.date));
+  return rows.map(r=>r.score);
+}
+function lastStepByType(stuId, stepType){
+  let best = null;
+  Object.entries(db.classRecords).forEach(([key,obj])=>{
+    const rec = obj[stuId];
+    if(!rec || !rec.stepId) return;
+    if((rec.stepType||'개념') !== stepType) return;
+    const date = key.slice(-10);
+    if(!best || date > best.date) best = {date, stepId: rec.stepId};
+  });
+  return best;
+}
+function monthlyAttendanceRate(stuId, yearMonth){
+  const rows = [];
+  Object.entries(db.classRecords).forEach(([key,obj])=>{
+    const rec = obj[stuId]; if(!rec) return;
+    const date = key.slice(-10);
+    if(!date.startsWith(yearMonth)) return;
+    rows.push(rec.attendance || '출석');
+  });
+  if(!rows.length) return null;
+  const absent = rows.filter(a=>a==='결석').length;
+  const late = rows.filter(a=>a==='지각').length;
+  return { rate: Math.round((rows.length-absent)/rows.length*100), total: rows.length, absent, late };
+}
+function monthlyHomeworkRate(stuId, yearMonth){
+  const lessons = studentLessonRecords(stuId).filter(l=>l.date.startsWith(yearMonth));
+  if(!lessons.length) return null;
+  let totalExpected=0, totalSubmitted=0;
+  lessons.forEach(l=>{
+    const cls = classById(l.clsId);
+    if(!cls) return;
+    const range = homeworkDateRangeDates(cls.dayGroup, l.date);
+    totalExpected += range.length;
+    totalSubmitted += range.filter(d=>db.submissions[stuId+'_'+d]).length;
+  });
+  if(!totalExpected) return null;
+  return Math.round(totalSubmitted/totalExpected*100);
+}
+function buildMonthlyReportText(stuId, traffic, comment){
+  const s = studentById(stuId);
+  const now = new Date();
+  const yearMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const monthLabel = `${now.getFullYear()}년 ${now.getMonth()+1}월`;
+  const trafficEmoji = {green:'🟢',yellow:'🟡',red:'🔴'}[traffic];
+
+  const dailyScores = monthRangeDailyScores(stuId, yearMonth);
+  const dailyAvg = dailyScores.length ? Math.round(dailyScores.reduce((a,b)=>a+b,0)/dailyScores.length) : null;
+  const kmmThisMonth = db.kmm.filter(k=>k.studentId===stuId && k.date.startsWith(yearMonth)).sort((a,b)=>b.date.localeCompare(a.date))[0];
+  const conceptStep = lastStepByType(stuId, '개념');
+  const typeStep = lastStepByType(stuId, '유형');
+  const doneThisMonth = (db.practiceProgress[stuId]?.tracks||[]).filter(t=>t.done && t.doneDate && t.doneDate.startsWith(yearMonth));
+  const att = monthlyAttendanceRate(stuId, yearMonth);
+  const hwRate = monthlyHomeworkRate(stuId, yearMonth);
+
+  const text = `[M&m 수학훈련소] ${s.name} 학생 월말 리포트 · ${monthLabel}
+${trafficEmoji} 현재 상태: ${traffic==='green'?'순항중':traffic==='yellow'?'주의 관찰':'관찰 필요'}
+
+· 이번 달 출석률: ${att? `${att.rate}% (지각 ${att.late}회, 결석 ${att.absent}회 / 총 ${att.total}회)` : '기록 없음'}
+· 이번 달 과제 제출율: ${hwRate!=null? `${hwRate}%` : '기록 없음'}
+· 이번 달 일일테스트: ${dailyScores.length? `${dailyScores.join('/')} (평균 ${dailyAvg}점)` : '이번 달 응시 기록 없음'}
+· 이번 달 KMM 결과: ${kmmThisMonth? `${kmmThisMonth.score}점${kmmAwardText(kmmThisMonth.score)? ' — '+kmmAwardText(kmmThisMonth.score):''}` : '이번 달 응시 없음'}
+· 현재 진도(개념학습): ${conceptStep? stepShortLabel(conceptStep.stepId) : '-'}
+· 현재 진도(유형학습): ${typeStep? stepShortLabel(typeStep.stepId) : '-'}
+${doneThisMonth.length? `· 이번 달 완료한 교재: ${doneThisMonth.map(t=>`🎉 ${t.book}`).join(', ')}` : ''}
+
+[다음 달 학습 방향]
+${comment}`;
+  return `<pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.7;margin:0;">${text}</pre>
+  <button class="btn sm outline" style="margin-top:10px;" onclick="copyText(this)" data-text="${encodeURIComponent(text)}">텍스트 복사하기</button>`;
+}
 function renderFeedbackPreview(stuId,type,traffic,comment){
+  if(type==='monthly') return buildMonthlyReportText(stuId, traffic, comment);
   const s = studentById(stuId);
   const scores = studentDailyScores(stuId);
   const avg = scores.length? Math.round(scores.reduce((a,b)=>a+b.score,0)/scores.length):0;
@@ -2712,7 +2952,7 @@ function renderFeedbackPreview(stuId,type,traffic,comment){
     .sort((a,b)=>a.date.localeCompare(b.date));
   const latestHwLevel = hwLevelRows.length ? hwLevelRows[hwLevelRows.length-1].level : '';
   const practiceRatio = practiceNoteRatio(stuId);
-  const text = `[M&m 수학훈련소] ${s.name} 학생 ${type==='weekly'?'주간':'월말'} 리포트
+  const text = `[M&m 수학훈련소] ${s.name} 학생 주간 리포트
 ${trafficEmoji} 현재 상태: ${traffic==='green'?'순항중':traffic==='yellow'?'주의 관찰':'관찰 필요'}
 
 · 일일테스트 평균: ${scores.length? avg+'점' : '오늘은 KMM 시험일이라 일일테스트가 없었어요'}${scores.length? ' — '+dailyTestPhrase(avg, true) : ''}
