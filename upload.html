@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M&m 영상 자동 업로드</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@700;900&family=Noto+Sans+KR:wght@400;500;600;700&display=swap');
+  :root{
+    --navy:#141B2E; --navy2:#1D2A44; --navy3:#26365A;
+    --gold:#C9A24B; --gold-l:#E8CE8B;
+    --ink:#1A1D26; --paper:#F7F5F0; --line:#E4DFD3;
+    --green:#3EA55A; --yellow:#E0A82E; --red:#D65A4A;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Noto Sans KR',sans-serif;background:var(--paper);color:var(--ink);padding:16px;padding-bottom:60px;}
+  h1,.serif{font-family:'Noto Serif KR',serif;}
+  h1{font-size:20px;color:var(--navy);margin:0 0 4px;}
+  .sub{color:#8a8674;font-size:13px;margin-bottom:20px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:16px;}
+  label{display:block;font-weight:600;font-size:13px;margin-bottom:6px;color:var(--navy2);}
+  input[type=text],input[type=date],select,textarea{
+    width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--paper);
+    font-size:15px;margin-bottom:14px;font-family:inherit;
+  }
+  input[type=file]{width:100%;margin-bottom:14px;}
+  .row{display:flex;gap:8px;flex-wrap:wrap;}
+  .chip{padding:8px 12px;border-radius:20px;border:1px solid var(--line);background:#fff;font-size:13px;cursor:pointer;user-select:none;}
+  .chip.sel{background:var(--navy);color:#fff;border-color:var(--navy);}
+  .btn{display:block;width:100%;padding:15px;border-radius:12px;border:none;font-weight:700;font-size:16px;cursor:pointer;margin-top:6px;}
+  .btn-gold{background:linear-gradient(135deg,var(--gold-l),var(--gold));color:var(--navy);}
+  .btn-navy{background:var(--navy);color:#fff;}
+  .btn:disabled{opacity:.5;}
+  canvas{width:100%;border-radius:10px;border:1px solid var(--line);margin-bottom:14px;background:#000;}
+  .log{background:var(--navy);color:#dfe6f5;font-size:13px;border-radius:10px;padding:14px;font-family:monospace;white-space:pre-wrap;min-height:60px;line-height:1.6;}
+  .step{color:var(--gold-l);}
+  .ok{color:#8bdc9e;}
+  .err{color:#ff9d8a;}
+  .badge{display:inline-block;background:var(--gold);color:var(--navy);font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;margin-left:6px;}
+  .hint{font-size:12px;color:#8a8674;margin-top:-10px;margin-bottom:14px;}
+</style>
+</head>
+<body>
+
+<h1>M&m 영상 자동 업로드</h1>
+<div class="sub">썸네일 생성 → 유튜브 업로드 → 썸네일 지정 → 학원 프로그램 등록을 한번에</div>
+
+<div class="card" id="loginBox">
+  <label>1. 구글 계정 연결 (유튜브 업로드 권한)</label>
+  <button class="btn btn-navy" id="btnGoogleLogin">구글 로그인 / 권한 허용</button>
+  <div class="hint" id="loginStatus">아직 연결 안 됨</div>
+</div>
+
+<div class="card">
+  <label>2. 영상 파일 선택</label>
+  <input type="file" id="videoFile" accept="video/*">
+
+  <label>3. 영상 제목 (학생 이름 or 주제) — 썸네일에도 그대로 들어가요</label>
+  <input type="text" id="titleText" placeholder="예: 김서연 - 이차방정식 개념">
+
+  <label>썸네일 미리보기</label>
+  <canvas id="thumbCanvas" width="1280" height="720"></canvas>
+  <img id="baseThumb" src="thumb_base.png" style="display:none;">
+  <div class="hint">사진·박스 디자인은 고정, 아래 제목 글씨만 자동으로 바뀌어요. 사진을 바꾸고 싶으면 언제든 새 사진으로 다시 요청해주세요.</div>
+</div>
+
+<div class="card">
+  <label>4. 영상 보관함 카테고리 (과정)</label>
+  <select id="courseSelect"><option value="">불러오는 중...</option></select>
+  <div class="hint">여기서 선택한 과정으로 학원 프로그램 "영상 보관함"에 자동 등록돼요. 학생 배정은 학원 프로그램에서 직접 하시면 됩니다.</div>
+
+  <label>공개 범위</label>
+  <select id="privacy">
+    <option value="unlisted" selected>미등록(링크 아는 사람만 시청) — 추천</option>
+    <option value="private">비공개</option>
+    <option value="public">공개</option>
+  </select>
+</div>
+
+<button class="btn btn-gold" id="btnRun" disabled>🚀 자동 처리 시작</button>
+
+<div class="card" style="margin-top:16px;">
+  <label>진행 상황</label>
+  <div class="log" id="logBox">대기 중...</div>
+</div>
+
+<!-- Firebase (academy program과 동일한 프로젝트) -->
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<!-- Google Identity Services (유튜브 업로드용 OAuth) -->
+<script src="https://accounts.google.com/gsi/client"></script>
+
+<script>
+/* =========================================================
+   ⚠️ 아래 두 값만 원장님이 직접 채워주세요 (README.md 참고)
+   ========================================================= */
+const GOOGLE_CLIENT_ID = "여기에_구글클라우드에서_발급받은_OAuth_클라이언트_ID를_붙여넣으세요";
+
+/* Firebase 설정은 학원 프로그램과 동일 (이미 채워져 있음) */
+const firebaseConfig = {
+  apiKey: "AIzaSyA4Uf5jRBd5K9CKU-W4l0Rk5KvQDp-Rq2M",
+  authDomain: "math-master-6a888.firebaseapp.com",
+  projectId: "math-master-6a888",
+  storageBucket: "math-master-6a888.firebasestorage.app",
+  messagingSenderId: "943375843047",
+  appId: "1:943375843047:web:116ce75ba8d15cb126ec42"
+};
+firebase.initializeApp(firebaseConfig);
+const fsdb = firebase.firestore();
+const fauth = firebase.auth();
+
+let db = { courses: [] };
+let accessToken = null;
+
+const logBox = document.getElementById('logBox');
+function log(msg, cls){
+  const line = document.createElement('div');
+  if(cls) line.className = cls;
+  line.textContent = msg;
+  logBox.appendChild(line);
+  logBox.scrollTop = logBox.scrollHeight;
+}
+function clearLog(){ logBox.innerHTML=''; }
+
+/* ---------------- Firebase 데이터 불러오기 ---------------- */
+async function loadData(){
+  await fauth.signInAnonymously();
+  const courseSnap = await fsdb.collection('courses').get();
+  db.courses = courseSnap.docs.map(d=>({id:d.id, ...d.data()}));
+  renderCourseSelect();
+}
+function renderCourseSelect(){
+  const sel = document.getElementById('courseSelect');
+  const ORDER = ['[초등] 초2-1학기','[초등] 초2-2학기','[초등] 초3-1학기','[초등] 초3-2학기','[초등] 초4-1학기','[초등] 초4-2학기',
+    '[초등] 초5-1학기','[초등] 초5-2학기','[초등] 초6-1학기','[초등] 초6-2학기',
+    '[중등] 중1-1학기','[중등] 중1-2학기','[중등] 중2-1학기','[중등] 중2-2학기','[중등] 중3-1학기','[중등] 중3-2학기',
+    '[고등] 공수 1','[고등] 공수 2','[고등] 대수','[고등] 미적분','[고등] 확통'];
+  const sorted = [...db.courses].sort((a,b)=> ORDER.indexOf(a.name) - ORDER.indexOf(b.name));
+  sel.innerHTML = '<option value="">과정 선택 안함</option>' + sorted.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+}
+/* ---------------- 썸네일 생성 (Canvas) — 기존 원장님 스타일 재현 ---------------- */
+const canvas = document.getElementById('thumbCanvas');
+const ctx = canvas.getContext('2d');
+const baseImg = document.getElementById('baseThumb');
+let baseImgReady = false;
+baseImg.onload = ()=>{ baseImgReady = true; drawThumbnail(); };
+if(baseImg.complete) { baseImgReady = true; }
+
+function drawThumbnail(){
+  const title = document.getElementById('titleText').value || '영상 제목을 입력하세요';
+  const W = canvas.width, H = canvas.height;
+
+  if(baseImgReady){
+    ctx.drawImage(baseImg, 0, 0, W, H);
+  } else {
+    ctx.fillStyle = '#cccccc'; ctx.fillRect(0,0,W,H);
+  }
+
+  // 하단 가독성용 그라디언트 바
+  const barTop = 505;
+  const grad = ctx.createLinearGradient(0, barTop, 0, H);
+  grad.addColorStop(0, 'rgba(10,14,28,0)');
+  grad.addColorStop(1, 'rgba(10,14,28,1)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, barTop, W, H - barTop);
+
+  // 제목 (자동 줄바꿈 + 자동 축소, 노란 글씨 + 남색 테두리)
+  ctx.textBaseline = 'alphabetic';
+  ctx.lineJoin = 'round';
+  let fontSize = 92;
+  const maxWidth = W - 120;
+  ctx.font = `900 ${fontSize}px "Noto Sans KR", sans-serif`;
+  let lines = wrapText(ctx, title, maxWidth);
+  while((lines.length > 2 || lines.some(l=>ctx.measureText(l).width > maxWidth)) && fontSize > 48){
+    fontSize -= 4;
+    ctx.font = `900 ${fontSize}px "Noto Sans KR", sans-serif`;
+    lines = wrapText(ctx, title, maxWidth);
+  }
+  const lineHeight = fontSize * 1.18;
+  const totalH = lineHeight * lines.length;
+  const startY = H - 40 - totalH + fontSize*0.85;
+  lines.forEach((line,i)=>{
+    const w = ctx.measureText(line).width;
+    const x = (W - w) / 2;
+    const y = startY + i*lineHeight;
+    ctx.lineWidth = 10;
+    ctx.strokeStyle = '#141c3c';
+    ctx.strokeText(line, x, y);
+    ctx.fillStyle = '#FFDB14';
+    ctx.fillText(line, x, y);
+  });
+}
+function wrapText(ctx, text, maxWidth){
+  const words = text.split(' ');
+  const lines = []; let cur = '';
+  words.forEach(w=>{
+    const test = cur ? cur+' '+w : w;
+    if(ctx.measureText(test).width > maxWidth && cur){ lines.push(cur); cur = w; }
+    else cur = test;
+  });
+  if(cur) lines.push(cur);
+  return lines;
+}
+document.getElementById('titleText').addEventListener('input', drawThumbnail);
+drawThumbnail();
+
+/* ---------------- 구글 로그인 (YouTube 업로드 권한) ---------------- */
+let tokenClient;
+function initGoogleAuth(){
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: 'https://www.googleapis.com/auth/youtube.upload',
+    callback: (resp)=>{
+      if(resp.error){ log('로그인 실패: '+resp.error, 'err'); return; }
+      accessToken = resp.access_token;
+      document.getElementById('loginStatus').textContent = '✅ 연결됨';
+      checkReady();
+    }
+  });
+}
+document.getElementById('btnGoogleLogin').addEventListener('click', ()=>{
+  if(GOOGLE_CLIENT_ID.includes('여기에')){
+    alert('먼저 README.md 안내대로 구글 클라이언트 ID를 코드에 입력해주세요.');
+    return;
+  }
+  tokenClient.requestAccessToken();
+});
+
+function checkReady(){
+  const f = document.getElementById('videoFile').files[0];
+  document.getElementById('btnRun').disabled = !(accessToken && f);
+}
+document.getElementById('videoFile').addEventListener('change', checkReady);
+
+/* ---------------- 유튜브 업로드 (resumable) ---------------- */
+async function uploadToYoutube(file, title, privacy){
+  log('▶ 유튜브 업로드 시작...', 'step');
+  const metadata = {
+    snippet: { title: title, description: 'M&m 수학훈련소 개념 영상', categoryId: '27' },
+    status: { privacyStatus: privacy }
+  };
+  const initRes = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + accessToken,
+      'Content-Type': 'application/json',
+      'X-Upload-Content-Type': file.type || 'video/*',
+      'X-Upload-Content-Length': file.size
+    },
+    body: JSON.stringify(metadata)
+  });
+  if(!initRes.ok){ throw new Error('업로드 시작 실패: '+initRes.status+' '+await initRes.text()); }
+  const uploadUrl = initRes.headers.get('Location');
+
+  log('▶ 영상 전송 중... (파일 크기에 따라 시간이 걸려요)', 'step');
+  const putRes = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': file.type || 'video/*' },
+    body: file
+  });
+  if(!putRes.ok){ throw new Error('영상 전송 실패: '+putRes.status+' '+await putRes.text()); }
+  const data = await putRes.json();
+  log('✅ 유튜브 업로드 완료 (videoId: '+data.id+')', 'ok');
+  return data.id;
+}
+
+async function setThumbnail(videoId){
+  log('▶ 썸네일 지정 중...', 'step');
+  const blob = await new Promise(res=> canvas.toBlob(res, 'image/jpeg', 0.92));
+  const res = await fetch(`https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${videoId}`, {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer '+accessToken, 'Content-Type': 'image/jpeg' },
+    body: blob
+  });
+  if(!res.ok){ throw new Error('썸네일 지정 실패: '+res.status+' '+await res.text()); }
+  log('✅ 썸네일 지정 완료', 'ok');
+}
+
+/* ---------------- 학원 프로그램(Firestore) 등록 ---------------- */
+async function registerToAcademy(title, url, courseId){
+  log('▶ 학원 프로그램 영상 보관함에 등록 중...', 'step');
+  const vidRef = fsdb.collection('videos').doc();
+  await vidRef.set({ title, url, courseId: courseId || '' });
+  log('✅ 영상 보관함 등록 완료 — 학원 프로그램에서 학생 배정하시면 됩니다', 'ok');
+}
+
+/* ---------------- 전체 실행 ---------------- */
+document.getElementById('btnRun').addEventListener('click', async ()=>{
+  const file = document.getElementById('videoFile').files[0];
+  const title = document.getElementById('titleText').value.trim();
+  const courseId = document.getElementById('courseSelect').value;
+  const privacy = document.getElementById('privacy').value;
+  if(!file || !title){ alert('영상 파일과 제목을 확인해주세요.'); return; }
+
+  document.getElementById('btnRun').disabled = true;
+  clearLog();
+  try{
+    const videoId = await uploadToYoutube(file, title, privacy);
+    await setThumbnail(videoId);
+    const url = `https://youtu.be/${videoId}`;
+    await registerToAcademy(title, url, courseId);
+    log('\n🎉 전체 완료! 링크: '+url, 'ok');
+  }catch(e){
+    log('❌ 오류: '+e.message, 'err');
+  }finally{
+    document.getElementById('btnRun').disabled = false;
+  }
+});
+
+initGoogleAuth();
+loadData();
+</script>
+</body>
+</html>
