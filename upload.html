@@ -66,9 +66,24 @@
 </div>
 
 <div class="card">
-  <label>4. 영상 보관함 카테고리 (과정)</label>
-  <select id="courseSelect"><option value="">불러오는 중...</option></select>
-  <div class="hint">여기서 선택한 과정으로 학원 프로그램 "영상 보관함"에 자동 등록돼요. 학생 배정은 학원 프로그램에서 직접 하시면 됩니다.</div>
+  <label>4. 영상 종류</label>
+  <select id="videoType" onchange="onVideoTypeChange()">
+    <option value="개념">개념 영상</option>
+    <option value="유형">유형 영상 (문제풀이)</option>
+  </select>
+
+  <label>5. 학년학기 (과정)</label>
+  <select id="courseSelect" onchange="onCourseChange()"><option value="">불러오는 중...</option></select>
+
+  <div id="bookWrap" style="display:none;">
+    <label>교재명 (유형 영상은 필수)</label>
+    <input type="text" id="bookInput" placeholder="예: 쎈, 최상위, 개념책">
+  </div>
+
+  <label>단원 (선택, 넣으면 더 정확하게 분류돼요)</label>
+  <select id="unitSelect"><option value="">단원 선택 (학년학기 먼저)</option></select>
+
+  <div class="hint">여기서 선택한 정보로 학원 프로그램 "영상 보관함"에 자동 등록돼요. 학생 배정은 학원 프로그램에서 직접 하시면 됩니다.</div>
 
   <label>공개 범위</label>
   <select id="privacy">
@@ -138,7 +153,27 @@ function renderCourseSelect(){
     '[중등] 중1-1학기','[중등] 중1-2학기','[중등] 중2-1학기','[중등] 중2-2학기','[중등] 중3-1학기','[중등] 중3-2학기',
     '[고등] 공수 1','[고등] 공수 2','[고등] 대수','[고등] 미적분','[고등] 확통'];
   const sorted = [...db.courses].sort((a,b)=> ORDER.indexOf(a.name) - ORDER.indexOf(b.name));
-  sel.innerHTML = '<option value="">과정 선택 안함</option>' + sorted.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  sel.innerHTML = '<option value="">학년학기 선택</option>' + sorted.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+}
+function courseUnitsList(courseId){
+  const course = db.courses.find(c=>c.id===courseId);
+  if(!course || !course.steps) return [];
+  const seen = new Set(); const units = [];
+  course.steps.forEach(s=>{
+    const unit = s.split('>')[0].trim();
+    if(!seen.has(unit)){ seen.add(unit); units.push(unit); }
+  });
+  return units;
+}
+function onCourseChange(){
+  const courseId = document.getElementById('courseSelect').value;
+  const units = courseId ? courseUnitsList(courseId) : [];
+  const sel = document.getElementById('unitSelect');
+  sel.innerHTML = `<option value="">${courseId?'단원 선택':'단원 선택 (학년학기 먼저)'}</option>` + units.map(u=>`<option value="${u}">${u}</option>`).join('');
+}
+function onVideoTypeChange(){
+  const type = document.getElementById('videoType').value;
+  document.getElementById('bookWrap').style.display = type==='유형' ? 'block' : 'none';
 }
 /* ---------------- 썸네일 생성 (Canvas) — 기존 원장님 스타일 재현 ---------------- */
 const canvas = document.getElementById('thumbCanvas');
@@ -279,10 +314,10 @@ async function setThumbnail(videoId){
 }
 
 /* ---------------- 학원 프로그램(Firestore) 등록 ---------------- */
-async function registerToAcademy(title, url, courseId){
+async function registerToAcademy(title, url, courseId, videoType, book, unit){
   log('▶ 학원 프로그램 영상 보관함에 등록 중...', 'step');
   const vidRef = fsdb.collection('videos').doc();
-  await vidRef.set({ title, url, courseId: courseId || '' });
+  await vidRef.set({ title, url, courseId: courseId || '', videoType: videoType || '개념', book: book || '', unit: unit || '' });
   log('✅ 영상 보관함 등록 완료 — 학원 프로그램에서 학생 배정하시면 됩니다', 'ok');
 }
 
@@ -291,8 +326,12 @@ document.getElementById('btnRun').addEventListener('click', async ()=>{
   const file = document.getElementById('videoFile').files[0];
   const title = document.getElementById('titleText').value.trim();
   const courseId = document.getElementById('courseSelect').value;
+  const videoType = document.getElementById('videoType').value;
+  const book = document.getElementById('bookInput').value.trim();
+  const unit = document.getElementById('unitSelect').value;
   const privacy = document.getElementById('privacy').value;
   if(!file || !title){ alert('영상 파일과 제목을 확인해주세요.'); return; }
+  if(videoType==='유형' && !book){ alert('유형 영상은 교재명도 입력해주세요.'); return; }
 
   document.getElementById('btnRun').disabled = true;
   clearLog();
@@ -300,7 +339,7 @@ document.getElementById('btnRun').addEventListener('click', async ()=>{
     const videoId = await uploadToYoutube(file, title, privacy);
     await setThumbnail(videoId);
     const url = `https://youtu.be/${videoId}`;
-    await registerToAcademy(title, url, courseId);
+    await registerToAcademy(title, url, courseId, videoType, book, unit);
     log('\n🎉 전체 완료! 링크: '+url, 'ok');
   }catch(e){
     log('❌ 오류: '+e.message, 'err');

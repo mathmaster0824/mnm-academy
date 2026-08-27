@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M&m 기존 영상 등록</title>
+<style>
+  :root{
+    --navy:#141B2E; --navy2:#1D2A44; --gold:#C9A24B; --gold-l:#E8CE8B;
+    --ink:#1A1D26; --paper:#F7F5F0; --line:#E4DFD3; --radius:14px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Noto Sans KR',sans-serif;background:var(--paper);color:var(--ink);padding:16px;padding-bottom:60px;}
+  h1{font-size:20px;color:var(--navy);margin:0 0 4px;}
+  .sub{color:#8a8674;font-size:13px;margin-bottom:20px;line-height:1.6;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:16px;}
+  label{display:block;font-weight:600;font-size:13px;margin-bottom:6px;color:var(--navy2);}
+  input[type=text],select,textarea{
+    width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--paper);
+    font-size:15px;margin-bottom:14px;font-family:inherit;
+  }
+  textarea{min-height:140px;font-family:monospace;font-size:13px;resize:vertical;}
+  .btn{display:block;width:100%;padding:15px;border-radius:12px;border:none;font-weight:700;font-size:16px;cursor:pointer;margin-top:6px;}
+  .btn-gold{background:linear-gradient(135deg,var(--gold-l),var(--gold));color:var(--navy);}
+  .btn:disabled{opacity:.5;}
+  .log{background:var(--navy);color:#dfe6f5;font-size:13px;border-radius:10px;padding:14px;font-family:monospace;white-space:pre-wrap;min-height:60px;line-height:1.7;}
+  .ok{color:#8bdc9e;} .err{color:#ff9d8a;} .step{color:var(--gold-l);}
+  .hint{font-size:12px;color:#8a8674;margin-top:-10px;margin-bottom:14px;line-height:1.6;}
+  .tabs{display:flex;gap:8px;margin-bottom:16px;}
+  .tab{flex:1;padding:12px;text-align:center;border-radius:10px;border:1px solid var(--line);background:#fff;cursor:pointer;font-weight:600;font-size:14px;}
+  .tab.active{background:var(--navy);color:#fff;border-color:var(--navy);}
+  .example{background:var(--paper);border:1px dashed var(--line);border-radius:8px;padding:10px;font-size:12px;color:#8a8674;font-family:monospace;white-space:pre-wrap;margin-bottom:14px;}
+</style>
+</head>
+<body>
+
+<h1>M&m 기존 영상 등록</h1>
+<div class="sub">이미 유튜브에 올라가 있는 영상을 재업로드 없이 학원 프로그램 "영상 보관함"에 링크만 등록해요.</div>
+
+<div class="tabs">
+  <div class="tab active" id="tabFetch" onclick="switchTab('fetch')">유튜브에서 가져오기</div>
+  <div class="tab" id="tabSingle" onclick="switchTab('single')">한 개씩 등록</div>
+  <div class="tab" id="tabBulk" onclick="switchTab('bulk')">텍스트로 붙여넣기</div>
+</div>
+
+<!-- 유튜브에서 자동으로 가져오기 -->
+<div id="panelFetch">
+  <div class="card">
+    <label>1. 구글 계정 연결 (내 채널 영상 목록 읽기)</label>
+    <button class="btn btn-navy" id="btnGoogleLogin" style="background:var(--navy);color:#fff;">구글 로그인 / 채널 불러오기</button>
+    <div class="hint" id="loginStatus">아직 연결 안 됨 — 링크를 직접 입력할 필요 없이, 로그인만 하면 채널에 있는 영상 목록이 자동으로 뜨고 링크도 자동으로 채워져요.</div>
+  </div>
+  <div class="card" id="videoListCard" style="display:none;">
+    <label>2. 등록할 영상 선택 후, 각 영상의 분류만 채워주세요 (링크는 이미 자동으로 채워져 있어요)</label>
+    <div id="videoList"></div>
+    <button class="btn btn-gold" id="btnFetchSubmit" style="margin-top:12px;">📌 체크한 영상 전체 등록하기</button>
+  </div>
+  <div class="hint" id="loadMoreWrap" style="display:none;text-align:center;">
+    <button class="btn" style="background:#fff;border:1px solid var(--line);" id="btnLoadMore">더 불러오기</button>
+  </div>
+</div>
+
+<!-- 한 개씩 등록 -->
+<div id="panelSingle" style="display:none;">
+  <div class="card">
+    <label>영상 제목</label>
+    <input type="text" id="sTitle" placeholder="예: 일차함수 개념">
+
+    <label>유튜브 링크</label>
+    <input type="text" id="sUrl" placeholder="https://youtu.be/... 또는 https://youtube.com/watch?v=...">
+
+    <label>영상 종류</label>
+    <select id="sType" onchange="document.getElementById('sBookWrap').style.display=this.value==='유형'?'block':'none';">
+      <option value="개념">개념 영상</option>
+      <option value="유형">유형 영상 (문제풀이)</option>
+    </select>
+
+    <label>학년학기</label>
+    <select id="sCourse" onchange="onCourseChangeSingle()"><option value="">불러오는 중...</option></select>
+
+    <div id="sBookWrap" style="display:none;">
+      <label>교재명 (유형 영상은 필수)</label>
+      <input type="text" id="sBook" placeholder="예: 쎈, 최상위, 개념책">
+    </div>
+
+    <label>단원 (선택)</label>
+    <select id="sUnit"><option value="">단원 선택 (학년학기 먼저)</option></select>
+  </div>
+  <button class="btn btn-gold" id="btnSingle">📌 이 영상 등록하기</button>
+</div>
+
+<!-- 여러 개 한번에 -->
+<div id="panelBulk" style="display:none;">
+  <div class="card">
+    <label>아래 형식대로 한 줄에 영상 하나씩 입력하세요</label>
+    <div class="example">제목 | 링크 | 종류(개념/유형) | 학년학기 | 교재(유형만, 없으면 빈칸) | 단원(선택)
+
+예시:
+일차함수 개념 | https://youtu.be/abc123 | 개념 | [중등] 중2-1학기 | | 일차함수
+일차함수 쎈 유형풀이 | https://youtu.be/def456 | 유형 | [중등] 중2-1학기 | 쎈 | 일차함수</div>
+    <textarea id="bulkText" placeholder="여기에 붙여넣으세요"></textarea>
+  </div>
+  <button class="btn btn-gold" id="btnBulk">📌 전체 일괄 등록하기</button>
+</div>
+
+<div class="card" style="margin-top:16px;">
+  <label>진행 상황</label>
+  <div class="log" id="logBox">대기 중...</div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="https://accounts.google.com/gsi/client"></script>
+
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyA4Uf5jRBd5K9CKU-W4l0Rk5KvQDp-Rq2M",
+  authDomain: "math-master-6a888.firebaseapp.com",
+  projectId: "math-master-6a888",
+  storageBucket: "math-master-6a888.firebasestorage.app",
+  messagingSenderId: "943375843047",
+  appId: "1:943375843047:web:116ce75ba8d15cb126ec42"
+};
+firebase.initializeApp(firebaseConfig);
+const fsdb = firebase.firestore();
+const fauth = firebase.auth();
+
+let db = { courses: [] };
+const logBox = document.getElementById('logBox');
+function log(msg, cls){
+  const line = document.createElement('div');
+  if(cls) line.className = cls;
+  line.textContent = msg;
+  logBox.appendChild(line);
+  logBox.scrollTop = logBox.scrollHeight;
+}
+function clearLog(){ logBox.innerHTML=''; }
+
+function switchTab(which){
+  document.getElementById('panelFetch').style.display = which==='fetch'?'block':'none';
+  document.getElementById('panelSingle').style.display = which==='single'?'block':'none';
+  document.getElementById('panelBulk').style.display = which==='bulk'?'block':'none';
+  document.getElementById('tabFetch').classList.toggle('active', which==='fetch');
+  document.getElementById('tabSingle').classList.toggle('active', which==='single');
+  document.getElementById('tabBulk').classList.toggle('active', which==='bulk');
+}
+
+async function loadData(){
+  await fauth.signInAnonymously();
+  const courseSnap = await fsdb.collection('courses').get();
+  db.courses = courseSnap.docs.map(d=>({id:d.id, ...d.data()}));
+  renderCourseSelects();
+}
+const ORDER = ['[초등] 초2-1학기','[초등] 초2-2학기','[초등] 초3-1학기','[초등] 초3-2학기','[초등] 초4-1학기','[초등] 초4-2학기',
+  '[초등] 초5-1학기','[초등] 초5-2학기','[초등] 초6-1학기','[초등] 초6-2학기',
+  '[중등] 중1-1학기','[중등] 중1-2학기','[중등] 중2-1학기','[중등] 중2-2학기','[중등] 중3-1학기','[중등] 중3-2학기',
+  '[고등] 공수 1','[고등] 공수 2','[고등] 대수','[고등] 미적분','[고등] 확통'];
+
+function renderCourseSelects(){
+  const sorted = [...db.courses].sort((a,b)=> ORDER.indexOf(a.name) - ORDER.indexOf(b.name));
+  const opts = '<option value="">학년학기 선택</option>' + sorted.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  document.getElementById('sCourse').innerHTML = opts;
+}
+function courseUnitsList(courseId){
+  const course = db.courses.find(c=>c.id===courseId);
+  if(!course || !course.steps) return [];
+  const seen = new Set(); const units = [];
+  course.steps.forEach(s=>{
+    const unit = s.split('>')[0].trim();
+    if(!seen.has(unit)){ seen.add(unit); units.push(unit); }
+  });
+  return units;
+}
+function courseIdByName(name){
+  const c = db.courses.find(c=>c.name===name.trim());
+  return c ? c.id : '';
+}
+function onCourseChangeSingle(){
+  const courseId = document.getElementById('sCourse').value;
+  const units = courseId ? courseUnitsList(courseId) : [];
+  const sel = document.getElementById('sUnit');
+  sel.innerHTML = `<option value="">${courseId?'단원 선택':'단원 선택 (학년학기 먼저)'}</option>` + units.map(u=>`<option value="${u}">${u}</option>`).join('');
+}
+
+async function registerVideo(title, url, courseId, videoType, book, unit){
+  const vidRef = fsdb.collection('videos').doc();
+  await vidRef.set({ title, url, courseId: courseId||'', videoType: videoType||'개념', book: book||'', unit: unit||'' });
+}
+
+document.getElementById('btnSingle').addEventListener('click', async ()=>{
+  const title = document.getElementById('sTitle').value.trim();
+  const url = document.getElementById('sUrl').value.trim();
+  const videoType = document.getElementById('sType').value;
+  const courseId = document.getElementById('sCourse').value;
+  const book = document.getElementById('sBook').value.trim();
+  const unit = document.getElementById('sUnit').value;
+  if(!title || !url){ alert('제목과 링크를 입력해주세요.'); return; }
+  if(videoType==='유형' && !book){ alert('유형 영상은 교재명도 입력해주세요.'); return; }
+  clearLog();
+  try{
+    log('▶ 등록 중...', 'step');
+    await registerVideo(title, url, courseId, videoType, book, unit);
+    log('✅ 등록 완료! "'+title+'"', 'ok');
+  }catch(e){ log('❌ 오류: '+e.message, 'err'); }
+});
+
+document.getElementById('btnBulk').addEventListener('click', async ()=>{
+  const text = document.getElementById('bulkText').value.trim();
+  if(!text){ alert('내용을 입력해주세요.'); return; }
+  const lines = text.split('\n').map(l=>l.trim()).filter(l=>l);
+  clearLog();
+  log(`▶ 총 ${lines.length}개 영상 등록 시작...`, 'step');
+  let success=0, fail=0;
+  for(const line of lines){
+    const parts = line.split('|').map(p=>p.trim());
+    const [title, url, videoType, courseName, book, unit] = parts;
+    if(!title || !url){ log(`❌ 건너뜀 (제목/링크 누락): ${line}`, 'err'); fail++; continue; }
+    const courseId = courseName ? courseIdByName(courseName) : '';
+    if(courseName && !courseId){ log(`⚠ 학년학기 "${courseName}" 못 찾음 — 미분류로 등록: ${title}`, 'err'); }
+    try{
+      await registerVideo(title, url, courseId, videoType||'개념', book||'', unit||'');
+      log(`✅ 등록: ${title}`, 'ok');
+      success++;
+    }catch(e){ log(`❌ 실패: ${title} — ${e.message}`, 'err'); fail++; }
+  }
+  log(`\n🎉 완료! 성공 ${success}개 / 실패 ${fail}개`, 'ok');
+});
+
+loadData();
+
+/* ---------------- 유튜브에서 내 채널 영상 자동으로 가져오기 ---------------- */
+const GOOGLE_CLIENT_ID = "756595474631-ilgqu7u0o2jsedbr75b20aro9u4leomh.apps.googleusercontent.com";
+let accessToken = null;
+let uploadsPlaylistId = null;
+let nextPageToken = null;
+let fetchedVideos = [];
+
+let tokenClient;
+function initGoogleAuth(){
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: 'https://www.googleapis.com/auth/youtube.readonly',
+    callback: async (resp)=>{
+      if(resp.error){ log('로그인 실패: '+resp.error, 'err'); return; }
+      accessToken = resp.access_token;
+      document.getElementById('loginStatus').textContent = '✅ 연결됨 — 채널 영상 불러오는 중...';
+      await fetchUploadsPlaylist();
+      await fetchVideoPage();
+    }
+  });
+}
+document.getElementById('btnGoogleLogin').addEventListener('click', ()=> tokenClient.requestAccessToken());
+
+async function fetchUploadsPlaylist(){
+  const res = await fetch('https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true', {
+    headers: { 'Authorization': 'Bearer '+accessToken }
+  });
+  const data = await res.json();
+  uploadsPlaylistId = data.items[0].contentDetails.relatedPlaylists.uploads;
+}
+
+async function fetchVideoPage(){
+  let url = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=25&playlistId=${uploadsPlaylistId}`;
+  if(nextPageToken) url += `&pageToken=${nextPageToken}`;
+  const res = await fetch(url, { headers: { 'Authorization': 'Bearer '+accessToken } });
+  const data = await res.json();
+  nextPageToken = data.nextPageToken || null;
+  const newVideos = data.items.map(it=>({
+    videoId: it.snippet.resourceId.videoId,
+    title: it.snippet.title,
+    thumb: it.snippet.thumbnails?.default?.url || '',
+    url: `https://youtu.be/${it.snippet.resourceId.videoId}`
+  }));
+  fetchedVideos = fetchedVideos.concat(newVideos);
+  document.getElementById('loginStatus').textContent = `✅ 연결됨 — 영상 ${fetchedVideos.length}개 불러옴`;
+  document.getElementById('videoListCard').style.display = 'block';
+  document.getElementById('loadMoreWrap').style.display = nextPageToken ? 'block' : 'none';
+  renderVideoList();
+}
+document.getElementById('btnLoadMore').addEventListener('click', fetchVideoPage);
+
+function renderVideoList(){
+  const box = document.getElementById('videoList');
+  box.innerHTML = fetchedVideos.map((v,i)=>{
+    const sorted = [...db.courses].sort((a,b)=> ORDER.indexOf(a.name) - ORDER.indexOf(b.name));
+    return `
+    <div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);align-items:flex-start;">
+      <input type="checkbox" id="chk_${i}" style="margin-top:14px;width:18px;height:18px;">
+      <img src="${v.thumb}" style="width:64px;border-radius:6px;">
+      <div style="flex:1;">
+        <input type="text" id="title_${i}" value="${v.title.replace(/"/g,'&quot;')}" style="margin-bottom:6px;font-size:13px;padding:8px;">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <select id="type_${i}" onchange="document.getElementById('bookwrap_${i}').style.display=this.value==='유형'?'inline-block':'none';" style="flex:1;min-width:90px;padding:8px;font-size:12px;margin-bottom:6px;">
+            <option value="개념">개념</option>
+            <option value="유형">유형</option>
+          </select>
+          <select id="course_${i}" onchange="onCourseChangeFetch(${i})" style="flex:1;min-width:120px;padding:8px;font-size:12px;margin-bottom:6px;">
+            <option value="">학년학기</option>${sorted.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}
+          </select>
+          <span id="bookwrap_${i}" style="display:none;flex:1;min-width:90px;">
+            <input type="text" id="book_${i}" placeholder="교재명" style="padding:8px;font-size:12px;margin-bottom:6px;">
+          </span>
+          <select id="unit_${i}" style="flex:1;min-width:110px;padding:8px;font-size:12px;margin-bottom:6px;">
+            <option value="">단원</option>
+          </select>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+function onCourseChangeFetch(i){
+  const courseId = document.getElementById('course_'+i).value;
+  const units = courseId ? courseUnitsList(courseId) : [];
+  const sel = document.getElementById('unit_'+i);
+  sel.innerHTML = '<option value="">단원</option>' + units.map(u=>`<option value="${u}">${u}</option>`).join('');
+}
+
+document.getElementById('btnFetchSubmit').addEventListener('click', async ()=>{
+  clearLog();
+  const checked = fetchedVideos.map((v,i)=>i).filter(i=>document.getElementById('chk_'+i).checked);
+  if(checked.length===0){ alert('등록할 영상을 하나 이상 체크해주세요.'); return; }
+  log(`▶ 총 ${checked.length}개 영상 등록 시작...`, 'step');
+  let success=0, fail=0;
+  for(const i of checked){
+    const title = document.getElementById('title_'+i).value.trim();
+    const url = fetchedVideos[i].url;
+    const videoType = document.getElementById('type_'+i).value;
+    const courseId = document.getElementById('course_'+i).value;
+    const book = document.getElementById('book_'+i) ? document.getElementById('book_'+i).value.trim() : '';
+    const unit = document.getElementById('unit_'+i).value;
+    if(videoType==='유형' && !book){ log(`❌ 건너뜀 (유형 영상인데 교재명 없음): ${title}`, 'err'); fail++; continue; }
+    try{
+      await registerVideo(title, url, courseId, videoType, book, unit);
+      log(`✅ 등록: ${title}`, 'ok');
+      success++;
+    }catch(e){ log(`❌ 실패: ${title} — ${e.message}`, 'err'); fail++; }
+  }
+  log(`\n🎉 완료! 성공 ${success}개 / 실패 ${fail}개`, 'ok');
+});
+
+initGoogleAuth();
+</script>
+</body>
+</html>
