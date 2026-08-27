@@ -180,7 +180,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-27 v35 (타이머서버백업+새벽6시기준)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-28 v36 (영상수정+순서)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -1813,11 +1813,21 @@ async function deleteStep(courseId,stepId){
 /* ---------------- VIDEO LIBRARY ---------------- */
 function renderVideoLib(){
   const filter = currentSubState.videoCourse || 'all';
-  const list = filter==='all'? db.videos : db.videos.filter(v=>v.courseId===filter);
+  let list = filter==='all'? [...db.videos] : db.videos.filter(v=>v.courseId===filter);
   const allBooks = [...new Set([...Object.values(BOOK_PRESETS).flat(), ...Array.from(collectAllBookNames())])];
+  const courseOrderIdx = c=>{ const idx=COURSE_ORDER.indexOf(courseById(c)?.name); return idx===-1?999:idx; };
+  list.sort((a,b)=>{
+    const ca = courseOrderIdx(a.courseId), cb = courseOrderIdx(b.courseId);
+    if(ca!==cb) return ca-cb;
+    const ua = (a.unit||'').localeCompare(b.unit||'');
+    if(ua!==0) return ua;
+    const oa = a.order ?? 999, ob = b.order ?? 999;
+    if(oa!==ob) return oa-ob;
+    return (a.title||'').localeCompare(b.title||'');
+  });
   return `
   <h1 class="page-title">영상 보관함</h1>
-  <p class="page-sub">개념 설명 영상과 유형(문제풀이) 영상을 학년학기·단원별로 등록해두면, 반 관리에서 단계별로 골라 부여할 수 있어요.</p>
+  <p class="page-sub">개념 설명 영상과 유형(문제풀이) 영상을 학년학기·단원별로 등록해두면, 반 관리에서 단계별로 골라 부여할 수 있어요. 같은 단원 안에서 순서를 정하려면 "순서" 숫자를 입력해주세요 (작은 숫자가 먼저 나와요).</p>
   <div class="card">
     <div class="row">
       <input type="text" id="vTitle" placeholder="영상 제목">
@@ -1832,6 +1842,7 @@ function renderVideoLib(){
         <datalist id="vBookList">${allBooks.map(b=>`<option value="${b}">`).join('')}</datalist>
       </span>
       <select id="vUnit"><option value="">단원 선택 (학년학기 먼저)</option></select>
+      <input type="number" id="vOrder" placeholder="순서(선택)" style="width:80px;">
       <button class="btn gold sm" onclick="addVideo()">+ 등록</button>
     </div>
   </div>
@@ -1840,17 +1851,75 @@ function renderVideoLib(){
     ${sortedCourses().map(c=>`<button class="${filter===c.id?'active':''}" onclick="currentSubState.videoCourse='${c.id}';render();">${c.name}</button>`).join('')}
   </div>
   <div class="card">
-    ${list.length? `<table><tr><th>종류</th><th>제목</th><th>과정 / 교재 / 단원</th><th>링크</th><th></th></tr>
-      ${list.map(v=>`<tr>
-        <td><span class="badge ${v.videoType==='유형'?'yellow':'gray'}" style="font-size:10px;">${v.videoType||'개념'}</span></td>
-        <td>${v.title}</td>
-        <td>${courseById(v.courseId)?.name||'-'}${v.book? ` · ${v.book}`:''}${v.unit? ` · ${v.unit}`:''}</td>
-        <td><a class="link" href="${v.url}" target="_blank">열기</a></td>
-        <td><button class="btn sm outline" onclick="deleteVideo('${v.id}')">삭제</button></td>
-      </tr>`).join('')}
+    ${list.length? `<table><tr><th>순서</th><th>종류</th><th>제목</th><th>과정 / 교재 / 단원</th><th>링크</th><th></th></tr>
+      ${list.map(v=>renderVideoRow(v)).join('')}
       </table>` : `<div class="empty">등록된 영상이 없어요.</div>`}
   </div>
   `;
+}
+function renderVideoRow(v){
+  currentSubState._videoEditing = currentSubState._videoEditing || {};
+  const editing = !!currentSubState._videoEditing[v.id];
+  if(!editing){
+    return `<tr>
+      <td style="text-align:center;color:#8a8674;">${v.order ?? '-'}</td>
+      <td><span class="badge ${v.videoType==='유형'?'yellow':'gray'}" style="font-size:10px;">${v.videoType||'개념'}</span></td>
+      <td>${v.title}</td>
+      <td>${courseById(v.courseId)?.name||'-'}${v.book? ` · ${v.book}`:''}${v.unit? ` · ${v.unit}`:''}${!v.unit? ` <span style="color:var(--red);font-size:10px;">(단원 없음)</span>`:''}</td>
+      <td><a class="link" href="${v.url}" target="_blank">열기</a></td>
+      <td class="row" style="gap:4px;">
+        <button class="btn sm outline" onclick="currentSubState._videoEditing['${v.id}']=true;render();">수정</button>
+        <button class="btn sm outline" onclick="deleteVideo('${v.id}')">삭제</button>
+      </td>
+    </tr>`;
+  }
+  const units = v.courseId ? courseUnitsList(v.courseId) : [];
+  const allBooks = [...new Set([...Object.values(BOOK_PRESETS).flat(), ...Array.from(collectAllBookNames())])];
+  return `<tr style="background:#fff8e6;">
+    <td colspan="6">
+      <div class="row" style="flex-wrap:wrap;">
+        <input type="text" id="ve_title_${v.id}" value="${v.title}" placeholder="제목" style="width:130px;">
+        <input type="text" id="ve_url_${v.id}" value="${v.url}" placeholder="링크" style="flex:1;min-width:150px;">
+        <select id="ve_type_${v.id}" onchange="document.getElementById('ve_bookwrap_${v.id}').style.display=this.value==='유형'?'inline-block':'none';">
+          <option value="개념" ${v.videoType!=='유형'?'selected':''}>개념 영상</option>
+          <option value="유형" ${v.videoType==='유형'?'selected':''}>유형 영상</option>
+        </select>
+        <select id="ve_course_${v.id}" onchange="onVideoEditCourseChange('${v.id}')">
+          <option value="">학년학기 선택</option>
+          ${sortedCourses().map(c=>`<option value="${c.id}" ${v.courseId===c.id?'selected':''}>${c.name}</option>`).join('')}
+        </select>
+        <span id="ve_bookwrap_${v.id}" style="display:${v.videoType==='유형'?'inline-block':'none'};">
+          <input type="text" id="ve_book_${v.id}" value="${v.book||''}" list="ve_booklist_${v.id}" placeholder="교재명">
+          <datalist id="ve_booklist_${v.id}">${allBooks.map(b=>`<option value="${b}">`).join('')}</datalist>
+        </span>
+        <select id="ve_unit_${v.id}">
+          <option value="">단원 선택</option>
+          ${units.map(u=>`<option value="${u}" ${v.unit===u?'selected':''}>${u}</option>`).join('')}
+        </select>
+        <input type="number" id="ve_order_${v.id}" value="${v.order ?? ''}" placeholder="순서" style="width:70px;">
+        <button class="btn sm gold" onclick="saveVideoEdit('${v.id}')">저장</button>
+        <button class="btn sm outline" onclick="currentSubState._videoEditing['${v.id}']=false;render();">취소</button>
+      </div>
+    </td>
+  </tr>`;
+}
+function onVideoEditCourseChange(id){
+  const courseId = document.getElementById(`ve_course_${id}`).value;
+  const units = courseId ? courseUnitsList(courseId) : [];
+  const sel = document.getElementById(`ve_unit_${id}`);
+  sel.innerHTML = `<option value="">단원 선택</option>` + units.map(u=>`<option value="${u}">${u}</option>`).join('');
+}
+async function saveVideoEdit(id){
+  const title = document.getElementById(`ve_title_${id}`).value.trim();
+  const url = document.getElementById(`ve_url_${id}`).value.trim();
+  const videoType = document.getElementById(`ve_type_${id}`).value;
+  const courseId = document.getElementById(`ve_course_${id}`).value;
+  const book = videoType==='유형' ? document.getElementById(`ve_book_${id}`).value.trim() : '';
+  const unit = document.getElementById(`ve_unit_${id}`).value;
+  const orderVal = document.getElementById(`ve_order_${id}`).value;
+  if(!title || !url){ alert('제목과 링크를 입력해주세요.'); return; }
+  const ok = await fsUpdate('videos', id, {title, url, videoType, courseId, book, unit, order: orderVal===''?null:Number(orderVal)});
+  if(ok){ currentSubState._videoEditing[id] = false; render(); }
 }
 function onVideoCourseChange(){
   const courseId = document.getElementById('vCourse').value;
@@ -1865,9 +1934,10 @@ async function addVideo(){
   const courseId=document.getElementById('vCourse').value;
   const book=videoType==='유형' ? document.getElementById('vBook').value.trim() : '';
   const unit=document.getElementById('vUnit').value;
+  const orderVal=document.getElementById('vOrder').value;
   if(!title||!url){alert('제목과 링크를 입력해주세요.');return;}
   if(videoType==='유형' && !book){alert('유형 영상은 교재명도 입력해주세요.');return;}
-  await fsSet('videos', uid('vid'), {title,url,courseId,videoType,book,unit});
+  await fsSet('videos', uid('vid'), {title,url,courseId,videoType,book,unit, order: orderVal===''?null:Number(orderVal)});
 }
 async function deleteVideo(id){ await fsDelete('videos', id); }
 
