@@ -148,8 +148,12 @@ function switchTab(which){
 
 async function loadData(){
   await fauth.signInAnonymously();
-  const courseSnap = await fsdb.collection('courses').get();
+  const [courseSnap, videoSnap] = await Promise.all([
+    fsdb.collection('courses').get(),
+    fsdb.collection('videos').get()
+  ]);
   db.courses = courseSnap.docs.map(d=>({id:d.id, ...d.data()}));
+  db.existingUrls = new Set(videoSnap.docs.map(d=>d.data().url).filter(Boolean));
   renderCourseSelects();
 }
 const ORDER = ['[초등] 초2-1학기','[초등] 초2-2학기','[초등] 초3-1학기','[초등] 초3-2학기','[초등] 초4-1학기','[초등] 초4-2학기',
@@ -281,15 +285,19 @@ async function fetchVideoPage(){
   const res = await fetch(url, { headers: { 'Authorization': 'Bearer '+accessToken } });
   const data = await res.json();
   nextPageToken = data.nextPageToken || null;
-  const newVideos = data.items.map(it=>({
+  const allFromPage = data.items.map(it=>({
     videoId: it.snippet.resourceId.videoId,
     title: it.snippet.title,
     thumb: it.snippet.thumbnails?.default?.url || '',
     url: `https://youtu.be/${it.snippet.resourceId.videoId}`
   }));
+  const newVideos = allFromPage.filter(v=>!db.existingUrls.has(v.url));
+  const skippedCount = allFromPage.length - newVideos.length;
   fetchedVideos = fetchedVideos.concat(newVideos);
-  document.getElementById('loginStatus').textContent = `✅ 연결됨 — 영상 ${fetchedVideos.length}개 불러옴`;
-  document.getElementById('videoListCard').style.display = 'block';
+  let statusMsg = `✅ 연결됨 — 새 영상 ${fetchedVideos.length}개 불러옴`;
+  if(skippedCount>0) statusMsg += ` (이미 등록된 ${skippedCount}개는 건너뜀)`;
+  document.getElementById('loginStatus').textContent = statusMsg;
+  document.getElementById('videoListCard').style.display = fetchedVideos.length ? 'block' : 'none';
   document.getElementById('loadMoreWrap').style.display = nextPageToken ? 'block' : 'none';
   renderVideoList();
 }
