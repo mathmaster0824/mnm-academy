@@ -180,7 +180,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-27 v33 (유형영상)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-27 v35 (타이머서버백업+새벽6시기준)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -246,7 +246,7 @@ let db = {
   settings:{ adminPassword:'0000', isDefaultPassword:true },
   classes:[], students:[], courses:[], videos:[],
   classRecords:{}, weeklyPlans:{}, fridaySupp:{}, submissions:{}, practiceProgress:{},
-  questions:[], feedbacks:[], kmm:[], schoolExams:[], schoolScores:{}
+  questions:[], feedbacks:[], kmm:[], schoolExams:[], schoolScores:{}, timerState:{}
 };
 
 function uid(prefix){ return prefix+'_'+Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-4); }
@@ -257,6 +257,12 @@ function toLocalISODate(d){
   return `${y}-${m}-${day}`;
 }
 function todayISO(){ return toLocalISODate(new Date()); }
+function academicTodayISO(){
+  // 자정~오전 6시 사이는 아직 "전날"로 취급 (밤늦게 숙제하다 자정 넘겨도 같은 날로 기록되게)
+  const now = new Date();
+  if(now.getHours() < 6){ now.setDate(now.getDate()-1); }
+  return toLocalISODate(now);
+}
 function fmtDate(d){ const dt=new Date(d+'T00:00:00'); return `${dt.getMonth()+1}/${dt.getDate()}(${['일','월','화','수','목','금','토'][dt.getDay()]})`; }
 
 /* ---------------- 초기 명단 · 커리큘럼 시드 데이터 ---------------- */
@@ -361,6 +367,9 @@ function attachListeners(){
     }),
     fsdb.collection('practiceProgress').onSnapshot(snap=>{
       const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.practiceProgress=m; render();
+    }),
+    fsdb.collection('timerState').onSnapshot(snap=>{
+      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.timerState=m;
     }),
     fsdb.collection('questions').onSnapshot(snap=>{ db.questions = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
     fsdb.collection('feedbacks').onSnapshot(snap=>{ db.feedbacks = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
@@ -1546,10 +1555,7 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames){
     </td>
     <td>
       <div style="font-size:11px;color:#8a8674;margin-bottom:4px;">${doneCount}/${videoTotal} 완료</div>
-      <div class="row" style="gap:4px;">
-        <select style="max-width:110px;font-size:11px;" id="vidsel_${cls.id}_${date}_${s.id}"><option value="">보관함에서 선택</option>${db.videos.map(v=>`<option value="${v.id}">[${v.videoType||'개념'}${v.book?' '+v.book:''}] ${v.title}</option>`).join('')}</select>
-        <button class="btn sm outline" onclick="addVideoAssign('${cls.id}','${date}','${s.id}')">+</button>
-      </div>
+      ${renderVideoAssignPicker(cls.id, date, s.id)}
       ${(r.videoAssignments||[]).map((v,i)=>`<div style="font-size:11px;margin-top:3px;"><label><input type="checkbox" ${v.done?'checked':''} onchange="toggleVideoDone('${cls.id}','${date}','${s.id}',${i})"> ${v.title}</label></div>`).join('')}
     </td>
     <td style="max-width:170px;font-size:11px;color:#6b6858;">
@@ -1567,6 +1573,54 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames){
 async function updateClassRec(clsId,date,stuId,field,val){
   const key=clsId+'_'+date;
   await fsSet('classRecords', key, {[stuId]: {[field]: val}});
+}
+function renderVideoAssignPicker(clsId, date, stuId){
+  const rowKey = `${clsId}_${date}_${stuId}`;
+  currentSubState._vidAssignDraft = currentSubState._vidAssignDraft || {};
+  const draft = currentSubState._vidAssignDraft[rowKey] = currentSubState._vidAssignDraft[rowKey] || {type:'개념', courseId:'', book:'', unit:''};
+
+  const coursesUsed = [...new Set(db.videos.filter(v=>(v.videoType||'개념')===draft.type).map(v=>v.courseId))];
+  const bookOptions = draft.type==='유형' ? [...new Set(db.videos.filter(v=>v.videoType==='유형' && v.courseId===draft.courseId).map(v=>v.book).filter(Boolean))] : [];
+  const unitOptions = draft.courseId ? [...new Set(db.videos.filter(v=>{
+    if((v.videoType||'개념')!==draft.type) return false;
+    if(v.courseId!==draft.courseId) return false;
+    if(draft.type==='유형' && draft.book && v.book!==draft.book) return false;
+    return true;
+  }).map(v=>v.unit).filter(Boolean))] : [];
+
+  const matches = db.videos.filter(v=>{
+    if((v.videoType||'개념')!==draft.type) return false;
+    if(draft.courseId && v.courseId!==draft.courseId) return false;
+    if(draft.type==='유형' && draft.book && v.book!==draft.book) return false;
+    if(draft.unit && v.unit!==draft.unit) return false;
+    return true;
+  });
+
+  return `<div style="background:#f7f5ee;border-radius:8px;padding:5px;margin-bottom:4px;">
+    <select style="width:100%;font-size:10.5px;margin-bottom:3px;" onchange="currentSubState._vidAssignDraft['${rowKey}']={type:this.value,courseId:'',book:'',unit:''};render();">
+      <option value="개념" ${draft.type==='개념'?'selected':''}>개념 영상</option>
+      <option value="유형" ${draft.type==='유형'?'selected':''}>유형 영상</option>
+    </select>
+    <select style="width:100%;font-size:10.5px;margin-bottom:3px;" onchange="currentSubState._vidAssignDraft['${rowKey}'].courseId=this.value;currentSubState._vidAssignDraft['${rowKey}'].book='';currentSubState._vidAssignDraft['${rowKey}'].unit='';render();">
+      <option value="">① 학년학기 선택</option>
+      ${sortedCourses().filter(c=>coursesUsed.includes(c.id)).map(c=>`<option value="${c.id}" ${draft.courseId===c.id?'selected':''}>${c.name}</option>`).join('')}
+    </select>
+    ${draft.type==='유형' ? `<select style="width:100%;font-size:10.5px;margin-bottom:3px;" onchange="currentSubState._vidAssignDraft['${rowKey}'].book=this.value;currentSubState._vidAssignDraft['${rowKey}'].unit='';render();" ${!draft.courseId?'disabled':''}>
+      <option value="">② 교재 선택</option>
+      ${bookOptions.map(b=>`<option value="${b}" ${draft.book===b?'selected':''}>${b}</option>`).join('')}
+    </select>` : ''}
+    <select style="width:100%;font-size:10.5px;margin-bottom:3px;" onchange="currentSubState._vidAssignDraft['${rowKey}'].unit=this.value;render();" ${!draft.courseId?'disabled':''}>
+      <option value="">${draft.type==='유형'?'③':'②'} 단원 선택</option>
+      ${unitOptions.map(u=>`<option value="${u}" ${draft.unit===u?'selected':''}>${u}</option>`).join('')}
+    </select>
+    <div class="row" style="gap:4px;">
+      <select style="flex:1;font-size:10.5px;" id="vidsel_${clsId}_${date}_${stuId}">
+        <option value="">${matches.length?'영상 선택':'조건에 맞는 영상 없음'}</option>
+        ${matches.map(v=>`<option value="${v.id}">${v.title}</option>`).join('')}
+      </select>
+      <button class="btn sm outline" style="padding:3px 8px;" onclick="addVideoAssign('${clsId}','${date}','${stuId}')">+</button>
+    </div>
+  </div>`;
 }
 async function addVideoAssign(clsId,date,stuId){
   const sel = document.getElementById(`vidsel_${clsId}_${date}_${stuId}`);
@@ -1763,7 +1817,7 @@ function renderVideoLib(){
   const allBooks = [...new Set([...Object.values(BOOK_PRESETS).flat(), ...Array.from(collectAllBookNames())])];
   return `
   <h1 class="page-title">영상 보관함</h1>
-  <p class="page-sub">개념 설명 영상과 유형(문제풀이) 영상을 학기별로 등록해두면, 반 관리·학생 페이지에서 바로 골라 부여할 수 있어요.</p>
+  <p class="page-sub">개념 설명 영상과 유형(문제풀이) 영상을 학년학기·단원별로 등록해두면, 반 관리에서 단계별로 골라 부여할 수 있어요.</p>
   <div class="card">
     <div class="row">
       <input type="text" id="vTitle" placeholder="영상 제목">
@@ -1772,11 +1826,12 @@ function renderVideoLib(){
         <option value="개념">개념 영상</option>
         <option value="유형">유형 영상</option>
       </select>
-      <select id="vCourse"><option value="">학년학기 선택</option>${sortedCourses().map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
+      <select id="vCourse" onchange="onVideoCourseChange()"><option value="">학년학기 선택</option>${sortedCourses().map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
       <span id="vBookWrap" style="display:none;">
         <input type="text" id="vBook" list="vBookList" placeholder="교재명">
         <datalist id="vBookList">${allBooks.map(b=>`<option value="${b}">`).join('')}</datalist>
       </span>
+      <select id="vUnit"><option value="">단원 선택 (학년학기 먼저)</option></select>
       <button class="btn gold sm" onclick="addVideo()">+ 등록</button>
     </div>
   </div>
@@ -1785,11 +1840,11 @@ function renderVideoLib(){
     ${sortedCourses().map(c=>`<button class="${filter===c.id?'active':''}" onclick="currentSubState.videoCourse='${c.id}';render();">${c.name}</button>`).join('')}
   </div>
   <div class="card">
-    ${list.length? `<table><tr><th>종류</th><th>제목</th><th>과정 / 교재</th><th>링크</th><th></th></tr>
+    ${list.length? `<table><tr><th>종류</th><th>제목</th><th>과정 / 교재 / 단원</th><th>링크</th><th></th></tr>
       ${list.map(v=>`<tr>
         <td><span class="badge ${v.videoType==='유형'?'yellow':'gray'}" style="font-size:10px;">${v.videoType||'개념'}</span></td>
         <td>${v.title}</td>
-        <td>${courseById(v.courseId)?.name||'-'}${v.book? ` · ${v.book}`:''}</td>
+        <td>${courseById(v.courseId)?.name||'-'}${v.book? ` · ${v.book}`:''}${v.unit? ` · ${v.unit}`:''}</td>
         <td><a class="link" href="${v.url}" target="_blank">열기</a></td>
         <td><button class="btn sm outline" onclick="deleteVideo('${v.id}')">삭제</button></td>
       </tr>`).join('')}
@@ -1797,15 +1852,22 @@ function renderVideoLib(){
   </div>
   `;
 }
+function onVideoCourseChange(){
+  const courseId = document.getElementById('vCourse').value;
+  const units = courseId ? courseUnitsList(courseId) : [];
+  const sel = document.getElementById('vUnit');
+  sel.innerHTML = `<option value="">${courseId?'단원 선택':'단원 선택 (학년학기 먼저)'}</option>` + units.map(u=>`<option value="${u}">${u}</option>`).join('');
+}
 async function addVideo(){
   const title=document.getElementById('vTitle').value.trim();
   const url=document.getElementById('vUrl').value.trim();
   const videoType=document.getElementById('vType').value;
   const courseId=document.getElementById('vCourse').value;
   const book=videoType==='유형' ? document.getElementById('vBook').value.trim() : '';
+  const unit=document.getElementById('vUnit').value;
   if(!title||!url){alert('제목과 링크를 입력해주세요.');return;}
   if(videoType==='유형' && !book){alert('유형 영상은 교재명도 입력해주세요.');return;}
-  await fsSet('videos', uid('vid'), {title,url,courseId,videoType,book});
+  await fsSet('videos', uid('vid'), {title,url,courseId,videoType,book,unit});
 }
 async function deleteVideo(id){ await fsDelete('videos', id); }
 
@@ -2084,7 +2146,7 @@ function renderHomeworkReview(){
 }
 
 function renderSubmissionCard(stuId, directorView){
-  const date = currentSubState.subDate || todayISO();
+  const date = currentSubState.subDate || (session.mode==='student' ? academicTodayISO() : todayISO());
   const key = stuId+'_'+date;
   const sub = db.submissions[key];
   const statusBanner = (session.mode==='student' && sub) ? `<div style="background:#e8f5ea;border:1px solid #bfe3c6;color:#2c7a3d;padding:10px 14px;border-radius:10px;margin-bottom:12px;font-size:13px;font-weight:600;">
@@ -2167,6 +2229,7 @@ function renderSubmissionForm(stuId,date,sub){
   if(currentSubState._draftSubKey !== draftKey){
     if(swDisplayInterval){ clearInterval(swDisplayInterval); swDisplayInterval=null; }
     const local = loadDraftLocal(stuId, date);
+    const serverTimer = db.timerState[draftKey];
     if(local){
       // 이전에 작성하다 만 내용(뒤로가기·새로고침·화면꺼짐 등)이 폰에 남아있으면 그걸 이어서 씀
       currentSubState._draftSub = {
@@ -2176,16 +2239,24 @@ function renderSubmissionForm(stuId,date,sub){
         errorTypes: local.errorTypes || [],
         status: sub.status || '대기'
       };
-      swBaseSeconds = typeof local._swBaseSeconds === 'number' ? local._swBaseSeconds : parseTimeToSeconds(local.time);
-      swRunStartTs = local._swRunStartTs || null;
-      if(swRunStartTs){ swDisplayInterval = setInterval(swUpdateDisplay, 1000); }
     }else{
       currentSubState._draftSub = JSON.parse(JSON.stringify(sub));
+    }
+    // 타이머는 서버(Firestore)에 저장된 값이 있으면 그걸 우선 사용 (폰 데이터가 지워져도 복구 가능)
+    if(serverTimer && (!local || (serverTimer.updatedAt||0) >= (local._timerUpdatedAt||0))){
+      swBaseSeconds = serverTimer.baseSeconds || 0;
+      swRunStartTs = serverTimer.runStartTs || null;
+    }else if(local){
+      swBaseSeconds = typeof local._swBaseSeconds === 'number' ? local._swBaseSeconds : parseTimeToSeconds(local.time);
+      swRunStartTs = local._swRunStartTs || null;
+    }else{
       swBaseSeconds = parseTimeToSeconds(sub.time || '00:00');
       swRunStartTs = null;
     }
+    if(swRunStartTs){ swDisplayInterval = setInterval(swUpdateDisplay, 1000); }
     currentSubState._draftSubKey = draftKey;
     swActiveStuId = stuId; swActiveDate = date;
+    swTickCount = 0;
     saveDraftLocal(stuId, date);
   }
   const draft = currentSubState._draftSub;
@@ -2227,14 +2298,22 @@ let swRunStartTs = null;   // 현재 재생 중이면 시작 시각(ms), 아니�
 let swBaseSeconds = 0;     // 이전에 정지했던 시점까지 누적된 초
 let swDisplayInterval = null;
 let swActiveStuId = null, swActiveDate = null;
+let swTickCount = 0;
 function parseTimeToSeconds(t){ if(!t) return 0; const parts=t.split(':').map(Number); return (parts[0]||0)*60+(parts[1]||0); }
 function formatSeconds(sec){ const m=String(Math.floor(sec/60)).padStart(2,'0'); const s=String(sec%60).padStart(2,'0'); return `${m}:${s}`; }
 function swCurrentElapsed(){ return swBaseSeconds + (swRunStartTs ? Math.floor((Date.now()-swRunStartTs)/1000) : 0); }
+async function saveTimerServer(stuId, date){
+  try{ await fsSet('timerState', stuId+'_'+date, {baseSeconds: swBaseSeconds, runStartTs: swRunStartTs, updatedAt: Date.now()}); }catch(e){}
+}
 function swUpdateDisplay(){
   const formatted = formatSeconds(swCurrentElapsed());
   const el = document.getElementById('swDisplay'); if(el) el.textContent = formatted;
   if(currentSubState._draftSub) currentSubState._draftSub.time = formatted;
-  if(swActiveStuId && swActiveDate) saveDraftLocal(swActiveStuId, swActiveDate);
+  if(swActiveStuId && swActiveDate){
+    saveDraftLocal(swActiveStuId, swActiveDate);
+    swTickCount++;
+    if(swTickCount % 10 === 0) saveTimerServer(swActiveStuId, swActiveDate); // 10초마다 서버 백업 (너무 자주 쓰지 않도록)
+  }
 }
 function swStart(){
   if(swRunStartTs) return;
@@ -2243,6 +2322,7 @@ function swStart(){
   if(swDisplayInterval) clearInterval(swDisplayInterval);
   swDisplayInterval = setInterval(swUpdateDisplay, 1000);
   swUpdateDisplay();
+  if(swActiveStuId && swActiveDate) saveTimerServer(swActiveStuId, swActiveDate);
 }
 function swStop(){
   if(!swRunStartTs) return;
@@ -2250,13 +2330,14 @@ function swStop(){
   swRunStartTs = null;
   if(swDisplayInterval){ clearInterval(swDisplayInterval); swDisplayInterval=null; }
   swUpdateDisplay();
+  if(swActiveStuId && swActiveDate) saveTimerServer(swActiveStuId, swActiveDate);
 }
 function swReset(){
   swRunStartTs = null; swBaseSeconds = 0;
   if(swDisplayInterval){ clearInterval(swDisplayInterval); swDisplayInterval=null; }
   const el = document.getElementById('swDisplay'); if(el) el.textContent = '00:00';
   if(currentSubState._draftSub) currentSubState._draftSub.time = '00:00';
-  if(swActiveStuId && swActiveDate) saveDraftLocal(swActiveStuId, swActiveDate);
+  if(swActiveStuId && swActiveDate){ saveDraftLocal(swActiveStuId, swActiveDate); saveTimerServer(swActiveStuId, swActiveDate); }
 }
 function renderDraftSizeIndicator(draft){
   const sizeKB = Math.round(new Blob([JSON.stringify({hwPhotos:draft.hwPhotos,practicePhotos:draft.practicePhotos})]).size/1024);
@@ -2308,6 +2389,7 @@ async function submitHomework(stuId,date){
   if(ok){
     db.submissions[key] = payload; // 즉시 화면에 확인 표시가 뜨도록 로컬에도 바로 반영
     clearDraftLocal(stuId, date);
+    fsDelete('timerState', key).catch(()=>{});
     if(swDisplayInterval){ clearInterval(swDisplayInterval); swDisplayInterval=null; }
     swRunStartTs = null; swBaseSeconds = 0; swActiveStuId=null; swActiveDate=null;
     currentSubState._draftSub = null; currentSubState._draftSubKey = null;
