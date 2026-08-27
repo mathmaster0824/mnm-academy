@@ -180,7 +180,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-27 v31 (일괄유형+정리)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-27 v33 (유형영상)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -1547,7 +1547,7 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames){
     <td>
       <div style="font-size:11px;color:#8a8674;margin-bottom:4px;">${doneCount}/${videoTotal} 완료</div>
       <div class="row" style="gap:4px;">
-        <select style="max-width:110px;font-size:11px;" id="vidsel_${cls.id}_${date}_${s.id}"><option value="">보관함에서 선택</option>${db.videos.map(v=>`<option value="${v.id}">${v.title}</option>`).join('')}</select>
+        <select style="max-width:110px;font-size:11px;" id="vidsel_${cls.id}_${date}_${s.id}"><option value="">보관함에서 선택</option>${db.videos.map(v=>`<option value="${v.id}">[${v.videoType||'개념'}${v.book?' '+v.book:''}] ${v.title}</option>`).join('')}</select>
         <button class="btn sm outline" onclick="addVideoAssign('${cls.id}','${date}','${s.id}')">+</button>
       </div>
       ${(r.videoAssignments||[]).map((v,i)=>`<div style="font-size:11px;margin-top:3px;"><label><input type="checkbox" ${v.done?'checked':''} onchange="toggleVideoDone('${cls.id}','${date}','${s.id}',${i})"> ${v.title}</label></div>`).join('')}
@@ -1760,14 +1760,23 @@ async function deleteStep(courseId,stepId){
 function renderVideoLib(){
   const filter = currentSubState.videoCourse || 'all';
   const list = filter==='all'? db.videos : db.videos.filter(v=>v.courseId===filter);
+  const allBooks = [...new Set([...Object.values(BOOK_PRESETS).flat(), ...Array.from(collectAllBookNames())])];
   return `
   <h1 class="page-title">영상 보관함</h1>
-  <p class="page-sub">개념 설명 영상을 학기별로 등록해두면, 반 관리·학생 페이지에서 바로 골라 부여할 수 있어요.</p>
+  <p class="page-sub">개념 설명 영상과 유형(문제풀이) 영상을 학기별로 등록해두면, 반 관리·학생 페이지에서 바로 골라 부여할 수 있어요.</p>
   <div class="card">
     <div class="row">
       <input type="text" id="vTitle" placeholder="영상 제목">
       <input type="text" id="vUrl" placeholder="영상 링크(URL)" style="flex:1;min-width:180px;">
-      <select id="vCourse"><option value="">과정 선택</option>${sortedCourses().map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
+      <select id="vType" onchange="document.getElementById('vBookWrap').style.display=this.value==='유형'?'inline-block':'none';">
+        <option value="개념">개념 영상</option>
+        <option value="유형">유형 영상</option>
+      </select>
+      <select id="vCourse"><option value="">학년학기 선택</option>${sortedCourses().map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
+      <span id="vBookWrap" style="display:none;">
+        <input type="text" id="vBook" list="vBookList" placeholder="교재명">
+        <datalist id="vBookList">${allBooks.map(b=>`<option value="${b}">`).join('')}</datalist>
+      </span>
       <button class="btn gold sm" onclick="addVideo()">+ 등록</button>
     </div>
   </div>
@@ -1776,8 +1785,14 @@ function renderVideoLib(){
     ${sortedCourses().map(c=>`<button class="${filter===c.id?'active':''}" onclick="currentSubState.videoCourse='${c.id}';render();">${c.name}</button>`).join('')}
   </div>
   <div class="card">
-    ${list.length? `<table><tr><th>제목</th><th>과정</th><th>링크</th><th></th></tr>
-      ${list.map(v=>`<tr><td>${v.title}</td><td>${courseById(v.courseId)?.name||'-'}</td><td><a class="link" href="${v.url}" target="_blank">열기</a></td><td><button class="btn sm outline" onclick="deleteVideo('${v.id}')">삭제</button></td></tr>`).join('')}
+    ${list.length? `<table><tr><th>종류</th><th>제목</th><th>과정 / 교재</th><th>링크</th><th></th></tr>
+      ${list.map(v=>`<tr>
+        <td><span class="badge ${v.videoType==='유형'?'yellow':'gray'}" style="font-size:10px;">${v.videoType||'개념'}</span></td>
+        <td>${v.title}</td>
+        <td>${courseById(v.courseId)?.name||'-'}${v.book? ` · ${v.book}`:''}</td>
+        <td><a class="link" href="${v.url}" target="_blank">열기</a></td>
+        <td><button class="btn sm outline" onclick="deleteVideo('${v.id}')">삭제</button></td>
+      </tr>`).join('')}
       </table>` : `<div class="empty">등록된 영상이 없어요.</div>`}
   </div>
   `;
@@ -1785,9 +1800,12 @@ function renderVideoLib(){
 async function addVideo(){
   const title=document.getElementById('vTitle').value.trim();
   const url=document.getElementById('vUrl').value.trim();
+  const videoType=document.getElementById('vType').value;
   const courseId=document.getElementById('vCourse').value;
+  const book=videoType==='유형' ? document.getElementById('vBook').value.trim() : '';
   if(!title||!url){alert('제목과 링크를 입력해주세요.');return;}
-  await fsSet('videos', uid('vid'), {title,url,courseId});
+  if(videoType==='유형' && !book){alert('유형 영상은 교재명도 입력해주세요.');return;}
+  await fsSet('videos', uid('vid'), {title,url,courseId,videoType,book});
 }
 async function deleteVideo(id){ await fsDelete('videos', id); }
 
@@ -2638,6 +2656,7 @@ function renderSchoolExams(){
       <datalist id="allSchoolsList">${[...new Set(db.students.map(x=>x.school).filter(Boolean))].map(sc=>`<option value="${sc}">`).join('')}</datalist>
       <select id="examGrade"><option value="1">1학년</option><option value="2">2학년</option><option value="3">3학년</option></select>
       <input type="text" id="examName" placeholder="시험명 (예: 2학기 기말고사)" style="width:150px;">
+      <input type="text" id="examRange" placeholder="시험 범위 (예: 1~3단원)" style="width:150px;">
       <input type="date" id="examDate" value="${todayISO()}">
       <button class="btn sm gold" onclick="addSchoolExam()">등록</button>
     </div>
@@ -2648,12 +2667,19 @@ function renderSchoolExams(){
     ${upcoming.length ? upcoming.map(e=>`
       <div style="padding:8px 0;border-bottom:1px solid var(--line);">
         <div class="row between">
-          <div><b>${e.school}</b> ${e.grade}학년 · ${e.examName} <span style="color:#8a8674;font-size:12px;">(${fmtDate(e.date)})</span></div>
+          <div>
+            <b>${e.school}</b> ${e.grade}학년 · ${e.examName} <span style="color:#8a8674;font-size:12px;">(${fmtDate(e.date)})</span>
+            ${e.range? `<div style="font-size:12px;color:#8a8674;margin-top:2px;">📖 범위: ${e.range}</div>` : ''}
+          </div>
           <div class="row" style="gap:4px;">
             <button class="btn sm outline" onclick="currentSubState.examScoreOpen=currentSubState.examScoreOpen==='${e.id}'?null:'${e.id}';render();">${currentSubState.examScoreOpen===e.id?'닫기':'점수 입력'}</button>
             <button class="btn sm outline" onclick="deleteSchoolExam('${e.id}')">삭제</button>
           </div>
         </div>
+        ${currentSubState.examScoreOpen===e.id ? `<div class="row" style="margin-top:6px;gap:6px;">
+          <input type="text" id="examRangeEdit_${e.id}" placeholder="시험 범위 (예: 1~3단원)" style="flex:1;font-size:12px;" value="${e.range||''}">
+          <button class="btn sm outline" onclick="saveExamRange('${e.id}', this)">범위 저장</button>
+        </div>` : ''}
         ${currentSubState.examScoreOpen===e.id ? renderExamScoreEntry(e) : ''}
       </div>
     `).join('') : `<div class="empty">등록된 시험 일정이 없어요.</div>`}
@@ -2670,10 +2696,20 @@ async function addSchoolExam(){
   const school = document.getElementById('examSchool').value.trim();
   const grade = document.getElementById('examGrade').value;
   const examName = document.getElementById('examName').value.trim();
+  const range = document.getElementById('examRange').value.trim();
   const date = document.getElementById('examDate').value;
   if(!school || !examName || !date){ alert('학교명, 시험명, 날짜를 모두 입력해주세요.'); return; }
-  await fsAdd('schoolExams', {school, grade:Number(grade), examName, date});
-  document.getElementById('examSchool').value=''; document.getElementById('examName').value='';
+  await fsAdd('schoolExams', {school, grade:Number(grade), examName, range, date});
+  document.getElementById('examSchool').value=''; document.getElementById('examName').value=''; document.getElementById('examRange').value='';
+}
+async function saveExamRange(examId, btn){
+  const range = document.getElementById(`examRangeEdit_${examId}`).value;
+  const ok = await fsUpdate('schoolExams', examId, {range});
+  if(btn){
+    const original = btn.textContent;
+    btn.textContent = ok ? '✅ 저장됨' : '❌ 실패';
+    setTimeout(()=>{ btn.textContent = original; }, 1500);
+  }
 }
 function deleteSchoolExam(id){
   openConfirm('이 시험 일정을 삭제할까요?', '입력된 점수 기록도 더 이상 이 화면에서 안 보이게 돼요.', async ()=>{
