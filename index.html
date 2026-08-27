@@ -180,7 +180,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-26 v30 (출석자동+대시보드미제출)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-27 v31 (일괄유형+정리)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -1083,6 +1083,7 @@ function renderClassDetail(cls){
     <h3 style="margin-top:0;">일괄 적용 (반 전체)</h3>
     <div class="row">
       <select id="bulkAtt"><option value="">출석</option><option>출석</option><option>지각</option><option>결석</option></select>
+      <select id="bulkStepType"><option value="개념">개념학습</option><option value="유형">유형학습</option></select>
       <select id="bulkCourseSel" onchange="onBulkCourseChange()"><option value="">학년학기</option>${sortedCourses().map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
       <select id="bulkStep"><option value="">STEP (학년학기 먼저 선택)</option></select>
       <select id="bulkHwComp"><option value="">숙제완성도</option><option>상</option><option>중</option><option>하</option></select>
@@ -1521,9 +1522,6 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames){
   const status = studentStatus(s.id);
   const nameBg = status==='STOP' ? '#fbe6e2' : status==='SLOW' ? '#fdf2df' : '';
   const warnCount = (s.warnings||[]).length;
-  const gradeLevel = s.grade ? s.grade[0] : '';
-  const doneBooks = new Set((db.practiceProgress[s.id]?.tracks||[]).filter(t=>t.done).map(t=>t.book));
-  const bookOptions = [...new Set([...(BOOK_PRESETS[gradeLevel]||[]), ...Array.from(bookNames||[])])].filter(b=>!doneBooks.has(b));
   return `<tr>
     <td style="${nameBg?`background:${nameBg};border-left:3px solid ${status==='STOP'?'var(--red)':'var(--gold)'};`:''}">
       <b>${s.name}</b>${warnCount? ` <span class="badge red" style="font-size:9px;">경고${warnCount}</span>`:''}
@@ -1544,8 +1542,6 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames){
       return hint + memoBox + typeSelect + renderStepCascadeSelect(cls.id, date, s.id, r.stepId) + renderExtraSteps(cls.id, date, s.id, r.extraSteps);
     })()}</td>
     <td>
-      ${renderBookSelect(cls.id, date, s.id, r.practiceBook, bookOptions)}
-      <input type="text" placeholder="범위 (예: p.24~31)" style="width:130px;font-size:11px;margin-top:4px;" value="${r.practiceRange||''}" onchange="updateClassRec('${cls.id}','${date}','${s.id}','practiceRange',this.value)">
       ${renderPracticeTracks(s.id, date)}
     </td>
     <td>
@@ -1641,6 +1637,7 @@ async function applyBulkTrack(clsId, btn){
 async function applyBulk(clsId,date){
   const cls=classById(clsId);
   const att=document.getElementById('bulkAtt').value;
+  const stepType=document.getElementById('bulkStepType').value;
   const step=document.getElementById('bulkStep').value;
   const hw=document.getElementById('bulkHwComp').value;
   const study=document.getElementById('bulkStudyComp').value;
@@ -1649,7 +1646,7 @@ async function applyBulk(clsId,date){
   (cls.studentIds||[]).forEach(stuId=>{
     const patch = {};
     if(att) patch.attendance=att;
-    if(step) patch.stepId=step;
+    if(step){ patch.stepId=step; patch.stepType=stepType; }
     if(hw) patch.homeworkCompletionLevel=hw;
     if(study) patch.studyCompletionLevel=study;
     upd[stuId]=patch;
