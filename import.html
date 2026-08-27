@@ -222,19 +222,24 @@ document.getElementById('btnBulk').addEventListener('click', async ()=>{
   clearLog();
   log(`▶ 총 ${lines.length}개 영상 등록 시작...`, 'step');
   let success=0, fail=0;
+  const remainingLines = [];
   for(const line of lines){
     const parts = line.split('|').map(p=>p.trim());
     const [title, url, videoType, courseName, book, unit] = parts;
-    if(!title || !url){ log(`❌ 건너뜀 (제목/링크 누락): ${line}`, 'err'); fail++; continue; }
+    if(!title || !url){ log(`❌ 건너뜀 (제목/링크 누락): ${line}`, 'err'); fail++; remainingLines.push(line); continue; }
     const courseId = courseName ? courseIdByName(courseName) : '';
     if(courseName && !courseId){ log(`⚠ 학년학기 "${courseName}" 못 찾음 — 미분류로 등록: ${title}`, 'err'); }
     try{
       await registerVideo(title, url, courseId, videoType||'개념', book||'', unit||'');
       log(`✅ 등록: ${title}`, 'ok');
       success++;
-    }catch(e){ log(`❌ 실패: ${title} — ${e.message}`, 'err'); fail++; }
+    }catch(e){ log(`❌ 실패: ${title} — ${e.message}`, 'err'); fail++; remainingLines.push(line); }
   }
   log(`\n🎉 완료! 성공 ${success}개 / 실패 ${fail}개`, 'ok');
+  document.getElementById('bulkText').value = remainingLines.join('\n');
+  if(remainingLines.length){
+    log(`등록 안 된 ${remainingLines.length}개 줄만 텍스트박스에 남겨뒀어요. 고쳐서 다시 눌러주세요.`, 'step');
+  }
 });
 
 loadData();
@@ -332,6 +337,7 @@ document.getElementById('btnFetchSubmit').addEventListener('click', async ()=>{
   if(checked.length===0){ alert('등록할 영상을 하나 이상 체크해주세요.'); return; }
   log(`▶ 총 ${checked.length}개 영상 등록 시작...`, 'step');
   let success=0, fail=0;
+  const succeededIndexes = [];
   for(const i of checked){
     const title = document.getElementById('title_'+i).value.trim();
     const url = fetchedVideos[i].url;
@@ -344,9 +350,19 @@ document.getElementById('btnFetchSubmit').addEventListener('click', async ()=>{
       await registerVideo(title, url, courseId, videoType, book, unit);
       log(`✅ 등록: ${title}`, 'ok');
       success++;
+      succeededIndexes.push(i);
     }catch(e){ log(`❌ 실패: ${title} — ${e.message}`, 'err'); fail++; }
   }
   log(`\n🎉 완료! 성공 ${success}개 / 실패 ${fail}개`, 'ok');
+  if(succeededIndexes.length){
+    log(`등록 완료된 ${succeededIndexes.length}개는 목록에서 사라져요. (실패한 건 남아있어요, 고쳐서 다시 시도하세요)`, 'step');
+    const succeededSet = new Set(succeededIndexes);
+    fetchedVideos = fetchedVideos.filter((v,i)=>!succeededSet.has(i));
+    renderVideoList();
+    if(fetchedVideos.length===0){
+      document.getElementById('videoListCard').style.display = 'none';
+    }
+  }
 });
 
 initGoogleAuth();
