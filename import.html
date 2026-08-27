@@ -162,9 +162,19 @@ function renderCourseSelects(){
   const opts = '<option value="">학년학기 선택</option>' + sorted.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
   document.getElementById('sCourse').innerHTML = opts;
 }
+const MIDDLE_SCHOOL_UNITS = {
+  '[중등] 중1-1학기': ['소인수분해','정수와 유리수','문자와 식','그래프'],
+  '[중등] 중1-2학기': ['기본도형','평면도형','입체도형','통계'],
+  '[중등] 중2-1학기': ['유리수','식의 계산','부등식','연립방정식','일차함수'],
+  '[중등] 중2-2학기': ['삼각형','사각형','닮음','피타고라스','확률'],
+  '[중등] 중3-1학기': ['제곱근','인수분해','이차방정식','이차함수'],
+  '[중등] 중3-2학기': ['삼각비','원','산포도'],
+};
 function courseUnitsList(courseId){
   const course = db.courses.find(c=>c.id===courseId);
-  if(!course || !course.steps) return [];
+  if(!course) return [];
+  if(MIDDLE_SCHOOL_UNITS[course.name]) return MIDDLE_SCHOOL_UNITS[course.name];
+  if(!course.steps) return [];
   const seen = new Set(); const units = [];
   course.steps.forEach(s=>{
     const unit = s.split('>')[0].trim();
