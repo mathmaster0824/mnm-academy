@@ -180,7 +180,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-28 v39 (순서화살표)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-28 v40 (금요보강개선)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -845,7 +845,7 @@ function getTodaysFridaySupp(){
     Object.entries(byStu||{}).forEach(([stuId, supp])=>{
       if(!supp || !supp.needed) return;
       const s = studentById(stuId);
-      rows.push({ studentName: s? s.name : '(삭제된 학생)', className: cls? cls.name : '-', time: supp.time||'', note: supp.note||'' });
+      rows.push({ key, stuId, studentName: s? s.name : '(삭제된 학생)', className: cls? cls.name : '-', time: supp.time||'', note: supp.note||'', done: !!supp.done });
     });
   });
   rows.sort((a,b)=>{
@@ -900,9 +900,23 @@ function renderDashboard(){
   </div>` : ''}
   ${dow===5 ? `<div class="card">
     <h3 style="margin-top:0;">🕓 오늘 금요일 보강 (시간순)</h3>
-    ${fridayRows.length ? `<table><tr><th>시간</th><th>학생</th><th>반</th><th>메모</th></tr>
-      ${fridayRows.map(r=>`<tr><td><b>${r.time||'시간 미정'}</b></td><td>${r.studentName}</td><td>${r.className}</td><td style="font-size:12px;color:#6b6858;">${r.note||'-'}</td></tr>`).join('')}
+    ${fridayRows.length ? `<table><tr><th></th><th>시간</th><th>학생</th><th>반</th><th>메모</th></tr>
+      ${fridayRows.map(r=>`<tr>
+        <td><input type="checkbox" ${r.done?'checked':''} onchange="toggleFridayDone('${r.key}','${r.stuId}',this.checked)"></td>
+        <td><b style="${r.done?'text-decoration:line-through;color:#9c9880;':''}">${r.time||'시간 미정'}</b></td>
+        <td style="${r.done?'text-decoration:line-through;color:#9c9880;':''}">${r.studentName}</td>
+        <td style="${r.done?'color:#9c9880;':''}">${r.className}</td>
+        <td><input type="text" value="${r.note||''}" placeholder="메모" style="font-size:12px;width:100%;" onchange="updateFriday('${r.key}','${r.stuId}','note',this.value)"></td>
+      </tr>`).join('')}
       </table>` : `<div class="empty" style="padding:20px;">오늘 보강이 필요한 학생이 없어요.</div>`}
+    <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);">
+      <div style="font-size:12px;color:#8a8674;margin-bottom:4px;">혹시 빠뜨린 학생 있으면 추가해주세요</div>
+      <div class="row">
+        <select id="fridayAddClass" onchange="onFridayAddClassChange()"><option value="">반 선택</option>${sortedClasses().map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
+        <select id="fridayAddStudent"><option value="">학생 선택 (반 먼저)</option></select>
+        <button class="btn sm gold" onclick="addFridayFromDashboard()">추가</button>
+      </div>
+    </div>
   </div>` : ''}
   <div class="card">
     <h3 style="margin-top:0;">확인이 필요해요</h3>
@@ -1769,6 +1783,23 @@ function renderFridaySupp(cls,date){
   </table>`;
 }
 async function updateFriday(key,stuId,field,val){ await fsSet('fridaySupp', key, {[stuId]: {[field]:val}}); }
+async function toggleFridayDone(key,stuId,checked){ await fsSet('fridaySupp', key, {[stuId]: {done:checked}}); }
+function onFridayAddClassChange(){
+  const clsId = document.getElementById('fridayAddClass').value;
+  const cls = classById(clsId);
+  const sel = document.getElementById('fridayAddStudent');
+  const students = cls ? (cls.studentIds||[]).map(studentById).filter(Boolean) : [];
+  sel.innerHTML = `<option value="">${cls?'학생 선택':'학생 선택 (반 먼저)'}</option>` + students.map(s=>`<option value="${s.id}">${s.name}</option>`).join('');
+}
+async function addFridayFromDashboard(){
+  const clsId = document.getElementById('fridayAddClass').value;
+  const stuId = document.getElementById('fridayAddStudent').value;
+  if(!clsId || !stuId){ alert('반과 학생을 모두 선택해주세요.'); return; }
+  const key = clsId+'_'+weekStartISO(todayISO());
+  await fsSet('fridaySupp', key, {[stuId]: {needed:true}});
+  document.getElementById('fridayAddClass').value = '';
+  document.getElementById('fridayAddStudent').innerHTML = '<option value="">학생 선택 (반 먼저)</option>';
+}
 
 /* ---------------- CURRICULUM ---------------- */
 function renderCurriculum(){
@@ -1872,23 +1903,17 @@ function renderVideoLib(){
     ${unitsInCourse.map(u=>`<button class="${unitFilter===u?'active':''}" style="font-size:11px;" onclick="currentSubState.videoUnit='${u}';render();">${u}</button>`).join('')}
   </div>` : ''}
   <div class="card">
-    ${list.length? `<table><tr>${filter!=='all'&&unitFilter!=='all'?'<th></th>':''}<th>순서</th><th>종류</th><th>제목</th><th>과정 / 교재 / 단원</th><th>링크</th><th></th></tr>
-      ${list.map(v=>renderVideoRow(v, (filter!=='all'&&unitFilter!=='all') ? list.map(x=>x.id) : null)).join('')}
+    ${list.length? `<table><tr><th>순서</th><th>종류</th><th>제목</th><th>과정 / 교재 / 단원</th><th>링크</th><th></th></tr>
+      ${list.map(v=>renderVideoRow(v)).join('')}
       </table>` : `<div class="empty">조건에 맞는 영상이 없어요.</div>`}
   </div>
   `;
 }
-function renderVideoRow(v, siblingIds){
+function renderVideoRow(v){
   currentSubState._videoEditing = currentSubState._videoEditing || {};
   const editing = !!currentSubState._videoEditing[v.id];
   if(!editing){
-    const idx = siblingIds ? siblingIds.indexOf(v.id) : -1;
-    const arrowCell = siblingIds ? `<td class="row" style="gap:2px;">
-      <button class="btn sm outline" style="padding:2px 6px;" ${idx<=0?'disabled':''} onclick="moveVideoOrder('${v.id}',-1,[${siblingIds.map(id=>`'${id}'`).join(',')}])">▲</button>
-      <button class="btn sm outline" style="padding:2px 6px;" ${idx===-1||idx>=siblingIds.length-1?'disabled':''} onclick="moveVideoOrder('${v.id}',1,[${siblingIds.map(id=>`'${id}'`).join(',')}])">▼</button>
-    </td>` : '';
     return `<tr>
-      ${arrowCell}
       <td style="text-align:center;color:#8a8674;">${v.order ?? '-'}</td>
       <td><span class="badge ${v.videoType==='유형'?'yellow':'gray'}" style="font-size:10px;">${v.videoType||'개념'}</span></td>
       <td>${v.title}</td>
@@ -1967,16 +1992,6 @@ async function addVideo(){
   await fsSet('videos', uid('vid'), {title,url,courseId,videoType,book,unit, order: orderVal===''?null:Number(orderVal)});
 }
 async function deleteVideo(id){ await fsDelete('videos', id); }
-async function moveVideoOrder(id, direction, siblingIds){
-  const idx = siblingIds.indexOf(id);
-  const swapIdx = idx + direction;
-  if(idx===-1 || swapIdx<0 || swapIdx>=siblingIds.length) return;
-  const newOrder = [...siblingIds];
-  [newOrder[idx], newOrder[swapIdx]] = [newOrder[swapIdx], newOrder[idx]];
-  for(let i=0;i<newOrder.length;i++){
-    await fsUpdate('videos', newOrder[i], {order: i+1});
-  }
-}
 async function fixVideoUnitNumbers(){
   const toFix = [];
   db.videos.forEach(v=>{
