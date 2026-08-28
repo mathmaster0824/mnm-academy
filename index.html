@@ -180,7 +180,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-28 v36 (영상수정+순서)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-28 v37 (영상검색필터)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -1813,7 +1813,11 @@ async function deleteStep(courseId,stepId){
 /* ---------------- VIDEO LIBRARY ---------------- */
 function renderVideoLib(){
   const filter = currentSubState.videoCourse || 'all';
+  const unitFilter = currentSubState.videoUnit || 'all';
+  const search = currentSubState.videoSearch || '';
   let list = filter==='all'? [...db.videos] : db.videos.filter(v=>v.courseId===filter);
+  if(filter!=='all' && unitFilter!=='all') list = list.filter(v=>v.unit===unitFilter);
+  if(search.trim()) list = list.filter(v=>v.title.toLowerCase().includes(search.trim().toLowerCase()));
   const allBooks = [...new Set([...Object.values(BOOK_PRESETS).flat(), ...Array.from(collectAllBookNames())])];
   const courseOrderIdx = c=>{ const idx=COURSE_ORDER.indexOf(courseById(c)?.name); return idx===-1?999:idx; };
   list.sort((a,b)=>{
@@ -1825,6 +1829,7 @@ function renderVideoLib(){
     if(oa!==ob) return oa-ob;
     return (a.title||'').localeCompare(b.title||'');
   });
+  const unitsInCourse = filter!=='all' ? courseUnitsList(filter) : [];
   return `
   <h1 class="page-title">영상 보관함</h1>
   <p class="page-sub">개념 설명 영상과 유형(문제풀이) 영상을 학년학기·단원별로 등록해두면, 반 관리에서 단계별로 골라 부여할 수 있어요. 같은 단원 안에서 순서를 정하려면 "순서" 숫자를 입력해주세요 (작은 숫자가 먼저 나와요).</p>
@@ -1846,14 +1851,24 @@ function renderVideoLib(){
       <button class="btn gold sm" onclick="addVideo()">+ 등록</button>
     </div>
   </div>
-  <div class="tabs2">
-    <button class="${filter==='all'?'active':''}" onclick="currentSubState.videoCourse='all';render();">전체</button>
-    ${sortedCourses().map(c=>`<button class="${filter===c.id?'active':''}" onclick="currentSubState.videoCourse='${c.id}';render();">${c.name}</button>`).join('')}
+  <div class="card">
+    <div class="row">
+      <input type="text" placeholder="🔍 제목으로 검색" value="${search}" oninput="currentSubState.videoSearch=this.value;render();" style="flex:1;min-width:150px;">
+      ${filter!=='all' ? `<button class="btn sm outline" onclick="currentSubState.videoCourse='all';currentSubState.videoUnit='all';render();">필터 초기화</button>` : ''}
+    </div>
   </div>
+  <div class="tabs2">
+    <button class="${filter==='all'?'active':''}" onclick="currentSubState.videoCourse='all';currentSubState.videoUnit='all';render();">전체</button>
+    ${sortedCourses().map(c=>`<button class="${filter===c.id?'active':''}" onclick="currentSubState.videoCourse='${c.id}';currentSubState.videoUnit='all';render();">${c.name}</button>`).join('')}
+  </div>
+  ${filter!=='all' && unitsInCourse.length ? `<div class="tabs2" style="margin-top:-6px;">
+    <button class="${unitFilter==='all'?'active':''}" style="font-size:11px;" onclick="currentSubState.videoUnit='all';render();">단원 전체</button>
+    ${unitsInCourse.map(u=>`<button class="${unitFilter===u?'active':''}" style="font-size:11px;" onclick="currentSubState.videoUnit='${u}';render();">${u}</button>`).join('')}
+  </div>` : ''}
   <div class="card">
     ${list.length? `<table><tr><th>순서</th><th>종류</th><th>제목</th><th>과정 / 교재 / 단원</th><th>링크</th><th></th></tr>
       ${list.map(v=>renderVideoRow(v)).join('')}
-      </table>` : `<div class="empty">등록된 영상이 없어요.</div>`}
+      </table>` : `<div class="empty">조건에 맞는 영상이 없어요.</div>`}
   </div>
   `;
 }
