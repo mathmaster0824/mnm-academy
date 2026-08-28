@@ -180,7 +180,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-28 v37 (영상검색필터)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-28 v39 (순서화살표)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -1833,6 +1833,12 @@ function renderVideoLib(){
   return `
   <h1 class="page-title">영상 보관함</h1>
   <p class="page-sub">개념 설명 영상과 유형(문제풀이) 영상을 학년학기·단원별로 등록해두면, 반 관리에서 단계별로 골라 부여할 수 있어요. 같은 단원 안에서 순서를 정하려면 "순서" 숫자를 입력해주세요 (작은 숫자가 먼저 나와요).</p>
+  <div class="card" style="border:1px solid #e0a82e;">
+    <div class="row between">
+      <div style="font-size:12.5px;">🔧 예전에 등록한 영상 중, 단원명에 번호("4. ")가 안 붙어있어서 필터에 안 걸리는 게 있을 수 있어요. 자동으로 찾아서 고쳐드릴게요.</div>
+      <button class="btn sm gold" onclick="fixVideoUnitNumbers()">일괄 수정하기</button>
+    </div>
+  </div>
   <div class="card">
     <div class="row">
       <input type="text" id="vTitle" placeholder="영상 제목">
@@ -1866,17 +1872,23 @@ function renderVideoLib(){
     ${unitsInCourse.map(u=>`<button class="${unitFilter===u?'active':''}" style="font-size:11px;" onclick="currentSubState.videoUnit='${u}';render();">${u}</button>`).join('')}
   </div>` : ''}
   <div class="card">
-    ${list.length? `<table><tr><th>순서</th><th>종류</th><th>제목</th><th>과정 / 교재 / 단원</th><th>링크</th><th></th></tr>
-      ${list.map(v=>renderVideoRow(v)).join('')}
+    ${list.length? `<table><tr>${filter!=='all'&&unitFilter!=='all'?'<th></th>':''}<th>순서</th><th>종류</th><th>제목</th><th>과정 / 교재 / 단원</th><th>링크</th><th></th></tr>
+      ${list.map(v=>renderVideoRow(v, (filter!=='all'&&unitFilter!=='all') ? list.map(x=>x.id) : null)).join('')}
       </table>` : `<div class="empty">조건에 맞는 영상이 없어요.</div>`}
   </div>
   `;
 }
-function renderVideoRow(v){
+function renderVideoRow(v, siblingIds){
   currentSubState._videoEditing = currentSubState._videoEditing || {};
   const editing = !!currentSubState._videoEditing[v.id];
   if(!editing){
+    const idx = siblingIds ? siblingIds.indexOf(v.id) : -1;
+    const arrowCell = siblingIds ? `<td class="row" style="gap:2px;">
+      <button class="btn sm outline" style="padding:2px 6px;" ${idx<=0?'disabled':''} onclick="moveVideoOrder('${v.id}',-1,[${siblingIds.map(id=>`'${id}'`).join(',')}])">▲</button>
+      <button class="btn sm outline" style="padding:2px 6px;" ${idx===-1||idx>=siblingIds.length-1?'disabled':''} onclick="moveVideoOrder('${v.id}',1,[${siblingIds.map(id=>`'${id}'`).join(',')}])">▼</button>
+    </td>` : '';
     return `<tr>
+      ${arrowCell}
       <td style="text-align:center;color:#8a8674;">${v.order ?? '-'}</td>
       <td><span class="badge ${v.videoType==='유형'?'yellow':'gray'}" style="font-size:10px;">${v.videoType||'개념'}</span></td>
       <td>${v.title}</td>
@@ -1891,7 +1903,7 @@ function renderVideoRow(v){
   const units = v.courseId ? courseUnitsList(v.courseId) : [];
   const allBooks = [...new Set([...Object.values(BOOK_PRESETS).flat(), ...Array.from(collectAllBookNames())])];
   return `<tr style="background:#fff8e6;">
-    <td colspan="6">
+    <td colspan="10">
       <div class="row" style="flex-wrap:wrap;">
         <input type="text" id="ve_title_${v.id}" value="${v.title}" placeholder="제목" style="width:130px;">
         <input type="text" id="ve_url_${v.id}" value="${v.url}" placeholder="링크" style="flex:1;min-width:150px;">
@@ -1955,6 +1967,36 @@ async function addVideo(){
   await fsSet('videos', uid('vid'), {title,url,courseId,videoType,book,unit, order: orderVal===''?null:Number(orderVal)});
 }
 async function deleteVideo(id){ await fsDelete('videos', id); }
+async function moveVideoOrder(id, direction, siblingIds){
+  const idx = siblingIds.indexOf(id);
+  const swapIdx = idx + direction;
+  if(idx===-1 || swapIdx<0 || swapIdx>=siblingIds.length) return;
+  const newOrder = [...siblingIds];
+  [newOrder[idx], newOrder[swapIdx]] = [newOrder[swapIdx], newOrder[idx]];
+  for(let i=0;i<newOrder.length;i++){
+    await fsUpdate('videos', newOrder[i], {order: i+1});
+  }
+}
+async function fixVideoUnitNumbers(){
+  const toFix = [];
+  db.videos.forEach(v=>{
+    if(!v.courseId || !v.unit) return;
+    const units = courseUnitsList(v.courseId);
+    if(units.includes(v.unit)) return; // 이미 정확히 일치
+    const match = units.find(u => u.replace(/^\d+\.\s*/, '').trim() === v.unit.trim());
+    if(match) toFix.push({video:v, newUnit:match});
+  });
+  if(!toFix.length){
+    alert('고칠 게 없어요. 이미 정상이거나, 일치하는 단원을 찾지 못했어요 (커리큘럼에 등록 안 된 단원명일 수 있어요).');
+    return;
+  }
+  openConfirm('단원명을 일괄 수정할까요?', `${toFix.length}개 영상의 단원명에 번호를 붙여드릴게요. 예: "${toFix[0].video.unit}" → "${toFix[0].newUnit}"`, async ()=>{
+    for(const {video, newUnit} of toFix){
+      await fsUpdate('videos', video.id, {unit: newUnit});
+    }
+    alert(`${toFix.length}개 영상의 단원명을 고쳤어요.`);
+  });
+}
 
 /* ---------------- STUDENTS ---------------- */
 function renderStudents(){
