@@ -180,7 +180,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-28 v43 (경고초기화)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-29 v44 (코멘트알림)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -2328,7 +2328,7 @@ function renderSubmissionReadonly(sub,stuId,date){
 }
 async function saveTeacherComment(stuId,date,btn){
   const text = document.getElementById(`teacherComment_${stuId}_${date}`).value;
-  const ok = await fsUpdate('submissions', stuId+'_'+date, {teacherComment: text});
+  const ok = await fsUpdate('submissions', stuId+'_'+date, {teacherComment: text, commentSeen: false});
   if(btn){
     const original = btn.textContent;
     btn.textContent = ok ? '✅ 저장됐어요!' : '❌ 저장 실패, 다시 눌러주세요';
@@ -2352,7 +2352,7 @@ async function quickSetTeacherComment(stuId,date,text,btn){
   if(ta) ta.value = text;
   const original = btn ? btn.textContent : null;
   if(btn){ btn.disabled = true; btn.textContent = '저장 중...'; }
-  const ok = await fsUpdate('submissions', stuId+'_'+date, {teacherComment: text});
+  const ok = await fsUpdate('submissions', stuId+'_'+date, {teacherComment: text, commentSeen: false});
   if(btn){
     btn.textContent = ok ? '✅ 저장됨' : '❌ 실패';
     setTimeout(()=>{ btn.textContent = original; btn.disabled = false; }, 1500);
@@ -3439,7 +3439,26 @@ function downloadBackup(){
 }
 
 /* ---------------- STUDENT HOME ---------------- */
-function renderStudentHome(){ return renderStudentDetail(session.studentId, false); }
+function renderStudentHome(){
+  const stuId = session.studentId;
+  return renderUnseenCommentBanner(stuId) + renderStudentDetail(stuId, false);
+}
+function renderUnseenCommentBanner(stuId){
+  const withComment = Object.entries(db.submissions)
+    .filter(([k,v])=>k.startsWith(stuId+'_') && v.teacherComment && !v.commentSeen)
+    .sort((a,b)=>b[0].localeCompare(a[0]));
+  if(!withComment.length) return '';
+  const [key, sub] = withComment[0];
+  return `<div class="card" style="border:2px solid var(--gold);background:#fffbea;margin-bottom:14px;">
+    <div style="font-size:13px;font-weight:700;color:var(--navy2);margin-bottom:6px;">✏️ 선생님이 숙제에 코멘트를 남기셨어요!</div>
+    <div style="font-size:14px;line-height:1.6;">${sub.teacherComment}</div>
+    <button class="btn sm gold" style="margin-top:10px;" onclick="markCommentSeen('${key}')">확인했어요</button>
+  </div>`;
+}
+async function markCommentSeen(key){
+  const ok = await fsUpdate('submissions', key, {commentSeen: true});
+  if(ok && db.submissions[key]){ db.submissions[key].commentSeen = true; render(); }
+}
 
 /* ---------------- INIT ---------------- */
 initFirebase();
