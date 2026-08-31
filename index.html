@@ -180,7 +180,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-31 v53 (안전복구 · 일일안내+월말리포트)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-31 v50 (관리자 날짜별 숙제현황 · 오전 6시 마감)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -712,7 +712,7 @@ const DIRECTOR_NAV = [
   {id:'schoolExams', label:'내신 성적', icon:'🏫'},
   {id:'hwreview', label:'숙제 확인', icon:'📸'},
   {id:'qna', label:'질문 게시판', icon:'💬'},
-  {id:'feedback', label:'학부모 안내', icon:'📨'},
+  {id:'feedback', label:'학부모 피드백', icon:'📨'},
   {id:'backup', label:'데이터 백업', icon:'🗂️'},
 ];
 function buildNav(){
@@ -1401,8 +1401,8 @@ function renderClassDetail(cls){
   </div>
 
   <div class="card">
-    <h3 style="margin-top:0;">📋 일일 학습 안내</h3>
-    <p style="font-size:12px;color:#8a8674;margin:0 0 10px;">위 수업 기록 표에 입력한 내용을 바탕으로, 학부모님께 바로 보낼 수 있는 일일 학습 안내가 자동으로 만들어져요.</p>
+    <h3 style="margin-top:0;">📋 오늘의 일일 리포트</h3>
+    <p style="font-size:12px;color:#8a8674;margin:0 0 10px;">위 수업 기록 표에 입력하신 내용을 바탕으로, 바로 카톡에 보낼 수 있는 문구가 자동으로 만들어져요.</p>
     ${students.length ? students.map(s=>{
       const r = rec[s.id] || {};
       const text = buildDailyReportText(s, date, r, cls.dayGroup);
@@ -1449,7 +1449,7 @@ function buildDailyReportText(s, date, r, dayGroup){
   const warnTxt = autoWarnToday ? `\n⚠️ ${autoWarnToday.coreLine || autoWarnToday.reason}` : '';
   const doneToday = (db.practiceProgress[s.id]?.tracks||[]).filter(t=>t.done && t.doneDate===date);
   const bookDoneTxt = doneToday.length ? '\n' + doneToday.map(t=>`🎉 ${t.book} 교재를 완료했습니다!`).join('\n') : '';
-  return `[M&m 수학훈련소] ${s.name} 학생 일일 학습 안내 · ${fmtDate(date)}
+  return `[M&m 수학훈련소] ${s.name} 학생 오늘의 학습 리포트 · ${fmtDate(date)}
 ${trafficEmoji} 출석: ${r.attendance||'-'}
 ${examLine}${kmmMakeupTxt}
 · 오늘 ${r.stepType==='유형'?'유형학습':'개념학습'}: ${stepTxt}${extraStepsTxt}
@@ -3084,18 +3084,16 @@ async function answerQuestion(qId){
 
 /* ---------------- FEEDBACK ---------------- */
 function renderFeedback(){
-  const mode = currentSubState.fbMode || 'monthly';
+  const mode = currentSubState.fbMode || 'individual';
   return `
-  <h1 class="page-title">학부모 안내</h1>
-  <p class="page-sub">매 수업 후에는 수업관리의 <b>일일 학습 안내</b>를 보내고, 매월 말에는 이곳에서 <b>월말 리포트</b>를 작성해요.</p>
-  <div class="card" style="border:1px solid var(--line);">
-    <div style="font-size:13px;line-height:1.7;"><b>📋 일일 학습 안내</b>는 별도 재입력 없이 <b>수업관리 → 해당 반/날짜</b>에서 바로 복사할 수 있어요.</div>
-  </div>
+  <h1 class="page-title">학부모 피드백</h1>
+  <p class="page-sub">주간 피드백과 월말 종합 리포트를 작성해요. 완성된 문구는 그대로 복사해서 보낼 수 있어요.</p>
   <div class="tabs2">
-    <button class="${mode==='monthly'?'active':''}" onclick="currentSubState.fbMode='monthly';render();">월말 리포트</button>
-    <button class="${mode==='history'?'active':''}" onclick="currentSubState.fbMode='history';render();">발송 이력</button>
+    <button class="${mode==='individual'?'active':''}" onclick="currentSubState.fbMode='individual';render();">개별 작성</button>
+    <button class="${mode==='bulk'?'active':''}" onclick="currentSubState.fbMode='bulk';render();">반별 일괄 생성</button>
+    <button class="${mode==='history'?'active':''}" onclick="currentSubState.fbMode='history';render();">이력 보기</button>
   </div>
-  ${mode==='monthly'? renderFbIndividual() : renderFbHistory()}
+  ${mode==='individual'? renderFbIndividual() : mode==='bulk'? renderFbBulk() : renderFbHistory()}
   `;
 }
 function setIndividualTraffic(c){
@@ -3106,10 +3104,10 @@ function setIndividualTraffic(c){
   render();
 }
 function renderFbIndividual(){
-  const active = sortedStudents(db.students.filter(st=>st.status!=='withdrawn'));
-  const stuId = currentSubState.fbStudent || (active[0]&&active[0].id);
+  const stuId = currentSubState.fbStudent || (sortedStudents(db.students)[0]&&sortedStudents(db.students)[0].id);
   currentSubState.fbStudent = stuId;
   if(!stuId) return `<div class="empty">등록된 학생이 없어요.</div>`;
+  const type = currentSubState.fbType || 'weekly';
   const traffic = currentSubState.fbTraffic || trafficForStudent(stuId);
   const comment = currentSubState.fbComment !== undefined ? currentSubState.fbComment : defaultFutureDirectionText(stuId);
   currentSubState.fbTraffic = traffic; currentSubState.fbComment = comment;
@@ -3117,24 +3115,28 @@ function renderFbIndividual(){
   <div class="card">
     <div class="row">
       <select onchange="currentSubState.fbStudent=this.value;currentSubState.fbTraffic=null;currentSubState.fbComment=undefined;render();">
-        ${active.map(st=>`<option value="${st.id}" ${st.id===stuId?'selected':''}>${st.name}</option>`).join('')}
+        ${sortedStudents(db.students.filter(st=>st.status!=='withdrawn')).map(st=>`<option value="${st.id}" ${st.id===stuId?'selected':''}>${st.name}</option>`).join('')}
       </select>
-      <span class="badge gold">월말 리포트</span>
+      <select onchange="currentSubState.fbType=this.value;render();">
+        <option value="weekly" ${type==='weekly'?'selected':''}>주간 피드백</option>
+        <option value="monthly" ${type==='monthly'?'selected':''}>월말 종합 리포트</option>
+      </select>
     </div>
   </div>
   <div class="card">
     <div class="row" style="margin-bottom:10px;">
-      <span>현재 상태:</span>
+      <span>신호등:</span>
       ${['green','yellow','red'].map(c=>`<button class="btn sm ${traffic===c?'':'outline'}" style="background:${traffic===c?({green:'#3EA55A',yellow:'#E0A82E',red:'#D65A4A'}[c]):'#fff'};color:${traffic===c?'#fff':'#333'};border-color:${({green:'#3EA55A',yellow:'#E0A82E',red:'#D65A4A'}[c])};" onclick="setIndividualTraffic('${c}')">${c==='green'?'🟢 순항중':c==='yellow'?'🟡 주의':'🔴 관찰필요'}</button>`).join('')}
     </div>
-    <label style="font-size:12px;color:#8a8674;">다음 달 학습 방향 코멘트</label>
+    <label style="font-size:12px;color:#8a8674;">향후 학습 방향 코멘트</label>
     <textarea rows="4" onchange="currentSubState.fbComment=this.value;">${comment}</textarea>
+    <p style="font-size:11px;color:#9c9880;margin:6px 0 0;">💡 문구를 AI 도움받아 다듬고 싶으시면, 위 내용을 복사해서 Claude 앱에 "학부모 피드백 문구로 다듬어줘"라고 붙여넣어 보세요.</p>
     <div class="row" style="margin-top:8px;">
       <span style="flex:1;"></span>
-      <button class="btn gold sm" onclick="generateFeedback('${stuId}','monthly', this)">월말 리포트 이력 저장</button>
+      <button class="btn gold sm" onclick="generateFeedback('${stuId}','${type}', this)">완성하기</button>
     </div>
   </div>
-  <div class="card" id="fbPreview">${renderFeedbackPreview(stuId,'monthly',traffic,comment)}</div>
+  <div class="card" id="fbPreview">${renderFeedbackPreview(stuId,type,traffic,comment)}</div>
   `;
 }
 function dailyTestPhrase(avg, hasData){
@@ -3460,35 +3462,34 @@ function lastStepByType(stuId, stepType){
   return best;
 }
 function monthlyAttendanceRate(stuId, yearMonth){
-  const lessons = studentLessonRecords(stuId).filter(l=>l.date.startsWith(yearMonth) && l.date<=academicTodayISO());
-  const rows=[];
-  lessons.forEach(l=>{
-    const obj=db.classRecords[l.clsId+'_'+l.date]||{};
-    const rec=obj[stuId];
-    if(!rec || !rec.attendance) return;
-    rows.push(rec.attendance);
+  const rows = [];
+  Object.entries(db.classRecords).forEach(([key,obj])=>{
+    const rec = obj[stuId]; if(!rec) return;
+    const date = key.slice(-10);
+    if(!date.startsWith(yearMonth)) return;
+    const clsId = key.slice(0, key.length-11);
+    const cls = classById(clsId);
+    if(!cls || !isLessonDay(cls.dayGroup, date)) return;
+    rows.push(rec.attendance || '출석');
   });
   if(!rows.length) return null;
-  const absent=rows.filter(a=>a==='결석').length;
-  const late=rows.filter(a=>a==='지각').length;
-  const attended=rows.filter(a=>a==='출석'||a==='지각').length;
-  return {rate:Math.round(attended/rows.length*100),total:rows.length,absent,late};
+  const absent = rows.filter(a=>a==='결석').length;
+  const late = rows.filter(a=>a==='지각').length;
+  return { rate: Math.round((rows.length-absent)/rows.length*100), total: rows.length, absent, late };
 }
 function monthlyHomeworkRate(stuId, yearMonth){
-  const lessons = studentLessonRecords(stuId).filter(l=>l.date.startsWith(yearMonth) && l.date<=academicTodayISO());
+  const lessons = studentLessonRecords(stuId).filter(l=>l.date.startsWith(yearMonth));
   if(!lessons.length) return null;
-  const uniqueDates=new Set();
+  let totalExpected=0, totalSubmitted=0;
   lessons.forEach(l=>{
-    const dayGroup=l.dayGroup || (classById(l.clsId)?.dayGroup);
-    if(!dayGroup) return;
-    homeworkDateRangeDates(dayGroup,l.date).forEach(d=>{
-      if(d.startsWith(yearMonth) && !isHomeworkDeadlineOpen(d)) uniqueDates.add(d);
-    });
+    const cls = classById(l.clsId);
+    if(!cls) return;
+    const range = homeworkDateRangeDates(cls.dayGroup, l.date);
+    totalExpected += range.length;
+    totalSubmitted += range.filter(d=>isHomeworkSubmissionOnTime(stuId,d)).length;
   });
-  const dates=[...uniqueDates].sort();
-  if(!dates.length) return null;
-  const submitted=dates.filter(d=>isHomeworkSubmissionOnTime(stuId,d)).length;
-  return Math.round(submitted/dates.length*100);
+  if(!totalExpected) return null;
+  return Math.round(totalSubmitted/totalExpected*100);
 }
 function buildMonthlyReportText(stuId, traffic, comment){
   const s = studentById(stuId);
@@ -3505,14 +3506,12 @@ function buildMonthlyReportText(stuId, traffic, comment){
   const doneThisMonth = (db.practiceProgress[stuId]?.tracks||[]).filter(t=>t.done && t.doneDate && t.doneDate.startsWith(yearMonth));
   const att = monthlyAttendanceRate(stuId, yearMonth);
   const hwRate = monthlyHomeworkRate(stuId, yearMonth);
-  const monthlyWarnings = (s.warnings||[]).filter(w=>(w.date||'').startsWith(yearMonth)).length;
 
   const text = `[M&m 수학훈련소] ${s.name} 학생 월말 리포트 · ${monthLabel}
 ${trafficEmoji} 현재 상태: ${traffic==='green'?'순항중':traffic==='yellow'?'주의 관찰':'관찰 필요'}
 
 · 이번 달 출석률: ${att? `${att.rate}% (지각 ${att.late}회, 결석 ${att.absent}회 / 총 ${att.total}회)` : '기록 없음'}
-· 이번 달 숙제 이행률: ${hwRate!=null? `${hwRate}%` : '기록 없음'}
-· 이번 달 경고: ${monthlyWarnings}회
+· 이번 달 과제 제출율: ${hwRate!=null? `${hwRate}%` : '기록 없음'}
 · 이번 달 일일테스트: ${dailyScores.length? `${dailyScores.join('/')} (평균 ${dailyAvg}점)` : '이번 달 응시 기록 없음'}
 · 이번 달 KMM 결과: ${kmmThisMonth? `${kmmThisMonth.score}점${kmmAwardText(kmmThisMonth.score)? ' — '+kmmAwardText(kmmThisMonth.score):''}` : '이번 달 응시 없음'}
 · 현재 진도(개념학습): ${conceptStep? stepShortLabel(conceptStep.stepId) : '-'}
@@ -3525,7 +3524,39 @@ ${comment}`;
   <button class="btn sm outline" style="margin-top:10px;" onclick="copyText(this)" data-text="${encodeURIComponent(text)}">텍스트 복사하기</button>`;
 }
 function renderFeedbackPreview(stuId,type,traffic,comment){
-  return buildMonthlyReportText(stuId, traffic, comment);
+  if(type==='monthly') return buildMonthlyReportText(stuId, traffic, comment);
+  const s = studentById(stuId);
+  const scores = studentDailyScores(stuId);
+  const avg = scores.length? Math.round(scores.reduce((a,b)=>a+b.score,0)/scores.length):0;
+  const attRows = Object.entries(db.classRecords).filter(([k,v])=>v[stuId]).map(([k,v])=>v[stuId].attendance);
+  const attRate = attRows.length? Math.round(attRows.filter(a=>a==='출석').length/attRows.length*100):0;
+  const lastStep = Object.entries(db.classRecords).filter(([k,v])=>v[stuId]&&v[stuId].stepId).sort((a,b)=>a[0].slice(-10).localeCompare(b[0].slice(-10))).slice(-1)[0];
+  const stepTxt = lastStep? stepShortLabel(lastStep[1][stuId].stepId) : '-';
+  const trafficEmoji = {green:'🟢',yellow:'🟡',red:'🔴'}[traffic];
+  const kmm = db.kmm.filter(k=>k.studentId===stuId).sort((a,b)=>b.date.localeCompare(a.date))[0];
+  const hwLevelRows = Object.entries(db.classRecords)
+    .filter(([k,v])=>v[stuId]&&v[stuId].homeworkCompletionLevel)
+    .map(([k,v])=>({date:k.slice(-10), level:v[stuId].homeworkCompletionLevel}))
+    .sort((a,b)=>a.date.localeCompare(b.date));
+  const latestHwLevel = hwLevelRows.length ? hwLevelRows[hwLevelRows.length-1].level : '';
+  const practiceRatio = practiceNoteRatio(stuId);
+  const text = `[M&m 수학훈련소] ${s.name} 학생 주간 리포트
+${trafficEmoji} 현재 상태: ${traffic==='green'?'순항중':traffic==='yellow'?'주의 관찰':'관찰 필요'}
+
+· 일일테스트 평균: ${scores.length? avg+'점' : '오늘은 KMM 시험일이라 일일테스트가 없었어요'}${scores.length? ' — '+dailyTestPhrase(avg, true) : ''}
+· 출석률: ${attRate}%
+· 현재 진도: ${stepTxt}
+· 숙제 완성도: ${latestHwLevel||'-'}${latestHwLevel? ' — '+homeworkLevelPhrase(latestHwLevel) : ''}
+· 풀이과정 확인: ${practiceNotePhrase(practiceRatio)}
+${kmm? `· 최근 KMM 점수: ${kmm.score}점 (${kmm.score>=80?'PASS':'FAIL'})${kmmAwardText(kmm.score)? ' — '+kmmAwardText(kmm.score):''} — ${kmmResultPhrase(kmm)}`:''}
+
+[특이사항]
+${(()=>{const notes=Object.values(db.classRecords).filter(v=>v[stuId]&&v[stuId].note).map(v=>v[stuId].note).filter(Boolean); return notes.slice(-3).join(' / ') || '특이사항 없음';})()}
+
+[향후 학습 방향]
+${comment}`;
+  return `<pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.7;margin:0;">${text}</pre>
+  <button class="btn sm outline" style="margin-top:10px;" onclick="copyText(this)" data-text="${encodeURIComponent(text)}">텍스트 복사하기</button>`;
 }
 function copyText(btn){
   const text = decodeURIComponent(btn.getAttribute('data-text'));
@@ -3592,10 +3623,10 @@ async function generateBulkFeedback(clsId){
   }catch(e){ alert('일괄 생성 중 문제가 발생했어요.'); }
 }
 function renderFbHistory(){
-  const rows = [...db.feedbacks].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-  return `<div class="card">${rows.length? `<table><tr><th>날짜</th><th>학생</th><th>유형</th><th>상태</th><th>코멘트</th></tr>
-    ${rows.map(f=>{const st=studentById(f.studentId);const typeLabel=f.type==='monthly'?'월말':f.type==='daily'?'일일 안내':'과거 주간';return `<tr><td>${fmtDate(f.date)}</td><td>${st?st.name:'-'}</td><td>${typeLabel}</td><td>${f.traffic?(({green:'🟢',yellow:'🟡',red:'🔴'})[f.traffic]||'-'):'-'}</td><td style="max-width:320px;font-size:12px;">${f.comment||''}</td></tr>`;}).join('')}
-    </table>` : `<div class="empty">저장된 학부모 안내 이력이 없어요.</div>`}</div>`;
+  const rows = [...db.feedbacks].sort((a,b)=>b.date.localeCompare(a.date));
+  return `<div class="card">${rows.length? `<table><tr><th>날짜</th><th>학생</th><th>유형</th><th>신호등</th><th>코멘트</th></tr>
+    ${rows.map(f=>{const s=studentById(f.studentId);return `<tr><td>${fmtDate(f.date)}</td><td>${s?s.name:'-'}</td><td>${f.type==='weekly'?'주간':'월말'}</td><td>${({green:'🟢',yellow:'🟡',red:'🔴'})[f.traffic]}</td><td style="max-width:280px;font-size:12px;">${f.comment}</td></tr>`;}).join('')}
+    </table>` : `<div class="empty">작성된 피드백 이력이 없어요.</div>`}</div>`;
 }
 
 /* ---------------- BACKUP ---------------- */
