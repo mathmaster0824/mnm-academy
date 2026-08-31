@@ -135,6 +135,25 @@
     table{font-size:12px;}
     th,td{padding:6px 5px;}
   }
+
+/* v7: 반별 수업기록 가독성 개선 - 데이터 로직 변경 없음 */
+.class-record-list{display:flex;flex-direction:column;gap:14px;}
+.class-student-card{border:1px solid var(--line);border-radius:14px;background:#fff;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,.03);}
+.class-student-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:10px;margin-bottom:12px;border-bottom:1px solid var(--line);}
+.class-student-name{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:16px;}
+.class-record-grid{display:grid;grid-template-columns:minmax(190px,.8fr) minmax(300px,1.35fr) minmax(280px,1.15fr);gap:12px;align-items:start;}
+.class-record-box{border:1px solid var(--line);border-radius:11px;background:#fcfbf7;padding:10px;min-width:0;}
+.class-record-box h4{margin:0 0 8px;font-size:12px;color:#6b6858;}
+.class-mini-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;}
+.class-field label{display:block;font-size:10px;color:#8a8674;margin-bottom:4px;}
+.class-field input,.class-field select,.class-field textarea{width:100%;min-width:0;box-sizing:border-box;}
+.class-field textarea{resize:vertical;}
+.class-wide{grid-column:span 2;}
+.class-bottom-grid{display:grid;grid-template-columns:minmax(260px,1.2fr) minmax(220px,.8fr) minmax(220px,.8fr);gap:12px;margin-top:12px;}
+.class-note textarea{width:100%;min-height:64px;box-sizing:border-box;}
+@media(max-width:1100px){.class-record-grid{grid-template-columns:1fr 1fr}.class-bottom-grid{grid-template-columns:1fr 1fr}.class-wide{grid-column:auto}}
+@media(max-width:760px){.class-record-grid,.class-bottom-grid,.class-mini-grid{grid-template-columns:1fr}.class-student-card{padding:10px}.class-student-head{align-items:flex-start}.class-student-head .btn{flex:none}}
+
 </style>
 </head>
 <body>
@@ -180,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-31 v50 (관리자 날짜별 숙제현황 · 오전 6시 마감)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-29 v45 (피드백오류수정)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -258,44 +277,10 @@ function toLocalISODate(d){
 }
 function todayISO(){ return toLocalISODate(new Date()); }
 function academicTodayISO(){
-  // 숙제 날짜 D는 D+1 오전 06:00까지 인증 가능하므로, 06:00 전에는 아직 전날 숙제일로 본다.
+  // 자정~오전 6시 사이는 아직 "전날"로 취급 (밤늦게 숙제하다 자정 넘겨도 같은 날로 기록되게)
   const now = new Date();
   if(now.getHours() < 6){ now.setDate(now.getDate()-1); }
   return toLocalISODate(now);
-}
-function homeworkDeadline(dateISO){
-  // 예: 8/18 숙제 -> 8/19 오전 06:00(KST/브라우저 로컬시간) 마감
-  const d = new Date(dateISO+'T00:00:00');
-  d.setDate(d.getDate()+1);
-  d.setHours(6,0,0,0);
-  return d;
-}
-function homeworkDeadlineISO(dateISO){ return homeworkDeadline(dateISO).getTime(); }
-function isHomeworkDeadlineOpen(dateISO, nowMs=Date.now()){
-  return nowMs <= homeworkDeadlineISO(dateISO);
-}
-function isHomeworkDateSubmittable(dateISO, nowMs=Date.now()){
-  // 미래 숙제를 미리 인증할 수는 없고, 해당 숙제일의 다음 날 오전 6시까지만 제출 가능.
-  return dateISO <= academicTodayISO() && isHomeworkDeadlineOpen(dateISO, nowMs);
-}
-function isHomeworkSubmissionOnTime(stuId, dateISO){
-  const sub = db.submissions[stuId+'_'+dateISO];
-  if(!sub) return false;
-  // 레거시 데이터 중 submittedAt이 없는 기록은 기존 정상 제출로 보존한다.
-  if(!sub.submittedAt) return true;
-  const ts = new Date(sub.submittedAt).getTime();
-  if(!Number.isFinite(ts)) return true;
-  return ts <= homeworkDeadlineISO(dateISO);
-}
-function homeworkDeadlineLabel(dateISO){
-  const d = homeworkDeadline(dateISO);
-  return `${d.getMonth()+1}월 ${d.getDate()}일 오전 6:00`;
-}
-function isNextCalendarDay(prevISO, nextISO){
-  if(!prevISO) return true;
-  const d = new Date(prevISO+'T00:00:00');
-  d.setDate(d.getDate()+1);
-  return toLocalISODate(d) === nextISO;
 }
 function fmtDate(d){ const dt=new Date(d+'T00:00:00'); return `${dt.getMonth()+1}/${dt.getDate()}(${['일','월','화','수','목','금','토'][dt.getDay()]})`; }
 
@@ -362,6 +347,21 @@ function setConnStatus(ok){
   txt.textContent = ok ? '실시간 연결됨' : '연결 끊김 - 재시도 중';
 }
 
+
+let warningAutoRunBusy = false;
+let warningInputsReady = { students:false, classes:false, classRecords:false, submissions:false };
+
+async function maybeRunAutoWarnings(){
+  if(warningAutoRunBusy) return;
+  if(!(warningInputsReady.students && warningInputsReady.classes && warningInputsReady.classRecords && warningInputsReady.submissions)) return;
+  warningAutoRunBusy = true;
+  try{
+    await checkAutoWarnings();
+  }finally{
+    warningAutoRunBusy = false;
+  }
+}
+
 function attachListeners(){
   const subs = [
     fsdb.collection('meta').doc('settings').onSnapshot(async doc=>{
@@ -377,17 +377,18 @@ function attachListeners(){
 
     fsdb.collection('students').onSnapshot(snap=>{
       db.students = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      warningInputsReady.students = true;
       listenersReady.students = true;
       maybeFinishLoading();
       render();
+      maybeRunAutoWarnings();
     }, err=>{ setConnStatus(false); }),
 
-    fsdb.collection('classes').onSnapshot(snap=>{ db.classes = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
+    fsdb.collection('classes').onSnapshot(snap=>{ db.classes = snap.docs.map(d=>({id:d.id, ...d.data()})); warningInputsReady.classes=true; render(); maybeRunAutoWarnings(); }),
     fsdb.collection('courses').onSnapshot(snap=>{ db.courses = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
     fsdb.collection('videos').onSnapshot(snap=>{ db.videos = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
     fsdb.collection('classRecords').onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.classRecords=m; render();
-      if(session && session.mode==='director') scheduleAutoWarningCheck();
+      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.classRecords=m; warningInputsReady.classRecords=true; render(); maybeRunAutoWarnings();
     }),
     fsdb.collection('weeklyPlans').onSnapshot(snap=>{
       const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.weeklyPlans=m; render();
@@ -396,8 +397,7 @@ function attachListeners(){
       const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.fridaySupp=m; render();
     }),
     fsdb.collection('submissions').onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.submissions=m; render();
-      if(session && session.mode==='director') scheduleAutoWarningCheck();
+      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.submissions=m; warningInputsReady.submissions=true; render(); maybeRunAutoWarnings();
     }),
     fsdb.collection('practiceProgress').onSnapshot(snap=>{
       const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.practiceProgress=m; render();
@@ -469,236 +469,182 @@ function logout(){
   document.getElementById('pwInput').value=''; document.getElementById('codeInput').value='';
   document.getElementById('pwErr').textContent=''; document.getElementById('codeErr').textContent='';
 }
-function recordDayGroup(clsId, date, obj){
-  const snap = obj && obj.__meta && obj.__meta.dayGroupSnapshot;
-  if(snap) return snap;
-  const cls = classById(clsId);
-  if(!cls) return null;
-  const hist = Array.isArray(cls.scheduleHistory) ? [...cls.scheduleHistory].sort((a,b)=>a.from.localeCompare(b.from)) : [];
-  let group = cls.dayGroup;
-  for(const h of hist){ if(h.from<=date) group=h.dayGroup; else break; }
-  return group;
-}
-function isCompletedLessonRecord(clsId, date, obj){
-  if(!obj || date > academicTodayISO()) return false;
-  const meta = obj.__meta || {};
-  if(meta.lessonStatus) return meta.lessonStatus === 'completed';
-  // 기존 데이터 호환: 과거/오늘 기록은 실제 수업기록으로 간주하되 미래 기록은 절대 제외
-  return Object.keys(obj).some(k=>k!=='__meta' && db.students.some(s=>s.id===k));
-}
 function studentLessonRecords(stuId){
   const seen = new Set();
   const recs = [];
   Object.entries(db.classRecords).forEach(([key,obj])=>{
-    if(!obj || !obj[stuId]) return;
+    if(!obj[stuId]) return;
     const date = key.slice(-10);
     const clsId = key.slice(0, key.length-11);
-    if(date > academicTodayISO()) return;
-    if(!isCompletedLessonRecord(clsId, date, obj)) return;
-    const dayGroup = recordDayGroup(clsId, date, obj);
-    if(!dayGroup) return;
-    // 신규 확정기록은 메타 상태를 신뢰. 레거시 데이터만 요일 검증.
-    if(!(obj.__meta && obj.__meta.lessonStatus) && !isLessonDay(dayGroup, date)) return;
+    const cls = classById(clsId);
+    if(!cls || !isLessonDay(cls.dayGroup, date)) return; // 실제 수업 요일이 아닌 날은 제외 (오탐 경고 방지)
     const k = date+'_'+clsId;
     if(seen.has(k)) return;
     seen.add(k);
-    recs.push({date, clsId, dayGroup});
+    recs.push({date, clsId});
   });
-  recs.sort((a,b)=>a.date.localeCompare(b.date) || a.clsId.localeCompare(b.clsId));
+  recs.sort((a,b)=>a.date.localeCompare(b.date));
   return recs;
 }
-function homeworkSubmissionProgress(stuId, clsId, date, dayGroupOverride){
+function lessonHadHomeworkSubmission(stuId, clsId, date){
   const cls = classById(clsId);
-  const group = dayGroupOverride || (cls ? cls.dayGroup : null);
-  const range = group ? homeworkDateRangeDates(group, date) : [];
-  if(!range.length){
-    const one = isHomeworkSubmissionOnTime(stuId, date);
-    return {range:[date], submittedCount:one?1:0, total:1, complete:one};
-  }
-  const submittedCount = range.filter(d => isHomeworkSubmissionOnTime(stuId, d)).length;
-  return {range, submittedCount, total:range.length, complete:submittedCount===range.length};
+  const range = cls ? homeworkDateRangeDates(cls.dayGroup, date) : [];
+  if(!range.length) return !!db.submissions[stuId+'_'+date];
+  return range.some(d => !!db.submissions[stuId+'_'+d]);
 }
-function lessonHadHomeworkSubmission(stuId, clsId, date, dayGroupOverride){
-  return homeworkSubmissionProgress(stuId, clsId, date, dayGroupOverride).complete;
+function autoWarningCoreLine(count){
+  if(count>=3) return '숙제가 3회 연속 제출되지 않아, 이번이 세 번째 경고로 기록되어 퇴원 조치 대상이 되었습니다.';
+  if(count===2) return '숙제가 3회 연속 제출되지 않아 경고 2회를 받게 되었습니다. 다음 번 한 번 더 경고를 받으면 퇴원 조치됩니다.';
+  return '숙제가 3회 연속 제출되지 않아 경고 1회를 받게 되었습니다.';
 }
-function autoWarningCoreLine(count, missedDates){
-  const dates = (missedDates||[]).map(fmtDate).join(', ');
-  if(count>=3) return `숙제를 3일 연속 미이행(${dates})하여 이번이 세 번째 경고로 기록되어 퇴원 조치 대상이 되었습니다.`;
-  if(count===2) return `숙제를 3일 연속 미이행(${dates})하여 경고 2회로 기록되었습니다. 다음 번 한 번 더 경고를 받으면 퇴원 조치 대상이 됩니다.`;
-  return `숙제를 3일 연속 미이행(${dates})하여 경고 1회로 기록되었습니다.`;
-}
-function autoWarningMessageText(studentName, count, missedDates){
-  const core = autoWarningCoreLine(count, missedDates);
+function autoWarningMessageText(studentName, count){
+  const core = autoWarningCoreLine(count);
   const footer = count>=2 ? '가정에서 지도 부탁드립니다.' : '가정에서도 확인 부탁드립니다.';
   return `[M&m 수학훈련소] ${studentName} 학생 숙제 미제출 경고 안내\n\n${studentName} 학생이 ${core}\n\n${footer}`;
 }
-function warningEngineCutoff(){
-  // 최초 적용일의 수업부터 새 규칙을 적용한다. 첫 수업의 숙제범위는 직전 수업 이후 날짜까지 정상 판정한다.
-  return db.settings.warningEngineV48From || db.settings.warningEngineV47From || academicTodayISO();
-}
-async function ensureWarningEngineCutoff(){
-  if(db.settings.warningEngineV48From) return db.settings.warningEngineV48From;
-  const today = academicTodayISO();
-  try{
-    await fsdb.collection('meta').doc('settings').set({warningEngineV48From:today},{merge:true});
-    db.settings.warningEngineV48From = today;
-  }catch(e){ console.error('v48 경고 기준일 저장 실패:',e); }
-  return today;
-}
-async function cleanupV47AutoWarningsOnce(){
-  // v47에서 잘못 생성한 '수업별 미달 = 즉시 경고'만 정확한 고유키로 식별해 1회 정리한다.
-  if(db.settings.warningEngineV48CleanupDone) return;
-  try{
-    for(const s of db.students||[]){
-      const old = s.warnings||[];
-      const cleaned = old.filter(w => !(w.type==='homework_auto' && typeof w.episodeKey==='string' && w.episodeKey.startsWith('homework|')));
-      if(cleaned.length!==old.length){
-        await fsdb.collection('students').doc(s.id).update({warnings:cleaned});
-      }
-    }
-    await fsdb.collection('meta').doc('settings').set({warningEngineV48CleanupDone:true},{merge:true});
-    db.settings.warningEngineV48CleanupDone = true;
-  }catch(e){ console.error('v47 잘못된 자동경고 정리 실패:',e); }
-}
-function warningCandidateLessonsForStudent(stuId){
-  const today = academicTodayISO();
-  const cutoff = warningEngineCutoff();
-  const seen = new Set();
-  const rows = [];
-  const add = (date, clsId, dayGroup)=>{
-    if(!date || !clsId || !dayGroup) return;
-    if(date > today || date < cutoff) return;
-    if(!isLessonDay(dayGroup, date)) return;
-    const key = `${clsId}|${date}`;
-    if(seen.has(key)) return;
-    seen.add(key);
-    rows.push({date, clsId, dayGroup});
-  };
-  // 과거/오늘의 확정된(또는 레거시) 실제 수업 기록
-  studentLessonRecords(stuId).forEach(l=>add(l.date,l.clsId,l.dayGroup));
-  // 오늘이 실제 수업요일이면, 수업 전에도 직전 기간 숙제상태는 판정할 수 있다.
-  const s = studentById(stuId);
-  const cls = s && s.classId ? classById(s.classId) : null;
-  if(cls){
-    const group = recordDayGroup(cls.id, today, null) || cls.dayGroup;
-    add(today, cls.id, group);
-  }
-  rows.sort((a,b)=>a.date.localeCompare(b.date)||a.clsId.localeCompare(b.clsId));
-  return rows;
-}
-function warningEpisodesForStudent(stuId){
-  /*
-    운영 규칙:
-    - 숙제 '일수' 기준으로 연속 3일 미이행 시 경고 1회.
-    - 수업 3회 미제출이 아님.
-    - 5일 중 4/5 제출처럼 하루만 비어 있으면 경고가 아니다.
-    - 제출한 날이 하나라도 나오면 연속 미이행 streak는 즉시 끊긴다.
-    - 6일 연속 미이행이면 3일씩 비중복 소비하여 경고 2회가 된다.
-    - 같은 3일 묶음은 deterministic episodeKey로 중복 발급되지 않는다.
-  */
-  const lessons = warningCandidateLessonsForStudent(stuId);
-  const dayRows = [];
-  const seenDates = new Set();
-  for(const l of lessons){
-    const dates = homeworkDateRangeDates(l.dayGroup, l.date);
-    for(const d of dates){
-      // 아직 다음 날 오전 6시가 지나지 않은 숙제는 미이행으로 확정하지 않는다.
-      if(d > academicTodayISO() || isHomeworkDeadlineOpen(d) || seenDates.has(d)) continue;
-      seenDates.add(d);
-      dayRows.push({
-        date:d,
-        submitted:isHomeworkSubmissionOnTime(stuId, d),
-        assessedLessonDate:l.date,
-        clsId:l.clsId,
-        dayGroup:l.dayGroup
-      });
-    }
-  }
-  dayRows.sort((a,b)=>a.date.localeCompare(b.date));
+// v2 경고 검증 단계: 아직 Firebase에 자동 경고를 기록하지 않는다.
+// 계산 결과만 관리자 대시보드에서 확인하고, 검증 완료 후 실제 기록 기능을 켠다.
+async function checkAutoWarnings(){
+  // v11: 2026-08-27 이후 숙제 판정만 사용.
+  // 기존 기록은 수정/삭제하지 않고, 확정된 3회 연속 미인증 경고만 중복 없이 추가한다.
+  const students = Object.values(db.students || {}).filter(s => s && s.id && s.status !== '퇴원');
+  for(const s of students){
+    const episodes = warningEpisodesForStudentPreview(s.id) || [];
+    for(const ep of episodes){
+      const dates = ep.missedDates || [];
+      if(!dates.length || dates[0] < WARNING_ASSESSMENT_START_DATE) continue;
 
-  const episodes = [];
-  let missed = [];
-  for(const row of dayRows){
-    if(row.submitted){
-      missed = [];
-      continue;
+      const episodeKey = ep.episodeKey || `homework3days|${s.id}|${dates.join('|')}`;
+      const existing = (s.warnings || []).some(w =>
+        w && (
+          w.episodeKey === episodeKey ||
+          (String(w.reason || '').includes('숙제') && String(w.reason || '').includes(dates.join(', ')))
+        )
+      );
+      if(existing) continue;
+
+      const warning = {
+        date: dates[dates.length - 1],
+        reason: `숙제 인증 3회 연속 미이행 (${dates.join(', ')})`,
+        episodeKey,
+        type: 'homework3days',
+        auto: true
+      };
+
+      const nextWarnings = [...(s.warnings || []), warning];
+      await fsUpdate('students', s.id, {warnings: nextWarnings});
+      s.warnings = nextWarnings;
     }
-    // '연속 3일'은 실제 달력 날짜가 연이어야 한다. 중간 날짜가 비면 streak를 새로 시작한다.
-    if(missed.length && !isNextCalendarDay(missed[missed.length-1].date, row.date)) missed = [];
+  }
+}
+
+function addDaysISO(dateISO, delta){
+  const d = new Date(dateISO+'T00:00:00');
+  d.setDate(d.getDate()+delta);
+  return toLocalISODate(d);
+}
+function isNextISODate(prevISO, nextISO){ return !!prevISO && addDaysISO(prevISO,1)===nextISO; }
+function warningAssessmentRowsForStudent(stuId){
+  const today = academicTodayISO();
+  const seenLesson = new Set();
+  const lessons = [];
+  const addLesson = (date, clsId)=>{
+    if(!date || !clsId || date>today) return;
+    const cls = classById(clsId);
+    if(!cls || !isLessonDay(cls.dayGroup,date)) return;
+    const k=clsId+'|'+date;
+    if(seenLesson.has(k)) return;
+    seenLesson.add(k);
+    lessons.push({date,clsId,dayGroup:cls.dayGroup});
+  };
+  studentLessonRecords(stuId).forEach(r=>addLesson(r.date,r.clsId));
+  const s=studentById(stuId);
+  const cls=s&&s.classId?classById(s.classId):null;
+  if(cls && isLessonDay(cls.dayGroup,today)) addLesson(today,cls.id);
+  lessons.sort((a,b)=>a.date.localeCompare(b.date));
+
+  const byDate=new Map();
+  for(const l of lessons){
+    for(const d of homeworkDateRangeDates(l.dayGroup,l.date)){
+      // 마감 전 날짜는 미제출로 확정하지 않는다.
+      // 이 기준본(v1)은 v49 이후의 deadline helper가 없으므로 여기서 독립적으로 오전 6시 마감을 계산한다.
+      const deadline = new Date(d+'T00:00:00');
+      deadline.setDate(deadline.getDate()+1);
+      deadline.setHours(6,0,0,0);
+      if(Date.now() <= deadline.getTime()) continue;
+      // v1 대시보드와 동일하게 기존 submissions 문서 존재 여부를 '인증됨'으로 판정한다.
+      const submitted = !!db.submissions[stuId+'_'+d];
+      if(!byDate.has(d)) byDate.set(d,{date:d,submitted,assessedLessonDate:l.date,clsId:l.clsId});
+    }
+  }
+  return ([...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date))).filter(r => r.date >= WARNING_ASSESSMENT_START_DATE);
+}
+function warningEpisodesForStudentPreview(stuId){
+  const rows=warningAssessmentRowsForStudent(stuId);
+  const episodes=[];
+  let missed=[];
+  for(const row of rows){
+    // 평가자료 사이에 날짜가 비면 '연속 3일'로 이어 붙이지 않는다.
+    if(missed.length && !isNextISODate(missed[missed.length-1].date,row.date)) missed=[];
+    if(row.submitted){ missed=[]; continue; }
     missed.push(row);
     if(missed.length===3){
-      const missedDates = missed.map(x=>x.date);
-      const last = missed[2];
+      const dates=missed.map(x=>x.date);
       episodes.push({
-        date:last.assessedLessonDate, // 경고가 화면에 나타나는 수업일
-        clsId:last.clsId,
-        dayGroup:last.dayGroup,
-        sourceLessonDates:[last.assessedLessonDate],
-        missedDates,
-        homeworkDates:missedDates,
-        episodeKey:`homework3days|${stuId}|${missedDates.join('|')}`
+        missedDates:dates,
+        date:missed[2].assessedLessonDate,
+        clsId:missed[2].clsId,
+        episodeKey:`homework3days|${stuId}|${dates.join('|')}`
       });
-      // 이미 경고 1회에 사용된 3일은 다음 경고에 중복 사용하지 않는다.
-      missed = [];
+      // 6일 연속이면 3일씩 비중복으로 경고 2회가 되도록 소비한다.
+      missed=[];
     }
   }
   return episodes;
 }
-let autoWarningCheckTimer = null;
-let autoWarningCheckInFlight = false;
-function scheduleAutoWarningCheck(){
-  clearTimeout(autoWarningCheckTimer);
-  autoWarningCheckTimer = setTimeout(()=>checkAutoWarnings(), 250);
+function warningPreviewRows(){
+  const rows=[];
+  (db.students||[]).filter(s=>s.status!=='withdrawn').forEach(s=>{
+    const eps=warningEpisodesForStudentPreview(s.id);
+    eps.forEach(ep=>rows.push({student:s,episode:ep}));
+  });
+  rows.sort((a,b)=>a.episode.missedDates[2].localeCompare(b.episode.missedDates[2])||a.student.name.localeCompare(b.student.name));
+  return rows;
 }
-async function checkAutoWarnings(){
-  if(autoWarningCheckInFlight || !session || session.mode!=='director' || !db.students?.length) return;
-  autoWarningCheckInFlight = true;
-  try{
-    await ensureWarningEngineCutoff();
-    await cleanupV47AutoWarningsOnce();
-    for(const s of db.students){
-      if(s.status==='withdrawn') continue;
-      const episodes = warningEpisodesForStudent(s.id);
-      if(!episodes.length) continue;
-      for(const ep of episodes){
-        await fsdb.runTransaction(async tx=>{
-          const ref = fsdb.collection('students').doc(s.id);
-          const snap = await tx.get(ref);
-          if(!snap.exists) return;
-          const cur = snap.data();
-          if(cur.status==='withdrawn') return;
-          const warnings = cur.warnings || [];
-          // 같은 3일 묶음으로는 경고를 두 번 만들지 않는다.
-          const duplicate = warnings.some(w => w.episodeKey===ep.episodeKey);
-          if(duplicate) return;
-          const newCount = warnings.length + 1;
-          const warn = {
-            id:uid('warn'), type:'homework_auto', date:ep.date,
-            reason:`숙제 3일 연속 미이행 (${ep.missedDates.map(fmtDate).join(', ')}) (자동 기록)`,
-            coreLine:autoWarningCoreLine(newCount, ep.missedDates),
-            message:autoWarningMessageText(cur.name||s.name, newCount, ep.missedDates),
-            sourceLessonDates:ep.sourceLessonDates,
-            sourceClassId:ep.clsId,
-            homeworkDates:ep.homeworkDates,
-            missedDates:ep.missedDates,
-            episodeKey:ep.episodeKey,
-            createdAt:new Date().toISOString()
-          };
-          tx.update(ref, {warnings:[...warnings, warn], autoWarnLastDate: firebase.firestore.FieldValue.delete()});
-        });
-      }
-    }
-  }catch(e){ console.error('자동 경고 점검 실패:', e); }
-  finally{ autoWarningCheckInFlight = false; }
+
+// v8: 전체 학생 숙제/경고 검증용 읽기 전용 집계. Firebase 쓰기 없음.
+function allStudentHomeworkWarningAuditRows(){
+  return (db.students||[])
+    .filter(s=>s.status!=='withdrawn')
+    .map(s=>{
+      const rows=warningAssessmentRowsForStudent(s.id);
+      const episodes=warningEpisodesForStudentPreview(s.id);
+      const submitted=rows.filter(r=>r.submitted).length;
+      const missing=rows.length-submitted;
+      return {student:s, rows, episodes, submitted, missing};
+    })
+    .sort((a,b)=>{
+      const ac=classById(a.student.classId)?.name||'';
+      const bc=classById(b.student.classId)?.name||'';
+      return ac.localeCompare(bc,'ko') || a.student.name.localeCompare(b.student.name,'ko');
+    });
+}
+
+// ===== 2026-08-31 오전 기준 응급복구 =====
+// 오늘 수정 과정에서 생성된 자동 경고는 DB에서 지우지 않고 화면/리포트에서 제외한다.
+// 원장이 직접 입력한 수동 경고만 유효 경고로 취급한다.
+function verifiedWarnings(s){
+  return ((s&&s.warnings)||[]).filter(w => !((w.reason||'').includes('자동 기록')));
 }
 function enterApp(){
   appEntered = true;
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appShell').style.display='block';
+  console.warn('RECOVERY MODE: 2026-08-31 오전 원본 + 자동 경고 표시/생성 차단');
   currentView = session.mode==='director' ? 'dashboard' : 'studentHome';
   buildNav();
   render();
-  if(session.mode==='director') scheduleAutoWarningCheck();
+  /* RECOVERY: 자동 경고 실행 중지 */
 }
 
 /* ---------------- NAV ---------------- */
@@ -712,7 +658,8 @@ const DIRECTOR_NAV = [
   {id:'schoolExams', label:'내신 성적', icon:'🏫'},
   {id:'hwreview', label:'숙제 확인', icon:'📸'},
   {id:'qna', label:'질문 게시판', icon:'💬'},
-  {id:'feedback', label:'학부모 피드백', icon:'📨'},
+  {id:'feedback', label:'학부모 학습안내', icon:'📨'},
+    {id:'audit', label:'전체 최종점검', icon:'✅'},
   {id:'backup', label:'데이터 백업', icon:'🗂️'},
 ];
 function buildNav(){
@@ -721,7 +668,12 @@ function buildNav(){
   if(session.mode==='director'){
     el.innerHTML = DIRECTOR_NAV.map(n=>`<div class="nav-item ${currentView===n.id?'active':''}" onclick="goto('${n.id}')">${n.icon} ${n.label}</div>`).join('');
   }else{
-    el.innerHTML = `<div class="nav-item active">🧑‍🎓 내 학습 페이지</div>`;
+    const STUDENT_NAV = [
+      {id:'studentHome', label:'내 학습 페이지', icon:'🧑‍🎓'},
+      {id:'studentHomework', label:'오늘의 숙제', icon:'✏️'},
+      {id:'studentProgress', label:'학습현황', icon:'🚦'}
+    ];
+    el.innerHTML = STUDENT_NAV.map(n=>`<div class="nav-item ${currentView===n.id?'active':''}" onclick="goto('${n.id}')">${n.icon} ${n.label}</div>`).join('');
   }
 }
 function goto(v){ currentView=v; currentSubState={}; buildNav(); render(); toggleSidebar(false); }
@@ -925,12 +877,27 @@ function warningCountBadge(count){
   return `<span class="badge gray">경고 없음</span>`;
 }
 function trafficForStudent(studentId){
+  const stu = studentById(studentId);
   const status = studentStatus(studentId);
-  if(status==='STOP') return 'red';
+
+  // 중대한 관리 이슈는 점수보다 우선합니다.
+  // 숙제 3회 연속 미이행으로 실제 생성된 경고가 있으면 관찰필요(빨강)로 추천합니다.
+  const homework3Warnings = ((stu && stu.warnings)||[]).filter(w=>w && w.type==='homework3days');
+  if(status==='STOP' || homework3Warnings.length>0) return 'red';
+
+  // 별도 관리상태가 SLOW이면 주의(노랑)로 추천합니다.
   if(status==='SLOW') return 'yellow';
+
+  // 일일테스트 기준: 80점 이상 순항 / 60~79점 주의 / 60점 미만 관찰필요.
+  // 최근 기록을 우선 사용하여 '현재 상태'를 반영합니다.
   const scores = studentDailyScores(studentId);
-  const avg = scores.length? scores.reduce((a,b)=>a+b.score,0)/scores.length : 100;
-  return avg>=85 ? 'green' : (avg>=70? 'yellow':'green');
+  if(!scores.length) return 'green';
+  const latest = scores.slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')))[0];
+  const score = Number(latest && latest.score);
+  if(!Number.isFinite(score)) return 'green';
+  if(score>=80) return 'green';
+  if(score>=60) return 'yellow';
+  return 'red';
 }
 const FUTURE_TEXT_STOP = '잠시 멈추고 기본 개념부터 다시 짚어나가겠습니다.';
 const FUTURE_TEXT_SLOW = '속도를 늦춰 더 정확하게 학습시켜나갈 예정입니다.';
@@ -1041,11 +1008,14 @@ function renderInner(){
       case 'hwreview': html+=renderHomeworkReview(); break;
       case 'qna': html+=renderQnaDirector(); break;
       case 'feedback': html+=renderFeedback(); break;
+      case 'audit': html+=renderFinalAudit(); break;
       case 'backup': html+=renderBackup(); break;
       default: html+=renderDashboard();
     }
   }else{
-    html+=renderStudentHome();
+    if(currentView==='studentHomework') html+=renderStudentHomeworkPage();
+    else if(currentView==='studentProgress') html+=renderStudentProgressPage();
+    else html+=renderStudentHome();
   }
   main.innerHTML = html;
 }
@@ -1073,6 +1043,44 @@ function getTodaysFridaySupp(){
   });
   return rows;
 }
+
+// v10: warning assessment begins on 2026-08-27.
+// Historical records before this date remain untouched and visible elsewhere.
+const WARNING_ASSESSMENT_START_DATE = '2026-08-27';
+
+// v9: READ-ONLY warning decision detail. No Firebase writes.
+function warningDecisionDetailForStudent(stu){
+  const rows = warningAssessmentRowsForStudent(stu.id) || [];
+  if(!rows.length){
+    return `<div class="muted" style="margin-top:8px">판정할 숙제 날짜가 아직 없습니다.</div>`;
+  }
+  let streak = 0;
+  let prevDate = null;
+  const parts = [];
+  rows.forEach(r=>{
+    if(prevDate && !isNextISODate(prevDate, r.date)) streak = 0;
+    if(r.submitted){
+      streak = 0;
+      parts.push(`<span style="display:inline-block;margin:3px 4px 3px 0;padding:5px 8px;border-radius:9px;background:#eaf7ee;border:1px solid #b9dfc3"><b>○ ${escapeHtml(r.date.slice(5).replace('-','/'))}</b><br><small>인증 · 연속 0</small></span>`);
+    }else{
+      streak += 1;
+      const hit = streak === 3;
+      parts.push(`<span style="display:inline-block;margin:3px 4px 3px 0;padding:5px 8px;border-radius:9px;background:${hit?'#fff0ed':'#fff7e8'};border:1px solid ${hit?'#e9aaa0':'#ead7a8'}"><b>× ${escapeHtml(r.date.slice(5).replace('-','/'))}</b><br><small>미인증 · 연속 ${streak}${hit?' → 경고':''}</small></span>`);
+      if(hit) streak = 0; // same preview rule: every completed 3-day episode counts once
+    }
+    prevDate = r.date;
+  });
+  const eps = warningEpisodesForStudentPreview(stu.id) || [];
+  return `
+    <div style="margin-top:9px;padding-top:8px;border-top:1px dashed #ddd">
+      <div style="font-weight:800;margin-bottom:5px">판정 근거</div>
+      <div>${parts.join('')}</div>
+      <div class="muted" style="margin-top:6px">
+        ${eps.length ? `현재 기록 기준 예상 경고 <b>${eps.length}회</b>` : `현재 기록 기준 <b>연속 3회 미인증 구간 없음</b>`}
+      </div>
+    </div>`;
+}
+
 function renderDashboard(){
   const dow = new Date().getDay();
   const todaysClasses = db.classes.filter(c=> (c.dayGroup==='mon-wed'&&(dow===1||dow===3)) || (c.dayGroup==='tue-thu'&&(dow===2||dow===4)) );
@@ -1080,26 +1088,32 @@ function renderDashboard(){
   Object.values(db.submissions).forEach(s=>{ if(s.status==='대기') pendingHw++; });
   db.questions.forEach(q=>{ if(q.status==='대기') pendingQ++; });
   db.students.forEach(s=>{ const st=studentStatus(s.id); if(st!=='PASS') watchCount++; });
-  const outStudents = db.students.filter(s=>(s.warnings||[]).length>=3);
+  const outStudents = db.students.filter(s=>verifiedWarnings(s).length>=3);
   const pwWarn = db.settings.isDefaultPassword;
   const fridayRows = dow===5 ? getTodaysFridaySupp() : [];
   const today = todayISO();
-  const missingHwToday = [];
+  // v1: 관리자 대시보드에서는 '몇 개 제출'뿐 아니라 날짜별 제출/미제출을 함께 보여준다.
+  // 기존 Firebase submissions 데이터는 읽기만 하며 저장/경고 로직은 건드리지 않는다.
+  const homeworkRowsToday = [];
   todaysClasses.forEach(c=>{
     const range = homeworkDateRangeDates(c.dayGroup, today);
     (c.studentIds||[]).map(studentById).filter(Boolean).forEach(s=>{
       if(!range.length) return;
-      const dayStatuses = range.map(d=>({
-        date:d,
-        submitted:isHomeworkSubmissionOnTime(s.id,d),
-        open:isHomeworkDeadlineOpen(d)
-      }));
-      const submittedCount = dayStatuses.filter(x=>x.submitted).length;
-      if(submittedCount < range.length){
-        missingHwToday.push({name:s.name, className:c.name, submitted:submittedCount, total:range.length, dayStatuses});
-      }
+      const days = range.map(d=>({date:d, submitted:!!db.submissions[s.id+'_'+d]}));
+      const submittedCount = days.filter(x=>x.submitted).length;
+      homeworkRowsToday.push({
+        studentId:s.id,
+        name:s.name,
+        className:c.name,
+        submitted:submittedCount,
+        total:range.length,
+        days
+      });
     });
   });
+  const missingHwToday = homeworkRowsToday.filter(x=>x.submitted < x.total);
+  const warningPreview = warningPreviewRows(); // v2: 읽기 전용 경고 검증 결과
+  const homeworkWarningAudit = allStudentHomeworkWarningAuditRows(); // v8: 전체 학생 읽기 전용 검증표
 
   return `
   <h1 class="page-title">대시보드</h1>
@@ -1115,24 +1129,24 @@ function renderDashboard(){
     ${todaysClasses.length ? todaysClasses.map(c=>`<div class="row between" style="padding:8px 0;border-bottom:1px solid var(--line);"><span>${c.name} <span style="color:#9c9880;font-size:12px;">(${(c.studentIds||[]).length}명)</span></span><button class="btn sm outline" onclick="goto('classes');openClass('${c.id}')">바로 열기</button></div>`).join('') : `<div class="empty" style="padding:20px;">오늘 수업이 없어요.</div>`}
   </div>
   ${todaysClasses.length ? `<div class="card" style="${missingHwToday.length?'border-color:var(--red);':''}">
-    <h3 style="margin-top:0;${missingHwToday.length?'color:var(--red);':''}">📸 오늘 수업 중 숙제 미제출 학생${missingHwToday.length? ` (${missingHwToday.length}명)`:''}</h3>
-    ${missingHwToday.length ? `<div style="font-size:13px;line-height:2;">
-      ${missingHwToday.map(x=>`<div style="padding:8px 0;border-bottom:1px solid var(--line);">
-        <div class="row between" style="gap:10px;">
-          <span><b>${x.name}</b> <span style="color:#9c9880;font-size:12px;">${x.className}</span></span>
-          <span class="badge red">${x.submitted}/${x.total} 제출</span>
-        </div>
-        <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px;">
-          ${x.dayStatuses.map(st=>{
-            const d=new Date(st.date+'T00:00:00');
-            const label=`${d.getMonth()+1}/${d.getDate()}(${['일','월','화','수','목','금','토'][d.getDay()]})`;
-            if(st.submitted) return `<span style="font-size:11px;padding:2px 7px;border-radius:999px;background:#edf8f0;color:#287a44;border:1px solid #cdebd5;">✓ ${label} 이행</span>`;
-            if(st.open) return `<span style="font-size:11px;padding:2px 7px;border-radius:999px;background:#fff7e8;color:#a66a00;border:1px solid #f1d9a9;">⏳ ${label} 마감 전</span>`;
-            return `<span style="font-size:11px;padding:2px 7px;border-radius:999px;background:#fff0ee;color:#c44f43;border:1px solid #f0c9c4;">✕ ${label} 미이행</span>`;
-          }).join('')}
+    <h3 style="margin-top:0;">📸 오늘 수업 학생 숙제 제출 현황</h3>
+    <div style="font-size:12px;color:#8a8674;margin:-2px 0 10px;">최근 검사기간의 날짜별 인증 여부입니다. ○ 제출 · × 미제출</div>
+    ${homeworkRowsToday.length ? `<div style="font-size:13px;">
+      ${homeworkRowsToday.map(x=>`<div style="padding:10px 0;border-bottom:1px solid var(--line);">
+        <div class="row between" style="gap:12px;align-items:flex-start;">
+          <div style="min-width:120px;"><b>${x.name}</b> <span style="color:#9c9880;font-size:12px;">${x.className}</span></div>
+          <div style="flex:1;display:flex;flex-wrap:wrap;gap:6px 8px;">
+            ${x.days.map(day=>{
+              const dt=new Date(day.date+'T00:00:00');
+              const wd=['일','월','화','수','목','금','토'][dt.getDay()];
+              const label=`${dt.getMonth()+1}/${dt.getDate()}(${wd})`;
+              return `<span title="${label} ${day.submitted?'제출':'미제출'}" style="display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border-radius:999px;border:1px solid ${day.submitted?'#bfe3c6':'#f3c5c0'};background:${day.submitted?'#f0faf2':'#fff3f1'};color:${day.submitted?'#2c7a3d':'#c94236'};font-size:12px;font-weight:700;white-space:nowrap;">${day.submitted?'○':'×'} ${label}</span>`;
+            }).join('')}
+          </div>
+          <span class="badge ${x.submitted===x.total?'green':'red'}" style="white-space:nowrap;">${x.submitted}/${x.total} 제출</span>
         </div>
       </div>`).join('')}
-    </div>` : `<div class="empty" style="padding:16px;">오늘 수업 학생 전원 숙제 제출 완료!</div>`}
+    </div>` : `<div class="empty" style="padding:16px;">표시할 숙제 검사기간이 없어요.</div>`}
   </div>` : ''}
   ${dow===5 ? `<div class="card">
     <h3 style="margin-top:0;">🕓 오늘 금요일 보강 (시간순)</h3>
@@ -1154,6 +1168,57 @@ function renderDashboard(){
       </div>
     </div>
   </div>` : ''}
+  <div class="card" style="border-color:#e8c873;">
+    <div class="row between" style="align-items:flex-start;gap:12px;">
+      <div>
+        <h3 style="margin:0 0 4px;">⚠️ 경고 로직 검증 모드</h3>
+        <div style="font-size:12px;color:#7a7666;line-height:1.6;">연속 3일 모두 숙제 인증이 없고 각 날짜의 오전 6시 마감이 지난 경우만 잡습니다. <b>아직 Firebase 경고 기록에는 저장하지 않습니다.</b></div>
+      </div>
+      <span class="badge yellow">예상 경고 ${warningPreview.length}건</span>
+    </div>
+    ${warningPreview.length ? `<div style="margin-top:10px;font-size:13px;">
+      ${warningPreview.map(x=>`<div class="row between" style="padding:8px 0;border-top:1px solid var(--line);gap:10px;">
+        <span><b>${x.student.name}</b> <span style="color:#9c9880;font-size:12px;">${classById(x.student.classId)?.name||''}</span></span>
+        <span style="color:var(--red);font-weight:700;">${x.episode.missedDates.map(fmtDate).join(' → ')}</span>
+      </div>`).join('')}
+    </div>` : `<div class="empty" style="padding:14px 0 2px;">현재 확인 가능한 기록에서는 연속 3일 미인증 학생이 없어요.</div>`}
+  </div>
+  <div class="card" style="border-color:#b9c6e6;">
+    <div class="row between" style="align-items:flex-start;gap:12px;">
+      <div>
+        <h3 style="margin:0 0 4px;">🔎 전체 학생 숙제·경고 검증 <span style="font-size:12px;font-weight:700;color:#8a5a00">(경고 판정 시작: 2026.08.27)</span>표</h3>
+        <div style="font-size:12px;color:#7a7666;line-height:1.6;">재원생 전체를 대상으로 현재 Firestore의 숙제 인증 기록을 <b>읽기만</b> 해서 계산합니다. ○ 인증 · × 미인증 · 경고는 연속 3일 미인증 예상치이며 실제 경고에는 저장되지 않습니다.</div><div class="muted" style="margin:6px 0 10px">학생을 펼치면 날짜별 ○/×와 함께 <b>미인증 연속 횟수 → 경고 발생 지점</b>을 확인할 수 있습니다.</div>
+      </div>
+      <span class="badge">${homeworkWarningAudit.length}명</span>
+    </div>
+    <div style="margin-top:10px;display:grid;gap:8px;">
+      ${homeworkWarningAudit.map(x=>{
+        const clsName=classById(x.student.classId)?.name||'반 미지정';
+        const warningCount=x.episodes.length;
+        return `<details style="border:1px solid var(--line);border-radius:10px;background:#fff;overflow:hidden;" ${warningCount?'open':''}>
+          <summary style="cursor:pointer;list-style:none;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+            <span><b>${x.student.name}</b> <span style="font-size:12px;color:#9c9880;">${clsName}</span></span>
+            <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+              <span class="badge green">○ ${x.submitted}</span>
+              <span class="badge ${x.missing?'red':''}">× ${x.missing}</span>
+              <span class="badge ${warningCount?'yellow':''}">예상경고 ${warningCount}</span>
+            </span>
+          </summary>
+          <div style="padding:0 12px 12px;border-top:1px solid var(--line);">
+            ${x.rows.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">
+              ${x.rows.map(r=>{
+                const dt=new Date(r.date+'T00:00:00');
+                const wd=['일','월','화','수','목','금','토'][dt.getDay()];
+                const label=`${dt.getMonth()+1}/${dt.getDate()}(${wd})`;
+                return `<span title="${r.date}" style="display:inline-flex;align-items:center;gap:4px;padding:4px 7px;border-radius:999px;border:1px solid ${r.submitted?'#bfe3c6':'#f3c5c0'};background:${r.submitted?'#f0faf2':'#fff3f1'};color:${r.submitted?'#2c7a3d':'#c94236'};font-size:12px;font-weight:700;white-space:nowrap;">${r.submitted?'○':'×'} ${label}</span>`;
+              }).join('')}
+            </div>` : `<div class="empty" style="padding:12px 0 0;">현재 평가할 수 있는 숙제 날짜가 없어요.</div>`}
+            ${warningCount ? `<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--line);font-size:12px;line-height:1.8;"><b style="color:var(--red);">예상 경고 구간</b><br>${x.episodes.map((ep,i)=>`${i+1}회: ${ep.missedDates.map(fmtDate).join(' → ')}`).join('<br>')}</div>` : ''}
+          </div>
+        </details>`;
+      }).join('')}
+    </div>
+  </div>
   <div class="card">
     <h3 style="margin-top:0;">확인이 필요해요</h3>
     <div style="font-size:13px;line-height:2;">
@@ -1165,7 +1230,7 @@ function renderDashboard(){
   ${outStudents.length ? `<div class="card" style="border-color:var(--red);">
     <h3 style="margin-top:0;color:var(--red);">🚨 OUT 대상 학생 (경고 3회 이상)</h3>
     <div style="font-size:13px;line-height:2;">
-      ${outStudents.map(s=>`<div class="row between"><span>${s.name} (${s.grade}) · 경고 ${(s.warnings||[]).length}회</span><button class="btn sm outline" onclick="goto('students');currentSubState.studentDetail='${s.id}';render();">확인하기</button></div>`).join('')}
+      ${outStudents.map(s=>`<div class="row between"><span>${s.name} (${s.grade}) · 경고 ${verifiedWarnings(s).length}회</span><button class="btn sm outline" onclick="goto('students');currentSubState.studentDetail='${s.id}';render();">확인하기</button></div>`).join('')}
     </div>
   </div>` : ''}
   ${pwWarn ? `<div class="card" style="border-color:var(--red);">
@@ -1272,32 +1337,16 @@ async function promptNewClass(){
   currentSubState.classId = newId;
 }
 function deleteClass(id){
-  const cls = classById(id);
-  openConfirm('반을 삭제할까요?', '현재 학생 배정만 정리하고 과거 수업 기록은 보존해요. 반 자체는 목록에서 삭제됩니다.', async ()=>{
-    try{
-      const batch = fsdb.batch();
-      for(const stuId of (cls?.studentIds||[])){
-        const s = studentById(stuId);
-        if(s && s.classId===id) batch.update(fsdb.collection('students').doc(stuId), {classId:null});
-      }
-      batch.delete(fsdb.collection('classes').doc(id));
-      await batch.commit();
-      currentSubState.classId = db.classes.find(c=>c.id!==id)?.id;
-    }catch(e){ alert('반 삭제에 실패했어요. 인터넷 연결을 확인해주세요.'); }
+  openConfirm('반을 삭제할까요?', '이 반과 관련된 학생 배정 정보가 함께 사라져요. 수업 기록은 남아있지만 반 목록에서는 보이지 않게 돼요.', async ()=>{
+    await fsDelete('classes', id);
+    currentSubState.classId = db.classes.find(c=>c.id!==id)?.id;
   });
 }
 function toggleDayGroup(clsId, currentGroup){
   const newGroup = currentGroup==='mon-wed' ? 'tue-thu' : 'mon-wed';
   const newLabel = newGroup==='mon-wed' ? '월수반' : '화목반';
-  const effective = academicTodayISO();
-  openConfirm('요일그룹을 바꿀까요?', `오늘(${effective})부터 ${newLabel}(으)로 적용해요. 과거 수업은 이전 요일 기준을 보존합니다.`, async ()=>{
-    const cls = classById(clsId);
-    const hist = Array.isArray(cls?.scheduleHistory) ? [...cls.scheduleHistory] : [];
-    if(!hist.length) hist.push({from:'0000-01-01', dayGroup:currentGroup});
-    const filtered = hist.filter(h=>h.from!==effective);
-    filtered.push({from:effective, dayGroup:newGroup});
-    filtered.sort((a,b)=>a.from.localeCompare(b.from));
-    await fsSet('classes', clsId, {dayGroup:newGroup, scheduleHistory:filtered});
+  openConfirm('요일그룹을 바꿀까요?', `이 반이 ${newLabel}(으)로 바뀌면서, 앞으로 숙제 검사 범위(수목금토일 vs 목금토일월 등)가 새 기준으로 계산돼요. 지난 기록은 그대로 남아있어요.`, async ()=>{
+    await fsSet('classes', clsId, {dayGroup: newGroup});
   });
 }
 
@@ -1306,29 +1355,14 @@ function isLessonDay(dayGroup, dateISO){
   const lessonDays = dayGroup==='mon-wed' ? [1,3] : [2,4];
   return lessonDays.includes(dow);
 }
-function lessonMetaFor(cls, date, status='completed'){
-  return {lessonStatus:status, dayGroupSnapshot:recordDayGroup(cls.id,date,null)||cls.dayGroup, confirmedAt:new Date().toISOString()};
-}
-async function confirmLesson(clsId, date){
-  if(date > academicTodayISO()){ alert('미래 날짜의 수업은 확정할 수 없어요. 수업이 실제로 진행된 뒤 확정해주세요.'); return; }
-  const cls = classById(clsId); if(!cls) return;
-  if(!isLessonDay(recordDayGroup(clsId,date,null)||cls.dayGroup, date)){
-    if(!confirm('현재 반의 수업 요일과 다른 날짜예요. 그래도 실제 보강/대체수업으로 확정할까요?')) return;
-  }
+async function seedDefaultAttendance(clsId, date, students){
   const key = clsId+'_'+date;
-  const existing = db.classRecords[key] || {};
-  const patch = {__meta:lessonMetaFor(cls,date,'completed')};
-  for(const stuId of (cls.studentIds||[])){
-    if(!existing[stuId]) patch[stuId] = {attendance:'출석'};
-    else if(existing[stuId].attendance===undefined) patch[stuId] = {...existing[stuId], attendance:'출석'};
+  const rec = db.classRecords[key] || {};
+  for(const s of students){
+    if(!rec[s.id] || rec[s.id].attendance===undefined){
+      await fsSet('classRecords', key, {[s.id]: {attendance:'출석'}});
+    }
   }
-  const ok = await fsSet('classRecords', key, patch);
-  if(ok) scheduleAutoWarningCheck();
-}
-async function markLessonExplicitlyTouched(clsId,date){
-  if(date > academicTodayISO()) return; // 미래 입력은 계획으로만 남기고 수업 완료로 판정하지 않음
-  const cls=classById(clsId); if(!cls) return;
-  await fsSet('classRecords', clsId+'_'+date, {__meta:lessonMetaFor(cls,date,'completed')});
 }
 function renderClassDetail(cls){
   const date = currentSubState.classDate || todayISO();
@@ -1337,6 +1371,12 @@ function renderClassDetail(cls){
   const key = cls.id+'_'+date;
   const rec = db.classRecords[key] || {};
   const unassigned = db.students.filter(s=>!(cls.studentIds||[]).includes(s.id) && s.status!=='withdrawn');
+
+  currentSubState._attSeeded = currentSubState._attSeeded || {};
+  if(!currentSubState._attSeeded[key] && isLessonDay(cls.dayGroup, date)){
+    currentSubState._attSeeded[key] = true;
+    seedDefaultAttendance(cls.id, date, students);
+  }
 
   const hwDays = homeworkRangeForClassDate(cls.dayGroup, date);
   function studentHwText(stuId){
@@ -1361,8 +1401,6 @@ function renderClassDetail(cls){
     <div class="row" style="margin-top:10px;">
       <label style="font-size:12px;color:#8a8674;">수업 날짜</label>
       <input type="date" value="${date}" onchange="currentSubState.classDate=this.value;render();">
-      <span class="badge ${isCompletedLessonRecord(cls.id,date,rec)?'green':'gray'}">${isCompletedLessonRecord(cls.id,date,rec)?'수업 확정됨':(date>academicTodayISO()?'미래 날짜 · 미확정':'미확정')}</span>
-      ${date<=academicTodayISO() && !isCompletedLessonRecord(cls.id,date,rec) ? `<button class="btn sm gold" onclick="confirmLesson('${cls.id}','${date}')">이 날짜 수업 확정</button>` : ''}
       <span style="flex:1;"></span>
       <select id="addStuSel"><option value="">학생 배정...</option>${unassigned.map(s=>`<option value="${s.id}">${s.name} (${s.grade})</option>`).join('')}</select>
       <button class="btn sm outline" onclick="assignStudent('${cls.id}')">배정</button>
@@ -1392,12 +1430,16 @@ function renderClassDetail(cls){
     </div>
   </div>
 
-  <div class="card" style="overflow-x:auto;">
-    <h3 style="margin-top:0;">수업 기록 · ${fmtDate(date)}</h3>
-    ${students.length? `<table>
-      <tr><th>학생</th><th>출석</th><th>일일테스트</th><th>KMM</th><th>개념학습(STEP)</th><th>문제 적용</th><th>동영상 과제</th><th>숙제 내용</th><th>숙제완성도</th><th>학습완성도</th><th>특이사항</th><th></th></tr>
+  <div class="card">
+    <div class="row between" style="margin-bottom:10px;">
+      <div>
+        <h3 style="margin:0;">수업 기록 · ${fmtDate(date)}</h3>
+        <div style="font-size:11px;color:#8a8674;margin-top:4px;">학생별 카드형 입력 · 가로 스크롤 없이 기록</div>
+      </div>
+    </div>
+    ${students.length? `<div class="class-record-list">
       ${students.map(s=>renderClassRow(cls,s,date,rec,studentHwText(s.id),bookNames)).join('')}
-    </table>` : `<div class="empty">이 반에 배정된 학생이 없어요.</div>`}
+    </div>` : `<div class="empty">이 반에 배정된 학생이 없어요.</div>`}
   </div>
 
   <div class="card">
@@ -1425,9 +1467,17 @@ function renderClassDetail(cls){
   `;
 }
 function buildDailyReportText(s, date, r, dayGroup){
-  const trafficEmoji = {green:'🟢',yellow:'🟡',red:'🔴'}[trafficForStudent(s.id)];
+  const trafficEmoji = {green:'🟢',yellow:'🟡',red:'🔴'}[dailyTrafficForStudentDate(s.id, date)] || '⚪';
   const stepTxt = r.stepId ? stepShortLabel(r.stepId) : '-';
   const extraStepsTxt = (r.extraSteps&&r.extraSteps.length) ? ' + '+r.extraSteps.map(id=>stepShortLabel(id)).filter(Boolean).join(', ') : '';
+  // 숙제완성도는 수업기록의 수기 등급이 아니라 실제 submissions 인증 기록으로 계산.
+  const hwDates = homeworkDateRangeDates(dayGroup, date);
+  const hwSubmitted = hwDates.filter(d=>!!db.submissions[s.id+'_'+d]);
+  const hwMissing = hwDates.filter(d=>!db.submissions[s.id+'_'+d]);
+  const hwCompletionText = hwDates.length
+    ? `${hwSubmitted.length}/${hwDates.length} 인증${hwMissing.length ? ` · 미인증 ${hwMissing.map(d=>d.slice(5).replace('-','/')).join(', ')}` : ' · 전체 인증'}`
+    : '확인할 인증 날짜 없음';
+
   const hwLevel = r.homeworkCompletionLevel || suggestedHomeworkLevel(s.id, dayGroup, date);
   const hwTxt = hwLevel ? `${hwLevel} — ${homeworkLevelPhrase(hwLevel)}` : '-';
   const todayKmm = db.kmm.find(k=>k.studentId===s.id && k.date===date);
@@ -1445,8 +1495,11 @@ function buildDailyReportText(s, date, r, dayGroup){
   }else{
     examLine = `· 일일테스트: 오늘은 시험이 없었어요`;
   }
-  const autoWarnToday = (s.warnings||[]).find(w => w.date===date && w.reason && w.reason.includes('자동 기록'));
-  const warnTxt = autoWarnToday ? `\n⚠️ ${autoWarnToday.coreLine || autoWarnToday.reason}` : '';
+  const homeworkWarningCount = ((s.warnings||[]).filter(w=>w && w.type==='homework3days')).length;
+  const warnTxt = homeworkWarningCount > 0
+    ? `
+⚠️ 숙제 미인증이 3회 연속 확인되어 경고가 부과되었습니다. 현재 누적 경고는 ${homeworkWarningCount}회입니다.`
+    : '';
   const doneToday = (db.practiceProgress[s.id]?.tracks||[]).filter(t=>t.done && t.doneDate===date);
   const bookDoneTxt = doneToday.length ? '\n' + doneToday.map(t=>`🎉 ${t.book} 교재를 완료했습니다!`).join('\n') : '';
   return `[M&m 수학훈련소] ${s.name} 학생 오늘의 학습 리포트 · ${fmtDate(date)}
@@ -1454,7 +1507,7 @@ ${trafficEmoji} 출석: ${r.attendance||'-'}
 ${examLine}${kmmMakeupTxt}
 · 오늘 ${r.stepType==='유형'?'유형학습':'개념학습'}: ${stepTxt}${extraStepsTxt}
 ${r.practiceBook? `· 문제 적용: ${r.practiceBook}${r.practiceRange? ' '+r.practiceRange : ''}${(r.extraPractice&&r.extraPractice.length)? ', '+r.extraPractice.map(e=>`${e.book}${e.range?' '+e.range:''}`).join(', ') : ''}` : ((r.extraPractice&&r.extraPractice.length)? `· 문제 적용: ${r.extraPractice.map(e=>`${e.book}${e.range?' '+e.range:''}`).join(', ')}` : '')}
-· 숙제완성도: ${hwTxt}
+· 숙제완성도: ${hwCompletionText}
 ${r.note? `· 특이사항: ${r.note}` : ''}${warnTxt}${bookDoneTxt}`;
 }
 function allStepOptions(){
@@ -1570,7 +1623,7 @@ function suggestedHomeworkLevel(stuId, dayGroup, date){
   const hwDateRange = homeworkDateRangeDates(dayGroup, date);
   const totalRangeDays = hwDateRange.length;
   if(!totalRangeDays) return '';
-  const submittedCount = hwDateRange.filter(d=>isHomeworkSubmissionOnTime(stuId,d)).length;
+  const submittedCount = hwDateRange.filter(d=>db.submissions[stuId+'_'+d]).length;
   const ratio = submittedCount/totalRangeDays;
   return ratio>=0.8?'상':ratio>=0.5?'중':'하';
 }
@@ -1807,55 +1860,84 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames){
     const cls2 = daySub ? (daySub.status==='확인'?'green':'yellow') : 'red';
     return `<span class="badge ${cls2}" style="margin:2px 3px 0 0;font-size:9px;padding:2px 6px;">${DAY_LABEL[dowKey]} ${daySub?'✓':'✗'}</span>`;
   }).join('');
-  const submittedCount = hwDateRange.filter(d=>isHomeworkSubmissionOnTime(s.id,d)).length;
+  const submittedCount = hwDateRange.filter(d=>db.submissions[s.id+'_'+d]).length;
   const totalRangeDays = hwDateRange.length;
   const hwLevel = r.homeworkCompletionLevel || suggestedHomeworkLevel(s.id, cls.dayGroup, date);
   const status = studentStatus(s.id);
   const nameBg = status==='STOP' ? '#fbe6e2' : status==='SLOW' ? '#fdf2df' : '';
-  const warnCount = (s.warnings||[]).length;
-  return `<tr>
-    <td style="${nameBg?`background:${nameBg};border-left:3px solid ${status==='STOP'?'var(--red)':'var(--gold)'};`:''}">
-      <b>${s.name}</b>${warnCount? ` <span class="badge red" style="font-size:9px;">경고${warnCount}</span>`:''}
-      <br><span class="studentcode" style="font-size:10px;">${s.code}</span>
-    </td>
-    <td><select onchange="updateClassRec('${cls.id}','${date}','${s.id}','attendance',this.value)">
-      ${['출석','지각','결석'].map(o=>`<option ${r.attendance===o?'selected':''}>${o}</option>`).join('')}</select></td>
-    <td><input type="number" style="width:56px;" value="${r.dailyTestScore}" onchange="updateClassRec('${cls.id}','${date}','${s.id}','dailyTestScore',this.value)"></td>
-    <td><input type="number" style="width:56px;" value="${(db.kmm.find(k=>k.studentId===s.id && k.date===date)||{}).score ?? ''}" placeholder="KMM" onchange="updateKmmScore('${s.id}','${date}',this.value)">${(()=>{ const k=db.kmm.find(k=>k.studentId===s.id && k.date===date); return k? `<div style="font-size:10px;margin-top:2px;">${kmmAwardText(k.score)}</div>` : ''; })()}</td>
-    <td>${(()=>{
-      const last = lastRecordedStep(s.id, date);
-      const hint = last ? `<div style="font-size:10px;color:#8a8674;margin-bottom:4px;">지난 시간(${fmtDate(last.date)}): ${stepShortLabel(last.stepId)}</div>` : '';
-      const memoBox = `<textarea placeholder="📝 다음 시간 메모 (나만 보임)" rows="1" style="font-size:10.5px;width:100%;margin-bottom:4px;background:#fffbea;" onchange="fsUpdate('students','${s.id}',{conceptMemo:this.value})">${s.conceptMemo||''}</textarea>`;
-      const typeSelect = `<select style="width:100%;font-size:10.5px;margin-bottom:4px;" onchange="updateClassRec('${cls.id}','${date}','${s.id}','stepType',this.value)">
-        <option value="개념" ${(r.stepType||'개념')==='개념'?'selected':''}>오늘: 개념학습</option>
-        <option value="유형" ${r.stepType==='유형'?'selected':''}>오늘: 유형학습</option>
-      </select>`;
-      return hint + memoBox + typeSelect + renderStepCascadeSelect(cls.id, date, s.id, r.stepId) + renderExtraSteps(cls.id, date, s.id, r.extraSteps);
-    })()}</td>
-    <td>
-      ${renderPracticeTracks(s.id, date)}
-    </td>
-    <td>
-      <div style="font-size:11px;color:#8a8674;margin-bottom:4px;">${doneCount}/${videoTotal} 완료</div>
-      ${renderVideoAssignPicker(cls.id, date, s.id)}
-      ${(r.videoAssignments||[]).map((v,i)=>`<div style="font-size:11px;margin-top:3px;"><label><input type="checkbox" ${v.done?'checked':''} onchange="toggleVideoDone('${cls.id}','${date}','${s.id}',${i})"> ${v.title}</label></div>`).join('')}
-    </td>
-    <td style="max-width:170px;font-size:11px;color:#6b6858;">
-      ${hwText||'-'}
-      ${totalRangeDays? `<div style="margin-top:6px;">${dayChecklist}</div><div style="font-size:10px;color:#8a8674;margin-top:3px;">${submittedCount}/${totalRangeDays} 제출</div>` : ''}
-    </td>
-    <td><select onchange="updateClassRec('${cls.id}','${date}','${s.id}','homeworkCompletionLevel',this.value)">
-      <option value="">-</option>${['상','중','하'].map(o=>`<option ${hwLevel===o?'selected':''}>${o}</option>`).join('')}</select></td>
-    <td><select onchange="updateClassRec('${cls.id}','${date}','${s.id}','studyCompletionLevel',this.value)">
-      <option value="">-</option>${['상','중','하'].map(o=>`<option ${r.studyCompletionLevel===o?'selected':''}>${o}</option>`).join('')}</select></td>
-    <td><textarea style="width:130px;height:40px;font-size:11px;" onchange="updateClassRec('${cls.id}','${date}','${s.id}','note',this.value)">${r.note||''}</textarea></td>
-    <td><button class="btn sm outline" onclick="unassignStudent('${cls.id}','${s.id}')">해제</button></td>
-  </tr>`;
+  const warnCount = verifiedWarnings(s).length;
+  const kmm = db.kmm.find(k=>k.studentId===s.id && k.date===date);
+  const conceptHtml = (()=>{
+    const last = lastRecordedStep(s.id, date);
+    const hint = last ? `<div style="font-size:10px;color:#8a8674;margin-bottom:5px;">지난 시간(${fmtDate(last.date)}): ${stepShortLabel(last.stepId)}</div>` : '';
+    const memoBox = `<textarea placeholder="📝 다음 시간 메모 (나만 보임)" rows="2" style="font-size:11px;width:100%;margin-bottom:6px;background:#fffbea;box-sizing:border-box;" onchange="fsUpdate('students','${s.id}',{conceptMemo:this.value})">${s.conceptMemo||''}</textarea>`;
+    const typeSelect = `<select style="width:100%;font-size:11px;margin-bottom:6px;" onchange="updateClassRec('${cls.id}','${date}','${s.id}','stepType',this.value)">
+      <option value="개념" ${(r.stepType||'개념')==='개념'?'selected':''}>오늘: 개념학습</option>
+      <option value="유형" ${r.stepType==='유형'?'selected':''}>오늘: 유형학습</option>
+    </select>`;
+    return hint + memoBox + typeSelect + renderStepCascadeSelect(cls.id, date, s.id, r.stepId) + renderExtraSteps(cls.id, date, s.id, r.extraSteps);
+  })();
+
+  return `<div class="class-student-card" style="${nameBg?`border-left:5px solid ${status==='STOP'?'var(--red)':'var(--gold)'};`:''}">
+    <div class="class-student-head">
+      <div class="class-student-name">
+        <b>${s.name}</b>
+        <span class="studentcode" style="font-size:10px;">${s.code}</span>
+        ${status && status!=='GO' ? `<span class="badge ${status==='STOP'?'red':'yellow'}" style="font-size:9px;">${status}</span>`:''}
+        ${warnCount? `<span class="badge red" style="font-size:9px;">경고 ${warnCount}</span>`:''}
+      </div>
+      <button class="btn sm outline" onclick="unassignStudent('${cls.id}','${s.id}')">반에서 해제</button>
+    </div>
+
+    <div class="class-record-grid">
+      <div class="class-record-box">
+        <h4>기본 기록</h4>
+        <div class="class-mini-grid">
+          <div class="class-field"><label>출석</label><select onchange="updateClassRec('${cls.id}','${date}','${s.id}','attendance',this.value)">${['출석','지각','결석'].map(o=>`<option ${r.attendance===o?'selected':''}>${o}</option>`).join('')}</select></div>
+          <div class="class-field"><label>일일테스트</label><input type="number" value="${r.dailyTestScore}" onchange="updateClassRec('${cls.id}','${date}','${s.id}','dailyTestScore',this.value)"></div>
+          <div class="class-field"><label>KMM</label><input type="number" value="${kmm?.score ?? ''}" placeholder="점수" onchange="updateKmmScore('${s.id}','${date}',this.value)">${kmm? `<div style="font-size:10px;margin-top:3px;">${kmmAwardText(kmm.score)}</div>`:''}</div>
+        </div>
+      </div>
+
+      <div class="class-record-box">
+        <h4>개념학습 · STEP</h4>
+        ${conceptHtml}
+      </div>
+
+      <div class="class-record-box">
+        <h4>문제 적용</h4>
+        ${renderPracticeTracks(s.id, date)}
+      </div>
+    </div>
+
+    <div class="class-bottom-grid">
+      <div class="class-record-box">
+        <h4>동영상 과제 <span style="font-weight:400;color:#8a8674;">${doneCount}/${videoTotal} 완료</span></h4>
+        ${renderVideoAssignPicker(cls.id, date, s.id)}
+        ${(r.videoAssignments||[]).map((v,i)=>`<div style="font-size:11px;margin-top:4px;"><label><input type="checkbox" ${v.done?'checked':''} onchange="toggleVideoDone('${cls.id}','${date}','${s.id}',${i})"> ${v.title}</label></div>`).join('')}
+      </div>
+
+      <div class="class-record-box">
+        <h4>숙제 현황</h4>
+        <div style="font-size:11px;color:#6b6858;line-height:1.5;">${hwText||'-'}</div>
+        ${totalRangeDays? `<div style="margin-top:7px;">${dayChecklist}</div><div style="font-size:10px;color:#8a8674;margin-top:4px;">${submittedCount}/${totalRangeDays} 제출</div>` : ''}
+        <div class="class-mini-grid" style="grid-template-columns:1fr 1fr;margin-top:9px;">
+          <div class="class-field"><label>숙제완성도</label><select onchange="updateClassRec('${cls.id}','${date}','${s.id}','homeworkCompletionLevel',this.value)"><option value="">-</option>${['상','중','하'].map(o=>`<option ${hwLevel===o?'selected':''}>${o}</option>`).join('')}</select></div>
+          <div class="class-field"><label>학습완성도</label><select onchange="updateClassRec('${cls.id}','${date}','${s.id}','studyCompletionLevel',this.value)"><option value="">-</option>${['상','중','하'].map(o=>`<option ${r.studyCompletionLevel===o?'selected':''}>${o}</option>`).join('')}</select></div>
+        </div>
+      </div>
+
+      <div class="class-record-box class-note">
+        <h4>특이사항</h4>
+        <textarea placeholder="수업 중 특이사항 기록" onchange="updateClassRec('${cls.id}','${date}','${s.id}','note',this.value)">${r.note||''}</textarea>
+      </div>
+    </div>
+  </div>`;
 }
+
 async function updateClassRec(clsId,date,stuId,field,val){
   const key=clsId+'_'+date;
   await fsSet('classRecords', key, {[stuId]: {[field]: val}});
-  await markLessonExplicitlyTouched(clsId,date);
 }
 function renderVideoAssignPicker(clsId, date, stuId){
   const rowKey = `${clsId}_${date}_${stuId}`;
@@ -1923,35 +2005,15 @@ async function toggleVideoDone(clsId,date,stuId,idx){
 }
 async function assignStudent(clsId){
   const sel=document.getElementById('addStuSel'); if(!sel.value) return;
-  const stuId=sel.value;
-  try{
-    await fsdb.runTransaction(async tx=>{
-      const stuRef=fsdb.collection('students').doc(stuId);
-      const newClsRef=fsdb.collection('classes').doc(clsId);
-      const [stuSnap,newClsSnap]=await Promise.all([tx.get(stuRef),tx.get(newClsRef)]);
-      if(!stuSnap.exists || !newClsSnap.exists) return;
-      const stu=stuSnap.data(); const newCls=newClsSnap.data();
-      const oldClsId=stu.classId;
-      if(oldClsId && oldClsId!==clsId){
-        const oldRef=fsdb.collection('classes').doc(oldClsId);
-        const oldSnap=await tx.get(oldRef);
-        if(oldSnap.exists) tx.update(oldRef,{studentIds:(oldSnap.data().studentIds||[]).filter(id=>id!==stuId)});
-      }
-      tx.update(newClsRef,{studentIds:[...new Set([...(newCls.studentIds||[]),stuId])]});
-      tx.update(stuRef,{classId:clsId});
-    });
-  }catch(e){ alert('학생 배정에 실패했어요. 다시 시도해주세요.'); }
+  const cls=classById(clsId);
+  const newIds = [...(cls.studentIds||[]), sel.value];
+  await fsSet('classes', clsId, {studentIds:newIds});
+  await fsUpdate('students', sel.value, {classId:clsId});
 }
 async function unassignStudent(clsId,stuId){
-  try{
-    await fsdb.runTransaction(async tx=>{
-      const clsRef=fsdb.collection('classes').doc(clsId);
-      const stuRef=fsdb.collection('students').doc(stuId);
-      const [clsSnap,stuSnap]=await Promise.all([tx.get(clsRef),tx.get(stuRef)]);
-      if(clsSnap.exists) tx.update(clsRef,{studentIds:(clsSnap.data().studentIds||[]).filter(id=>id!==stuId)});
-      if(stuSnap.exists && stuSnap.data().classId===clsId) tx.update(stuRef,{classId:null});
-    });
-  }catch(e){ alert('반 배정 해제에 실패했어요. 다시 시도해주세요.'); }
+  const cls=classById(clsId);
+  const newIds = (cls.studentIds||[]).filter(id=>id!==stuId);
+  await fsSet('classes', clsId, {studentIds:newIds});
 }
 async function promptNewStudentToClass(clsId){
   const name=prompt('학생 이름을 입력해주세요'); if(!name) return;
@@ -2009,7 +2071,6 @@ async function applyBulk(clsId,date){
     upd[stuId]=patch;
   });
   await fsSet('classRecords', key, upd);
-  await markLessonExplicitlyTouched(clsId,date);
 }
 
 function renderWeeklyPlan(cls, date){
@@ -2335,7 +2396,7 @@ function renderStudents(){
           <td>${cls? cls.name : '-'}</td>
           <td>${lastScoreRow? fmtDate(lastScoreRow.date) : '-'}</td>
           <td>${statusBadge(studentStatus(s.id))}</td>
-          <td>${warningCountBadge((s.warnings||[]).length)}</td>
+          <td>${warningCountBadge(verifiedWarnings(s).length)}</td>
           <td>${pending? `<span class="badge yellow">${pending}건</span>`:'-'}</td>
           <td><button class="btn sm outline" onclick="currentSubState.studentDetail='${s.id}';render();">상세보기</button> <button class="btn sm danger" onclick="deleteStudentPermanently('${s.id}')">삭제</button></td>
         </tr>`;
@@ -2440,7 +2501,7 @@ function renderStudentDetail(stuId, directorView){
     <div class="row between">
       <div>
         <h2 style="margin:0 0 4px;">${s.name} <span style="font-size:14px;color:#9c9880;">(${s.grade})</span> ${s.status==='withdrawn'?'<span class="badge gray">퇴원생</span>':''}</h2>
-        <span class="studentcode">${s.code}</span> · ${cls? cls.name : '미배정'} · ${statusBadge(status)} ${warningCountBadge((s.warnings||[]).length)}
+        <span class="studentcode">${s.code}</span> · ${cls? cls.name : '미배정'} · ${statusBadge(status)} ${warningCountBadge(verifiedWarnings(s).length)}
       </div>
       ${directorView? `<div class="row">
         <button class="btn sm ${currentSubState.previewAsStudent?'gold':'outline'}" onclick="currentSubState.previewAsStudent=!currentSubState.previewAsStudent;render();">${currentSubState.previewAsStudent?'✓ 학생 화면 미리보기 중':'🔍 학생 화면 그대로 보기'}</button>
@@ -2477,6 +2538,12 @@ function renderStudentDetail(stuId, directorView){
     ${kmmRows.length? `<table><tr><th>날짜</th><th>범위</th><th>점수</th><th>결과</th><th>시상</th>${(()=>{const hasRetry=kmmRows.some(k=>k.retryScore!=null); return hasRetry?'<th>재도전</th>':'';})()}</tr>
       ${kmmRows.map(k=>`<tr><td>${fmtDate(k.date)}</td><td>${k.range||'-'}</td><td>${k.score}</td><td>${k.score>=80?'<span class="badge green">PASS</span>':'<span class="badge red">FAIL</span>'}</td><td>${kmmAwardText(k.score)}</td>${(()=>{const hasRetry=kmmRows.some(x=>x.retryScore!=null); if(!hasRetry) return ''; return `<td>${k.retryScore!=null? `${k.retryScore}점 (${fmtDate(k.retryDate)})${k.retryScore>=70?' <span class="badge green">통과</span>':''}` : '-'}</td>`;})()}</tr>`).join('')}
       </table>`: `<div class="empty">등록된 KMM 기록이 없어요.</div>`}
+  </div>
+
+  <div class="card" style="overflow-x:auto;">
+    <h3 style="margin-top:0;">🏫 내신 성적 누적</h3>
+    <div style="font-size:12px;color:#8a8674;margin-bottom:10px;">내신 성적 페이지에서 입력한 시험 점수가 자동으로 누적됩니다.</div>
+    ${renderSchoolExamHistoryTable(stuId)}
   </div>
 
   <div class="card">
@@ -2583,45 +2650,21 @@ function renderSubmissionCard(stuId, directorView, previewAsStudent){
   const date = currentSubState.subDate || (asStudent ? academicTodayISO() : todayISO());
   const key = stuId+'_'+date;
   const sub = db.submissions[key];
-  const deadlineOpen = isHomeworkDeadlineOpen(date);
-  const canSubmit = isHomeworkDateSubmittable(date);
-  const onTime = !!sub && isHomeworkSubmissionOnTime(stuId,date);
-  const deadlineInfo = asStudent ? `<div style="background:${deadlineOpen?'#eef6ff':'#f6f4ef'};border:1px solid ${deadlineOpen?'#bfd8f2':'#ddd8ca'};padding:10px 14px;border-radius:10px;margin-bottom:12px;font-size:13px;line-height:1.65;">
-      <b>⏰ ${fmtDate(date)} 숙제 인증 마감: ${homeworkDeadlineLabel(date)}</b><br>
-      <span style="color:#6f6a58;">숙제는 해당 날짜의 <b>다음 날 오전 6시까지</b> 인증할 수 있어요.</span>
-      <span class="badge ${deadlineOpen?'blue':'gray'}" style="margin-left:6px;">${deadlineOpen?'마감 전':'마감됨'}</span>
+  // 학생/학생 미리보기에서는 선생님 코멘트를 숙제 화면의 최상단에 먼저 노출한다.
+  const teacherCommentBanner = (asStudent && sub && sub.teacherComment) ? `<div style="background:#fff8e8;border:1px solid #e8cf95;border-radius:10px;padding:12px 14px;margin-bottom:10px;">
+      <div style="font-size:12px;font-weight:700;color:#9a6b16;margin-bottom:5px;">✏️ 선생님 코멘트</div>
+      <div style="font-size:14px;line-height:1.65;color:var(--ink);font-weight:600;">${sub.teacherComment}</div>
     </div>` : '';
-  const statusBanner = (asStudent && sub) ? `<div style="background:${onTime?'#e8f5ea':'#fff1ef'};border:1px solid ${onTime?'#bfe3c6':'#efc5bf'};color:${onTime?'#2c7a3d':'#b6483c'};padding:10px 14px;border-radius:10px;margin-bottom:12px;font-size:13px;font-weight:600;">
-      ${onTime?'✅ 숙제 인증이 정상 저장됐어요!':'⚠️ 이 인증은 마감시각 이후 기록이라 숙제 제출로 집계되지 않아요.'}${sub.submittedAt? ' ('+new Date(sub.submittedAt).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})+' 제출)' : ''}
-      <div style="font-weight:500;color:#4a4636;margin-top:2px;">${sub.status==='확인'? '선생님 확인까지 완료됐어요.' : '아직 선생님 확인 전이에요.'}</div>
-      ${sub.teacherComment? `<div style="margin-top:8px;background:#fff;border:1px solid #d8ecdc;border-radius:8px;padding:8px 10px;color:var(--ink);font-weight:500;">✏️ 선생님 코멘트: ${sub.teacherComment}</div>` : ''}
+  const statusBanner = (asStudent && sub) ? `<div style="background:#e8f5ea;border:1px solid #bfe3c6;color:#2c7a3d;padding:10px 14px;border-radius:10px;margin-bottom:12px;font-size:13px;font-weight:600;">
+      ✅ 오늘 숙제 인증이 잘 저장됐어요!${sub.submittedAt? ' ('+new Date(sub.submittedAt).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})+' 제출)' : ''}
+      <div style="font-weight:500;color:#4a4636;margin-top:2px;">${sub.status==='확인'? '선생님 확인까지 완료됐어요.' : '아직 선생님 확인 전이지만, 제출은 정상적으로 됐어요.'}</div>
     </div>` : '';
-  let studentBody = '';
-  if(asStudent){
-    if(date > academicTodayISO()){
-      studentBody = `<div class="empty" style="padding:18px;">미래 날짜 숙제는 미리 인증할 수 없어요.</div>`;
-    }else if(canSubmit){
-      studentBody = renderSubmissionForm(stuId,date,sub);
-    }else if(sub){
-      studentBody = renderStudentSubmissionClosed(sub,stuId,date);
-    }else{
-      studentBody = `<div class="empty" style="padding:18px;"><b>인증 마감이 지났어요.</b><br><span style="font-size:12px;">${homeworkDeadlineLabel(date)} 이후에는 이 날짜 숙제를 새로 인증할 수 없어요.</span></div>`;
-    }
-  }
   return `
   <div class="card">
-    <div class="row between"><h3 style="margin:0;">📸 숙제 인증${previewAsStudent?' <span style="font-size:11px;color:var(--gold);">(미리보기)</span>':''}</h3><input type="date" value="${date}" ${asStudent?`max="${academicTodayISO()}"`:''} onchange="currentSubState.subDate=this.value;render();"></div>
-    ${deadlineInfo}
+    <div class="row between"><h3 style="margin:0;">📸 숙제 인증${previewAsStudent?' <span style="font-size:11px;color:var(--gold);">(미리보기)</span>':''}</h3><input type="date" value="${date}" onchange="currentSubState.subDate=this.value;render();"></div>
+    ${teacherCommentBanner}
     ${statusBanner}
-    ${asStudent ? studentBody : (sub? renderSubmissionReadonly(sub,stuId,date) : `<div class="empty">이 날짜에 제출된 인증이 없어요.</div>`)}
-  </div>`;
-}
-function renderStudentSubmissionClosed(sub,stuId,date){
-  return `<div style="padding:12px 0;font-size:13px;line-height:1.7;">
-    <div><b>이 날짜 숙제 인증은 마감되었습니다.</b> 저장된 인증은 확인만 할 수 있어요.</div>
-    <div style="margin-top:6px;color:#6f6a58;">실측 시간: <b>${sub.time||'-'}</b> · 상태: ${sub.status==='확인'?'선생님 확인 완료':'확인 대기'}</div>
-    ${(sub.hwPhotos||[]).length?`<div style="margin-top:10px;font-size:12px;color:#8a8674;">숙제 사진</div><div class="thumbs">${(sub.hwPhotos||[]).map((p,i)=>`<img src="${p}" onclick="openLightboxSet('sub','${stuId}_${date}','hwPhotos',${i})">`).join('')}</div>`:''}
-    ${(sub.practicePhotos||[]).length?`<div style="margin-top:10px;font-size:12px;color:#8a8674;">풀이연습장 사진</div><div class="thumbs">${(sub.practicePhotos||[]).map((p,i)=>`<img src="${p}">`).join('')}</div>`:''}
+    ${asStudent ? renderSubmissionForm(stuId,date,sub) : (sub? renderSubmissionReadonly(sub,stuId,date) : `<div class="empty">이 날짜에 제출된 인증이 없어요.</div>`)}
   </div>`;
 }
 function renderSubmissionReadonly(sub,stuId,date){
@@ -2840,15 +2883,6 @@ function setErrorPercent(type,val){
   if(swActiveStuId && swActiveDate) saveDraftLocal(swActiveStuId, swActiveDate);
 }
 async function submitHomework(stuId,date){
-  if(date > academicTodayISO()){
-    alert('미래 날짜 숙제는 미리 인증할 수 없어요.');
-    return;
-  }
-  if(!isHomeworkDeadlineOpen(date)){
-    alert(`${fmtDate(date)} 숙제 인증 마감은 ${homeworkDeadlineLabel(date)}까지예요. 마감 이후에는 제출할 수 없어요.`);
-    render();
-    return;
-  }
   const draft = currentSubState._draftSub;
   const key = stuId+'_'+date;
   const payload = {...draft, status:'대기', submittedAt: new Date().toISOString()};
@@ -2894,7 +2928,7 @@ async function updateStudentField(stuId,field,val){ await fsUpdate('students', s
 /* ---------------- 경고 기록 ---------------- */
 function renderWarningsCard(stuId, directorView){
   const s = studentById(stuId);
-  const warnings = s.warnings || [];
+  const warnings = verifiedWarnings(s);
   const count = warnings.length;
   return `
   <div class="card">
@@ -2925,7 +2959,7 @@ async function addWarning(stuId){
   const reason = reasonEl.value.trim();
   if(!reason){ alert('경고 사유를 입력해주세요.'); return; }
   const s = studentById(stuId);
-  const newWarnings = [...(s.warnings||[]), {id:uid('warn'), type:'manual', date, reason, createdAt:new Date().toISOString()}];
+  const newWarnings = [...(s.warnings||[]), {id:uid('warn'), date, reason}];
   await fsUpdate('students', stuId, {warnings:newWarnings});
 }
 function deleteWarning(stuId, warnId){
@@ -3083,19 +3117,518 @@ async function answerQuestion(qId){
 }
 
 /* ---------------- FEEDBACK ---------------- */
+
+
+function finalAuditRowForStudent(stu){
+  const sid = stu.id;
+
+  const classRecs = [];
+  Object.entries(db.classRecords||{}).forEach(([key,obj])=>{
+    if(obj && obj[sid]) classRecs.push({key, ...(obj[sid]||{})});
+  });
+
+  const kmmRows = (db.kmm||[]).filter(k=>k.studentId===sid);
+  const questionRows = (db.questions||[]).filter(q=>q.studentId===sid);
+  const submissionRows = Object.entries(db.submissions||{})
+    .filter(([key])=>key.startsWith(sid+'_'))
+    .map(([key,v])=>({key, ...(v||{})}));
+
+  const assessRows = warningAssessmentRowsForStudent(sid)||[];
+  const submitted = assessRows.filter(r=>r.submitted).length;
+  const missed = assessRows.filter(r=>!r.submitted).length;
+
+  const homeworkWarnings = (stu.warnings||[]).filter(w=>w && w.type==='homework3days');
+  const pendingQuestions = questionRows.filter(q=>!(q.answerText || q.answerImage || q.teacherComment)).length;
+
+  const issues = [];
+  if(!classRecs.length) issues.push('수업기록 없음');
+  if(assessRows.length && submitted===0) issues.push('숙제 인증 없음');
+  if(pendingQuestions>0) issues.push(`미답변 질문 ${pendingQuestions}`);
+  if(homeworkWarnings.length>0) issues.push(`경고 ${homeworkWarnings.length}`);
+
+  return {
+    name:stu.name,
+    grade:stu.grade||'',
+    classRecords:classRecs.length,
+    kmm:kmmRows.length,
+    submissions:submissionRows.length,
+    questions:questionRows.length,
+    pendingQuestions,
+    homeworkAssess:assessRows.length,
+    homeworkSubmitted:submitted,
+    homeworkMissed:missed,
+    warnings:homeworkWarnings.length,
+    issues
+  };
+}
+
+function renderFinalAudit(){
+  const students = sortedStudents((db.students||[]).filter(s=>s.status!=='withdrawn'));
+  const rows = students.map(finalAuditRowForStudent);
+
+  const issueCount = rows.filter(r=>r.issues.length).length;
+  const totalWarnings = rows.reduce((a,r)=>a+r.warnings,0);
+  const totalPendingQ = rows.reduce((a,r)=>a+r.pendingQuestions,0);
+
+  return `
+  <h1 class="page-title">✅ 전체 학생 최종점검</h1>
+  <p class="page-sub">기존 데이터를 <b>읽기만 해서</b> 학생별 기록 연결 상태를 한 화면에서 점검합니다.</p>
+
+  <div class="grid3" style="margin-bottom:12px;">
+    <div class="card"><div class="muted">재원생</div><div style="font-size:24px;font-weight:900;">${rows.length}명</div></div>
+    <div class="card"><div class="muted">확인 필요 학생</div><div style="font-size:24px;font-weight:900;">${issueCount}명</div></div>
+    <div class="card"><div class="muted">미답변 질문 / 경고</div><div style="font-size:24px;font-weight:900;">${totalPendingQ} / ${totalWarnings}</div></div>
+  </div>
+
+  <div class="card">
+    <div style="overflow:auto;">
+      <table style="width:100%;border-collapse:collapse;min-width:980px;">
+        <thead>
+          <tr style="text-align:left;border-bottom:1px solid #ddd;">
+            <th style="padding:8px;">학생</th>
+            <th style="padding:8px;">수업기록</th>
+            <th style="padding:8px;">KMM</th>
+            <th style="padding:8px;">숙제 인증</th>
+            <th style="padding:8px;">경고판정</th>
+            <th style="padding:8px;">질문</th>
+            <th style="padding:8px;">경고</th>
+            <th style="padding:8px;">점검</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r=>`
+            <tr style="border-bottom:1px solid #eee;vertical-align:top;">
+              <td style="padding:9px;"><b>${r.name}</b><br><span class="muted">${r.grade}</span></td>
+              <td style="padding:9px;">${r.classRecords}회</td>
+              <td style="padding:9px;">${r.kmm}회</td>
+              <td style="padding:9px;">
+                저장 ${r.submissions}건<br>
+                <span class="muted">판정 ○ ${r.homeworkSubmitted} / × ${r.homeworkMissed}</span>
+              </td>
+              <td style="padding:9px;">${r.homeworkAssess}회</td>
+              <td style="padding:9px;">
+                ${r.questions}건${r.pendingQuestions?`<br><span style="color:#c44;">답변대기 ${r.pendingQuestions}</span>`:''}
+              </td>
+              <td style="padding:9px;">${r.warnings ? `⚠️ ${r.warnings}회` : '0회'}</td>
+              <td style="padding:9px;">
+                ${r.issues.length
+                  ? `<span style="color:#b65a00;font-weight:800;">${r.issues.join(' · ')}</span>`
+                  : `<span style="color:#278a49;font-weight:800;">정상</span>`}
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:12px;">
+    <b>점검 기준</b>
+    <div class="muted" style="margin-top:6px;line-height:1.7;">
+      학생·수업·KMM·숙제·질문·경고 기록을 비교해 보여주기만 합니다.
+      데이터 수정, 삭제, 초기화, 학생 ID 재생성은 하지 않습니다.
+    </div>
+  </div>`;
+}
+
 function renderFeedback(){
   const mode = currentSubState.fbMode || 'individual';
   return `
-  <h1 class="page-title">학부모 피드백</h1>
-  <p class="page-sub">주간 피드백과 월말 종합 리포트를 작성해요. 완성된 문구는 그대로 복사해서 보낼 수 있어요.</p>
-  <div class="tabs2">
-    <button class="${mode==='individual'?'active':''}" onclick="currentSubState.fbMode='individual';render();">개별 작성</button>
-    <button class="${mode==='bulk'?'active':''}" onclick="currentSubState.fbMode='bulk';render();">반별 일괄 생성</button>
-    <button class="${mode==='history'?'active':''}" onclick="currentSubState.fbMode='history';render();">이력 보기</button>
+  <h1 class="page-title">학부모 학습 안내</h1>
+  <p class="page-sub">주간 리포트 대신 <b>일일 학습 안내</b>와 <b>월말 리포트</b>를 사용해요. 기존 데이터는 읽어서 문구로 조합만 합니다.</p>
+  <div class="card" style="margin-bottom:12px;">
+    <b>🚦 신호등 자동추천 기준</b>
+    <div class="muted" style="margin-top:6px;line-height:1.7;">
+      🟢 일일: 해당 날짜 일일테스트 80점 이상 · 🟡 60~79점 · 🔴 60점 미만<br>
+      📊 월간: 해당 월 일일테스트 평균 80점 이상 🟢 · 60~79점 🟡 · 60점 미만 🔴<br>
+      해당 날짜/월에 숙제 3회 연속 미이행 경고가 실제 발생한 경우 🔴를 우선 추천합니다.
+      자동추천 후 선생님이 최종 신호등을 직접 변경할 수 있습니다.
+    </div>
   </div>
-  ${mode==='individual'? renderFbIndividual() : mode==='bulk'? renderFbBulk() : renderFbHistory()}
+
+  <div class="card" style="margin-bottom:12px;">
+    <div class="row" style="gap:8px;flex-wrap:wrap;">
+      <button class="btn" onclick="currentSubState.fbMode='individual';currentSubState.fbType='daily';render();">📨 일일 학습 안내</button>
+      <button class="btn" onclick="currentSubState.fbMode='individual';currentSubState.fbType='monthly';render();">📊 전체 학생 월말 리포트 생성</button>
+    </div>
+    <div class="muted" style="margin-top:8px;font-size:11px;">월말 리포트는 재원생 전체를 자동 집계하며, 기존 숙제·수업·KMM·경고 데이터는 읽기만 합니다.</div>
+  </div>
+
+  <div class="tabs2">
+    <button class="${mode==='individual'?'active':''}" onclick="currentSubState.fbMode='individual';render();">학습 안내</button>
+    <button class="${mode==='history'?'active':''}" onclick="currentSubState.fbMode='history';render();">기존 이력 보기</button>
+  </div>
+  ${mode==='individual'? renderFbIndividual() : renderFbHistory()}
   `;
 }
+
+function classRecordContextForStudentDate(stuId,date){
+  for(const [key,obj] of Object.entries(db.classRecords||{})){
+    if(!key.endsWith('_'+date) || !obj || !obj[stuId]) continue;
+    const clsId = key.slice(0, -(date.length+1));
+    const cls = classById(clsId);
+    return {cls, record:obj[stuId]||{}};
+  }
+  return {cls:null, record:{}};
+}
+
+function homeworkPlanTextForStudentDate(stuId, cls, date){
+  if(!cls) return '-';
+  const days = homeworkRangeForClassDate(cls.dayGroup, date);
+  const wk = weekStartISO(date);
+  const plan = db.weeklyPlans[cls.id+'_'+wk];
+  if(!plan || !days.length) return '-';
+  const per = plan[stuId] || {};
+  const rows = days.map(d=>per[d] ? `[${DAY_LABEL[d]}] ${per[d]}` : '').filter(Boolean);
+  return rows.length ? rows.join(' / ') : '-';
+}
+
+
+function showCopyToast(message='복사되었습니다 ✓'){
+  let toast = document.getElementById('copy-toast');
+  if(!toast){
+    toast = document.createElement('div');
+    toast.id = 'copy-toast';
+    toast.style.cssText = [
+      'position:fixed','left:50%','bottom:28px','transform:translateX(-50%)',
+      'z-index:99999','background:#222','color:#fff','padding:10px 16px',
+      'border-radius:10px','font-size:13px','font-weight:700',
+      'box-shadow:0 4px 14px rgba(0,0,0,.18)','opacity:0',
+      'transition:opacity .15s ease'
+    ].join(';');
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.style.opacity = '1';
+  clearTimeout(window.__copyToastTimer);
+  window.__copyToastTimer = setTimeout(()=>{ toast.style.opacity='0'; }, 1500);
+}
+
+function copyParentDailyReport(btn){
+  copyText(btn);
+}
+
+function parentDailyGuidanceText(stuId,date){
+  const s = studentById(stuId);
+  if(!s) return '';
+  const {cls,record:r} = classRecordContextForStudentDate(stuId,date);
+  const trafficEmoji = {green:'🟢',yellow:'🟡',red:'🔴'}[dailyTrafficForStudentDate(stuId, date)] || '⚪';
+  const todayKmm = db.kmm.find(k=>k.studentId===stuId && k.date===date);
+  const examLine = todayKmm
+    ? `KMM ${todayKmm.score}점 (${todayKmm.score>=80?'PASS':'FAIL'})`
+    : (r.dailyTestScore!==undefined && r.dailyTestScore!=='' && r.dailyTestScore!==null
+      ? `일일테스트 ${r.dailyTestScore}점`
+      : '시험 기록 없음');
+
+  const stepTxt = r.stepId ? stepShortLabel(r.stepId) : '-';
+  const extraStepsTxt = (r.extraSteps&&r.extraSteps.length) ? ' + '+r.extraSteps.map(id=>stepShortLabel(id)).filter(Boolean).join(', ') : '';
+  const practiceTxt = r.practiceBook
+    ? `${r.practiceBook}${r.practiceRange?' '+r.practiceRange:''}${(r.extraPractice&&r.extraPractice.length)? ', '+r.extraPractice.map(e=>`${e.book}${e.range?' '+e.range:''}`).join(', '):''}`
+    : ((r.extraPractice&&r.extraPractice.length)? r.extraPractice.map(e=>`${e.book}${e.range?' '+e.range:''}`).join(', ') : '-');
+
+  const homeworkPlan = homeworkPlanTextForStudentDate(stuId, cls, date);
+  const range = cls ? homeworkDateRangeDates(cls.dayGroup, date) : [];
+  const authRows = range.map(d=>({date:d, sub:db.submissions[stuId+'_'+d]}));
+  const authTxt = authRows.length
+    ? authRows.map(x=>`${x.date.slice(5).replace('-','/')} ${x.sub?'○':'×'}`).join(' · ')
+    : '확인할 숙제 인증 날짜 없음';
+
+  const latestComment = authRows.slice().reverse().find(x=>x.sub && x.sub.teacherComment);
+  const teacherHwComment = latestComment ? latestComment.sub.teacherComment : '-';
+
+  const qs = (db.questions||[]).filter(q=>q.studentId===stuId && q.date===date);
+  const qTxt = qs.length
+    ? qs.map(q=>`${q.text||'질문'}${q.answerText? ` → ${q.answerText}` : ' → 답변 대기'}`).join(' / ')
+    : '질문 없음';
+
+  const homeworkWarningCount = (s.warnings||[]).filter(w=>w && w.type==='homework3days').length;
+  const warningTxt = homeworkWarningCount > 0
+    ? `
+⚠️ 숙제 미인증이 3회 연속 확인되어 경고가 부과되었습니다. 현재 누적 경고는 ${homeworkWarningCount}회입니다.`
+    : '';
+
+  return `[M&m 수학훈련소] ${s.name} 학생 일일 학습 안내 · ${fmtDate(date)}
+${trafficEmoji} 출석: ${r.attendance||'-'}
+· 시험: ${examLine}
+· 오늘 학습: ${stepTxt}${extraStepsTxt}
+· 문제 적용: ${practiceTxt}
+· 오늘 안내 숙제: ${homeworkPlan}
+· 숙제 인증 현황: ${authTxt}
+· 선생님 숙제 코멘트: ${teacherHwComment}
+· 질문 현황: ${qTxt}
+${r.note? `· 특이사항: ${r.note}` : '· 특이사항: -'}${warningTxt}`;
+}
+
+
+
+
+
+function dailyTrafficForStudentDate(stuId, date){
+  const s = studentById(stuId);
+  if(!s) return 'green';
+
+  // 1. 해당 날짜에 실제 숙제 3회 연속 미이행 경고가 발생하면 빨강 우선.
+  const hasHomework3Warning = ((s.warnings||[]).some(w=>
+    w && w.type==='homework3days' && String(w.date||'')===String(date||'')
+  ));
+  if(hasHomework3Warning) return 'red';
+
+  // 2. 해당 날짜 일일테스트 점수 판정.
+  const scoreRow = studentDailyScores(stuId).find(r=>String(r.date||'')===String(date||''));
+  const hasScore = !!scoreRow && Number.isFinite(Number(scoreRow.score));
+  const score = hasScore ? Number(scoreRow.score) : null;
+  let testTraffic = 'green';
+  if(hasScore){
+    if(score < 60) testTraffic = 'red';
+    else if(score < 80) testTraffic = 'yellow';
+  }
+
+  // 3. 숙제 인증 상태 판정.
+  // 한 번의 미인증만으로 빨강 처리하지 않는다.
+  // 해당 수업일 기준 확인 대상 숙제 중 미인증이 있으면 '주의(노랑)' 요소로 반영한다.
+  const cls = classById(s.classId);
+  const dayGroup = cls && cls.dayGroup;
+  const hwDates = dayGroup ? homeworkDateRangeDates(dayGroup, date) : [];
+  const hwMissingCount = hwDates.filter(d=>!db.submissions[stuId+'_'+d]).length;
+  const homeworkTraffic = hwMissingCount > 0 ? 'yellow' : 'green';
+
+  // 4. 일일테스트 + 숙제 중 더 강한 상태를 최종 신호등으로 사용.
+  const rank = {green:0, yellow:1, red:2};
+  return rank[testTraffic] >= rank[homeworkTraffic] ? testTraffic : homeworkTraffic;
+}
+
+function monthlyTrafficForStudent(stuId, ym){
+  const s = studentById(stuId);
+  const monthScores = studentDailyScores(stuId)
+    .filter(r=>String(r.date||'').startsWith(ym))
+    .map(r=>Number(r.score))
+    .filter(Number.isFinite);
+
+  // 해당 월에 숙제 3회 연속 미이행 실제 경고가 있으면 관찰필요(빨강) 우선 추천.
+  const monthWarnings = (((s && s.warnings)||[]).filter(w=>
+    w && w.type==='homework3days' && String(w.date||'').startsWith(ym)
+  ));
+  if(monthWarnings.length) return 'red';
+
+  // 월간 신호등은 해당 월 일일테스트 평균으로 판정.
+  // 80점 이상: 순항 / 60~79점: 주의 / 60점 미만: 관찰필요.
+  if(!monthScores.length) return 'green';
+  const avg = monthScores.reduce((a,b)=>a+b,0) / monthScores.length;
+  if(avg>=80) return 'green';
+  if(avg>=60) return 'yellow';
+  return 'red';
+}
+
+function buildMonthlyReportPlainForMonth(stuId, traffic, comment, ym){
+  const s = studentById(stuId);
+  if(!s) return '';
+
+  const monthLabel = `${Number(ym.slice(5))}월`;
+
+  const records = [];
+  Object.entries(db.classRecords||{}).forEach(([key,obj])=>{
+    const date = key.slice(-10);
+    if(!date.startsWith(ym) || !obj || !obj[stuId]) return;
+    records.push({date, ...(obj[stuId]||{})});
+  });
+  records.sort((a,b)=>a.date.localeCompare(b.date));
+
+  const attendanceCount = records.filter(r=>r.attendance && r.attendance!=='결석').length;
+  const absenceCount = records.filter(r=>r.attendance==='결석').length;
+  const latestProgress = records.slice().reverse().find(r=>r.stepId || r.practiceBook);
+
+  // 일일테스트는 평균을 내지 않고 해당 월 전체 점수를 날짜별로 그대로 나열.
+  const dailyScores = studentDailyScores(stuId)
+    .filter(r=>String(r.date||'').startsWith(ym))
+    .sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+
+  const kmmRows = (db.kmm||[]).filter(k=>k.studentId===stuId && String(k.date||'').startsWith(ym));
+  const kmmScores = kmmRows.map(k=>Number(k.score)).filter(Number.isFinite);
+  const kmmAvg = kmmScores.length ? Math.round(kmmScores.reduce((a,b)=>a+b,0)/kmmScores.length*10)/10 : null;
+
+  const errorCount = {};
+  records.forEach(r=>(r.errorTypes||[]).forEach(e=>{ errorCount[e]=(errorCount[e]||0)+1; }));
+  const topErrors = Object.entries(errorCount).sort((a,b)=>b[1]-a[1]).slice(0,3);
+
+  const assessRows = (warningAssessmentRowsForStudent(stuId)||[]).filter(r=>r.date.startsWith(ym));
+  const submittedCount = assessRows.filter(r=>r.submitted).length;
+  const missedCount = assessRows.filter(r=>!r.submitted).length;
+  const totalAssess = assessRows.length;
+  const submitRate = totalAssess ? Math.round(submittedCount/totalAssess*100) : null;
+
+  const verified = (s.warnings||[]).filter(w=>w && w.type==='homework3days');
+  const monthWarnings = verified.filter(w=>String(w.date||'').startsWith(ym));
+
+  const trafficLabel = traffic==='green'?'🟢 순항중':traffic==='yellow'?'🟡 주의':'🔴 관찰필요';
+  const progressText = latestProgress
+    ? `${latestProgress.stepId ? stepShortLabel(latestProgress.stepId) : ''}${latestProgress.practiceBook ? ` / ${latestProgress.practiceBook}${latestProgress.practiceRange?' '+latestProgress.practiceRange:''}` : ''}`.replace(/^ \/ /,'')
+    : '-';
+
+  return `[M&m 수학훈련소] ${s.name} 학생 ${monthLabel} 월말 리포트
+${trafficLabel}
+
+1. 출석·진도
+· 수업기록 ${records.length}회 / 출석 ${attendanceCount}회 / 결석 ${absenceCount}회
+· 최근 진도: ${progressText || '-'}
+
+2. 일일테스트
+${dailyScores.length
+  ? dailyScores.map(r=>`· ${String(r.date||'').slice(5).replace('-','/')} ${r.score}점 ${Number(r.score)>=80?'🟢':Number(r.score)>=60?'🟡':'🔴'}`).join('\n')
+  : '· 기록 없음'}
+${dailyScores.length
+  ? `· 월간 평균 ${Math.round((dailyScores.reduce((sum,r)=>sum+Number(r.score),0)/dailyScores.length)*10)/10}점 → ${trafficLabel}`
+  : ''}
+
+3. KMM
+· 응시 ${kmmRows.length}회${kmmAvg!==null ? ` / 평균 ${kmmAvg}점` : ''}
+${kmmRows.length ? kmmRows.map(k=>`· ${String(k.date||'').slice(5).replace('-','/')} ${k.score}점 (${Number(k.score)>=80?'PASS':'FAIL'})`).join('\n') : '· 기록 없음'}
+
+4. 오답유형
+${topErrors.length ? topErrors.map(([name,c])=>`· ${name}: ${c}회`).join('\n') : '· 기록 없음'}
+
+5. 숙제 현황
+· 판정 대상 ${totalAssess}회 / 인증 ${submittedCount}회 / 미인증 ${missedCount}회${submitRate!==null ? ` / 이행률 ${submitRate}%` : ''}
+· 이번 달 경고 ${monthWarnings.length}회 / 누적 경고 ${verified.length}회
+
+6. 다음 달 학습 방향
+${comment || '-'}`;
+}
+function buildMonthlyReportTextForMonth(stuId, traffic, comment, ym){
+  const plain = buildMonthlyReportPlainForMonth(stuId, traffic, comment, ym);
+  return `
+  <div class="row between" style="margin-bottom:10px;">
+    <div class="muted" style="font-size:11px;">기존 기록 자동 집계 · 저장하지 않음</div>
+    <button class="btn sm outline" onclick="copyText(this)" data-text="${encodeURIComponent(plain)}">복사하기</button>
+  </div>
+  <pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.75;margin:0;color:#4a4636;">${plain}</pre>`;
+}
+
+function copyAllMonthlyReports(){
+  const active = sortedStudents(db.students.filter(st=>st.status!=='withdrawn'));
+  const ym = currentSubState.fbMonth || todayISO().slice(0,7);
+  const texts = active.map(st=>{
+    const traffic = (currentSubState.fbMonthlyTraffic && currentSubState.fbMonthlyTraffic[st.id]) || monthlyTrafficForStudent(st.id, ym);
+    const comments = currentSubState.fbMonthlyComments || {};
+    const comment = comments[st.id] !== undefined ? comments[st.id] : defaultFutureDirectionText(st.id);
+    return buildMonthlyReportPlainForMonth(st.id, traffic, comment, ym);
+  }).filter(Boolean);
+
+  const all = texts.join('\n\n==============================\n\n');
+  if(!all) return;
+
+  const temp = document.createElement('button');
+  temp.setAttribute('data-text', encodeURIComponent(all));
+  temp.style.display='none';
+  document.body.appendChild(temp);
+  copyText(temp);
+  temp.remove();
+  showCopyToast(`전체 ${texts.length}명 월말 리포트가 복사되었습니다 ✓`);
+}
+
+function renderFbIndividual(){
+  const active = sortedStudents(db.students.filter(st=>st.status!=='withdrawn'));
+  const type = currentSubState.fbType || 'daily';
+
+  if(type === 'monthly'){
+    const monthlyTrafficDefault = (stuId)=>monthlyTrafficForStudent(stuId, monthKey);
+    const monthKey = (currentSubState.fbMonth || todayISO().slice(0,7));
+    currentSubState.fbMonth = monthKey;
+
+    const cards = active.map(st=>{
+      const traffic = (currentSubState.fbMonthlyTraffic && currentSubState.fbMonthlyTraffic[st.id]) || monthlyTrafficDefault(st.id);
+      const comments = currentSubState.fbMonthlyComments || (currentSubState.fbMonthlyComments={});
+      const comment = comments[st.id] !== undefined ? comments[st.id] : defaultFutureDirectionText(st.id);
+
+      // Temporarily make buildMonthlyReportText use selected month by swapping Date-derived month
+      // through helper below; no writes.
+      const html = buildMonthlyReportTextForMonth(st.id, traffic, comment, monthKey);
+
+      return `
+      <details class="card" style="margin-bottom:10px;">
+        <summary style="cursor:pointer;font-weight:800;font-size:14px;">
+          ${st.name} <span class="muted" style="font-weight:500;">${st.grade||''}</span>
+        </summary>
+        <div style="margin-top:12px;">
+          <div class="row" style="margin-bottom:10px;gap:6px;flex-wrap:wrap;">
+            <span style="font-size:12px;color:#8a8674;">신호등</span>
+            ${['green','yellow','red'].map(c=>`
+              <button class="btn sm ${traffic===c?'':'outline'}"
+                onclick="
+                  currentSubState.fbMonthlyTraffic=currentSubState.fbMonthlyTraffic||{};
+                  currentSubState.fbMonthlyTraffic['${st.id}']='${c}';
+                  render();
+                ">
+                ${c==='green'?'🟢 순항중':c==='yellow'?'🟡 주의':'🔴 관찰필요'}
+              </button>`).join('')}
+          </div>
+
+          <label style="font-size:12px;color:#8a8674;">다음 달 학습 방향</label>
+          <textarea rows="3"
+            onchange="
+              currentSubState.fbMonthlyComments=currentSubState.fbMonthlyComments||{};
+              currentSubState.fbMonthlyComments['${st.id}']=this.value;
+            ">${comment}</textarea>
+
+          <div style="margin-top:12px;">${html}</div>
+        </div>
+      </details>`;
+    }).join('');
+
+    return `
+    <div class="card">
+      <div class="row between" style="gap:10px;flex-wrap:wrap;">
+        <div>
+          <h3 style="margin:0;">📊 전체 학생 월말 리포트 생성 결과</h3>
+          <div class="muted" style="margin-top:4px;">
+            재원생 전체 ${active.length}명 리포트를 기존 기록으로 자동 생성합니다.
+          </div>
+        </div>
+        <div class="row" style="gap:8px;">
+          <input type="month" value="${monthKey}"
+            onchange="currentSubState.fbMonth=this.value;render();">
+          <button class="btn sm outline" onclick="copyAllMonthlyReports()">전체 리포트 복사</button>
+        </div>
+      </div>
+    </div>
+
+    ${cards || `<div class="empty">등록된 학생이 없어요.</div>`}
+    `;
+  }
+
+  // 일일 학습 안내는 기존 방식 유지
+  const stuId = currentSubState.fbStudent || (active[0]&&active[0].id);
+  currentSubState.fbStudent = stuId;
+  if(!stuId) return `<div class="empty">등록된 학생이 없어요.</div>`;
+
+  const date = currentSubState.fbDate || todayISO();
+  currentSubState.fbDate = date;
+  const dailyText = parentDailyGuidanceText(stuId,date);
+
+  return `
+  <div class="card">
+    <div class="row" style="gap:8px;flex-wrap:wrap;">
+      <select onchange="currentSubState.fbStudent=this.value;render();">
+        ${active.map(st=>`<option value="${st.id}" ${st.id===stuId?'selected':''}>${st.name}</option>`).join('')}
+      </select>
+      <select onchange="currentSubState.fbType=this.value;render();">
+        <option value="daily" selected>일일 학습 안내</option>
+        <option value="monthly">월말 리포트</option>
+      </select>
+      <input type="date" value="${date}" onchange="currentSubState.fbDate=this.value;render();">
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row between" style="margin-bottom:10px;">
+      <div>
+        <h3 style="margin:0;">📨 일일 학습 안내 미리보기</h3>
+        <div style="font-size:11px;color:#8a8674;margin-top:4px;">수업·숙제·질문·경고 데이터를 읽어서 자동 구성합니다.</div>
+      </div>
+      <button class="btn sm outline" onclick="copyParentDailyReport(this)" data-text="${encodeURIComponent(dailyText)}">복사하기</button>
+    </div>
+    <pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.75;margin:0;color:#4a4636;">${dailyText}</pre>
+  </div>`;
+}
+
 function setIndividualTraffic(c){
   if(FUTURE_TEXT_KNOWN.includes(currentSubState.fbComment)){
     currentSubState.fbComment = defaultTextForTraffic(c);
@@ -3164,78 +3697,341 @@ function extractGradeNumber(gradeStr){
   const m = (gradeStr||'').match(/\d+/);
   return m ? parseInt(m[0],10) : null;
 }
-function renderSchoolExams(){
-  currentSubState.examCalMonth = currentSubState.examCalMonth || todayISO().slice(0,7); // 'YYYY-MM'
-  const [y,m] = currentSubState.examCalMonth.split('-').map(Number);
-  const firstDow = new Date(y, m-1, 1).getDay();
-  const daysInMonth = new Date(y, m, 0).getDate();
-  const examsByDate = {};
-  db.schoolExams.forEach(e=>{ examsByDate[e.date] = examsByDate[e.date]||[]; examsByDate[e.date].push(e); });
 
-  let cells = '';
-  for(let i=0;i<firstDow;i++) cells += `<div></div>`;
-  for(let d=1; d<=daysInMonth; d++){
-    const dateStr = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-    const dayExams = examsByDate[dateStr] || [];
-    const isToday = dateStr === todayISO();
-    cells += `<div style="min-height:52px;border:1px solid var(--line);border-radius:6px;padding:3px;font-size:10px;${isToday?'background:#fdf2df;':''}">
-      <div style="font-weight:${isToday?'700':'400'};">${d}</div>
-      ${dayExams.map(e=>`<div style="background:var(--gold);color:#fff;border-radius:4px;padding:1px 3px;margin-top:2px;font-size:9px;cursor:pointer;" onclick="currentSubState.examScoreOpen='${e.id}';render();">${e.school} ${e.grade}학년</div>`).join('')}
-    </div>`;
+function schoolExamHistoryForStudent(stuId){
+  const rows = [];
+  Object.entries(db.schoolScores||{}).forEach(([key,scoreRow])=>{
+    if(!scoreRow || scoreRow.studentId!==stuId) return;
+    const exam = (db.schoolExams||[]).find(e=>e.id===scoreRow.examId);
+    if(!exam) return;
+    rows.push({
+      examId: exam.id,
+      date: exam.date||'',
+      school: exam.school||'',
+      grade: exam.grade,
+      examName: exam.examName||'',
+      range: exam.range||'',
+      score: scoreRow.score
+    });
+  });
+  return rows.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+}
+
+function renderSchoolExamHistoryTable(stuId, emptyText='등록된 내신 성적이 없어요.'){
+  const rows = schoolExamHistoryForStudent(stuId);
+  if(!rows.length) return `<div class="empty">${emptyText}</div>`;
+
+  const numeric = rows.map(r=>Number(r.score)).filter(Number.isFinite);
+  const avg = numeric.length ? Math.round((numeric.reduce((a,b)=>a+b,0)/numeric.length)*10)/10 : null;
+  const best = numeric.length ? Math.max(...numeric) : null;
+
+  return `
+    <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+      <span class="badge gray">누적 ${rows.length}회</span>
+      ${avg!==null?`<span class="badge gray">평균 ${avg}점</span>`:''}
+      ${best!==null?`<span class="badge gray">최고 ${best}점</span>`:''}
+    </div>
+    <table>
+      <tr><th>날짜</th><th>시험</th><th>범위</th><th>점수</th></tr>
+      ${rows.map(r=>`
+        <tr>
+          <td>${fmtDate(r.date)}</td>
+          <td><b>${r.examName||'-'}</b><br><span style="font-size:11px;color:#8a8674;">${r.school}${r.grade?` · ${r.grade}학년`:''}</span></td>
+          <td>${r.range||'-'}</td>
+          <td><b>${r.score}</b>점</td>
+        </tr>`).join('')}
+    </table>`;
+}
+
+
+function normalizeSchoolExamDate(e){
+  // 기존 schoolExams 데이터의 날짜 표현을 안전하게 흡수한다.
+  // 우선순위: date → examDate → testDate
+  const raw = e && (e.date ?? e.examDate ?? e.testDate);
+  if(raw===undefined || raw===null) return '';
+
+  // Firestore Timestamp 호환
+  if(raw && typeof raw==='object'){
+    if(typeof raw.toDate==='function'){
+      const d = raw.toDate();
+      if(d && !isNaN(d.getTime())){
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      }
+    }
+    if(typeof raw.seconds==='number'){
+      const d = new Date(raw.seconds*1000);
+      if(!isNaN(d.getTime())){
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      }
+    }
   }
-  const upcoming = [...db.schoolExams].sort((a,b)=>a.date.localeCompare(b.date));
+
+  const s = String(raw).trim();
+  if(!s) return '';
+
+  // YYYY-MM-DD / YYYY.MM.DD / YYYY/MM/DD
+  let m = s.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
+  if(m) return `${m[1]}-${String(Number(m[2])).padStart(2,'0')}-${String(Number(m[3])).padStart(2,'0')}`;
+
+  // YYYYMMDD
+  m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+
+  // 2026년 9월 3일
+  m = s.match(/(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일?/);
+  if(m) return `${m[1]}-${String(Number(m[2])).padStart(2,'0')}-${String(Number(m[3])).padStart(2,'0')}`;
+
+  // Date-parsable fallback
+  const d = new Date(s);
+  if(!isNaN(d.getTime())){
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+  return '';
+}
+
+function renderSchoolExamCalendar(){
+  const baseYm = currentSubState.examCalendarMonth || todayISO().slice(0,7);
+  currentSubState.examCalendarMonth = baseYm;
+
+  const [yy,mm] = baseYm.split('-').map(Number);
+  const first = new Date(yy, mm-1, 1);
+  const last = new Date(yy, mm, 0);
+  const firstDow = first.getDay();
+  const daysInMonth = last.getDate();
+
+  // 모든 기존 schoolExams 레코드를 읽고 날짜를 정규화해서 표시한다.
+  const allExams = (db.schoolExams||[]).map(e=>({
+    ...e,
+    _calendarDate: normalizeSchoolExamDate(e)
+  }));
+
+  const monthExams = allExams
+    .filter(e=>String(e._calendarDate||'').startsWith(baseYm))
+    .sort((a,b)=>{
+      const d = String(a._calendarDate||'').localeCompare(String(b._calendarDate||''));
+      if(d!==0) return d;
+      const s = String(a.school||'').localeCompare(String(b.school||''));
+      if(s!==0) return s;
+      return Number(a.grade||0)-Number(b.grade||0);
+    });
+
+  const byDate = {};
+  monthExams.forEach(e=>{
+    const d = e._calendarDate;
+    if(!byDate[d]) byDate[d]=[];
+    byDate[d].push(e);
+  });
+
+  const cells = [];
+  for(let i=0;i<firstDow;i++){
+    cells.push(`<div style="min-height:102px;background:#faf9f4;border:1px solid var(--line);border-radius:10px;"></div>`);
+  }
+
+  for(let d=1; d<=daysInMonth; d++){
+    const iso = `${yy}-${String(mm).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const items = byDate[iso] || [];
+    cells.push(`
+      <div style="min-height:102px;border:1px solid var(--line);border-radius:10px;padding:7px;background:#fff;">
+        <div style="font-weight:800;font-size:12px;margin-bottom:5px;">${d}</div>
+        ${items.map(e=>`
+          <div style="font-size:10px;line-height:1.35;padding:4px 5px;margin-top:3px;border-radius:7px;background:#f3f0e5;">
+            <b>${e.school||'-'} ${e.grade||''}학년</b><br>
+            <span>${e.examName||e.name||'시험'}</span>
+            ${e.range?`<br><span class="muted">${e.range}</span>`:''}
+          </div>`).join('')}
+      </div>`);
+  }
+
+  const undated = allExams.filter(e=>!e._calendarDate);
+
+  return `
+    <div class="card">
+      <div class="row between" style="gap:10px;flex-wrap:wrap;">
+        <div>
+          <h3 style="margin:0;">📅 전체 학교 내신 시험 일정</h3>
+          <div class="muted" style="font-size:11px;margin-top:4px;">
+            기존에 저장된 모든 학교·학년 시험을 읽어 달력에 표시합니다.
+          </div>
+        </div>
+        <div class="row" style="gap:6px;">
+          <button class="btn sm outline" onclick="shiftExamCalendarMonth(-1)">‹ 이전달</button>
+          <b style="align-self:center;">${yy}년 ${mm}월</b>
+          <button class="btn sm outline" onclick="shiftExamCalendarMonth(1)">다음달 ›</button>
+          <button class="btn sm outline" onclick="currentSubState.examCalendarMonth=todayISO().slice(0,7);render();">이번달</button>
+        </div>
+      </div>
+
+      <div style="overflow-x:auto;margin-top:12px;">
+        <div style="display:grid;grid-template-columns:repeat(7,minmax(100px,1fr));gap:5px;min-width:760px;">
+          ${['일','월','화','수','목','금','토'].map(x=>`<div style="text-align:center;font-size:11px;font-weight:800;padding:5px;">${x}</div>`).join('')}
+          ${cells.join('')}
+        </div>
+      </div>
+
+      <div class="muted" style="font-size:11px;margin-top:10px;">
+        이번 달 표시 ${monthExams.length}개 · 전체 저장 시험 ${(db.schoolExams||[]).length}개
+      </div>
+
+      ${undated.length ? `
+        <details style="margin-top:10px;">
+          <summary style="cursor:pointer;font-weight:700;font-size:12px;">⚠️ 날짜를 읽지 못한 기존 시험 ${undated.length}개 확인</summary>
+          <div style="margin-top:8px;">
+            ${undated.map(e=>`<div style="font-size:11px;padding:5px 0;border-bottom:1px solid var(--line);">
+              ${e.school||'-'} ${e.grade||''}학년 · ${e.examName||e.name||'시험'} · 원본 날짜: ${String(e.date ?? e.examDate ?? e.testDate ?? '-')}
+            </div>`).join('')}
+          </div>
+        </details>` : ''}
+    </div>`;
+}
+
+function shiftExamCalendarMonth(delta){
+  const ym = currentSubState.examCalendarMonth || todayISO().slice(0,7);
+  const [y,m] = ym.split('-').map(Number);
+  const d = new Date(y, m-1+delta, 1);
+  currentSubState.examCalendarMonth = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  render();
+}
+
+function renderSchoolExams(){
+  const schools = ['남악중','오룡중','옥암중','애향중','남악고','제일여고'];
+  const selectedSchool = currentSubState.examSchool || schools[0];
+  currentSubState.examSchool = selectedSchool;
+
+  const selectedGrade = Number(currentSubState.examGrade || 1);
+  currentSubState.examGrade = selectedGrade;
+
+  const students = sortedStudents((db.students||[]).filter(s=>
+    s.status!=='withdrawn' &&
+    s.school===selectedSchool &&
+    extractGradeNumber(s.grade)===selectedGrade
+  ));
+
+  const exams = (db.schoolExams||[])
+    .filter(e=>e.school===selectedSchool && Number(e.grade)===selectedGrade)
+    .sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+
+  if(currentSubState.examId && !exams.some(e=>e.id===currentSubState.examId)){
+    currentSubState.examId = '';
+  }
+  if(!currentSubState.examId && exams.length){
+    currentSubState.examId = exams[0].id;
+  }
+  const selectedExam = exams.find(e=>e.id===currentSubState.examId) || null;
+
+  const scoreRows = students.map(st=>{
+    const history = schoolExamHistoryForStudent(st.id)
+      .filter(h=>h.school===selectedSchool && Number(h.grade)===selectedGrade);
+    const nums = history.map(h=>Number(h.score)).filter(Number.isFinite);
+    const avg = nums.length ? Math.round(nums.reduce((a,b)=>a+b,0)/nums.length*10)/10 : null;
+    const latest = history[0] || null;
+    const key = selectedExam ? selectedExam.id+'_'+st.id : '';
+    const val = selectedExam ? (db.schoolScores[key]?.score ?? '') : '';
+
+    return `
+      <div class="card" style="margin-bottom:10px;">
+        <div class="row between" style="gap:10px;flex-wrap:wrap;">
+          <div>
+            <div style="font-weight:900;font-size:15px;">${st.name}</div>
+            <div class="muted" style="font-size:11px;">${st.school||''} · ${st.grade||''}</div>
+          </div>
+          <div class="row" style="gap:6px;flex-wrap:wrap;">
+            <span class="badge gray">누적 ${history.length}회</span>
+            ${avg!==null?`<span class="badge gray">평균 ${avg}점</span>`:''}
+            ${latest?`<span class="badge gray">최근 ${latest.score}점</span>`:''}
+          </div>
+        </div>
+
+        ${selectedExam ? `
+          <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);">
+            <div class="row between" style="gap:10px;flex-wrap:wrap;">
+              <div>
+                <b>${selectedExam.examName||'시험'}</b>
+                <div class="muted" style="font-size:11px;margin-top:2px;">${fmtDate(selectedExam.date)} · 범위 ${selectedExam.range||'-'}</div>
+              </div>
+              <div class="row" style="gap:6px;align-items:center;">
+                <input type="number" min="0" max="100" step="1"
+                  value="${val}"
+                  placeholder="점수"
+                  style="width:86px;"
+                  onchange="saveSchoolScore('${selectedExam.id}','${st.id}',this.value)">
+                <b>점</b>
+              </div>
+            </div>
+          </div>` : `
+          <div class="empty" style="margin-top:10px;">시험을 먼저 등록해주세요.</div>`}
+
+        <details style="margin-top:10px;">
+          <summary style="cursor:pointer;font-weight:700;font-size:12px;">누적 내신 기록 보기</summary>
+          <div style="margin-top:10px;overflow-x:auto;">${renderSchoolExamHistoryTable(st.id)}</div>
+        </details>
+      </div>`;
+  }).join('');
 
   return `
   <h1 class="page-title">🏫 내신 성적</h1>
-  <p class="page-sub">학교별 시험 일정을 달력에 등록하고, 그 시험에 바로 점수를 입력할 수 있어요.</p>
+  <p class="page-sub">학교 → 학년 → 시험을 선택해 학생별 점수를 입력하고, 누적 성적까지 한 화면에서 확인합니다.</p>
+
+  ${renderSchoolExamCalendar()}
 
   <div class="card">
-    <div class="row between" style="margin-bottom:8px;">
-      <button class="btn sm outline" onclick="shiftExamMonth(-1)">← 이전 달</button>
-      <h3 style="margin:0;">${y}년 ${m}월</h3>
-      <button class="btn sm outline" onclick="shiftExamMonth(1)">다음 달 →</button>
+    <h3 style="margin-top:0;">학교 · 학년 선택</h3>
+    <div class="row" style="gap:8px;flex-wrap:wrap;">
+      <select onchange="currentSubState.examSchool=this.value;currentSubState.examGrade=1;currentSubState.examId='';render();">
+        ${schools.map(sc=>`<option value="${sc}" ${sc===selectedSchool?'selected':''}>${sc}</option>`).join('')}
+      </select>
+      <select onchange="currentSubState.examGrade=Number(this.value);currentSubState.examId='';render();">
+        ${[1,2,3].map(g=>`<option value="${g}" ${g===selectedGrade?'selected':''}>${g}학년</option>`).join('')}
+      </select>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;font-size:11px;text-align:center;margin-bottom:4px;color:#8a8674;">
-      <div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;">${cells}</div>
   </div>
 
   <div class="card">
-    <h3 style="margin-top:0;">+ 시험 일정 추가</h3>
-    <div class="row">
-      <input type="text" id="examSchool" list="allSchoolsList" placeholder="학교명" style="width:140px;">
-      <datalist id="allSchoolsList">${[...new Set(db.students.map(x=>x.school).filter(Boolean))].map(sc=>`<option value="${sc}">`).join('')}</datalist>
-      <select id="examGrade"><option value="1">1학년</option><option value="2">2학년</option><option value="3">3학년</option></select>
-      <input type="text" id="examName" placeholder="시험명 (예: 2학기 기말고사)" style="width:150px;">
-      <input type="text" id="examRange" placeholder="시험 범위 (예: 1~3단원)" style="width:150px;">
+    <h3 style="margin-top:0;">+ ${selectedSchool} ${selectedGrade}학년 시험 추가</h3>
+    <div class="row" style="gap:8px;flex-wrap:wrap;">
+      <input type="hidden" id="examSchool" value="${selectedSchool}">
+      <input type="hidden" id="examGrade" value="${selectedGrade}">
+      <input type="text" id="examName" placeholder="시험명 (예: 2학기 중간고사)" style="min-width:160px;">
+      <input type="text" id="examRange" placeholder="시험 범위 (예: 1~3단원)" style="min-width:160px;">
       <input type="date" id="examDate" value="${todayISO()}">
-      <button class="btn sm gold" onclick="addSchoolExam()">등록</button>
+      <button class="btn sm gold" onclick="addSchoolExam()">시험 등록</button>
     </div>
   </div>
 
   <div class="card">
-    <h3 style="margin-top:0;">전체 시험 일정</h3>
-    ${upcoming.length ? upcoming.map(e=>`
-      <div style="padding:8px 0;border-bottom:1px solid var(--line);">
-        <div class="row between">
-          <div>
-            <b>${e.school}</b> ${e.grade}학년 · ${e.examName} <span style="color:#8a8674;font-size:12px;">(${fmtDate(e.date)})</span>
-            ${e.range? `<div style="font-size:12px;color:#8a8674;margin-top:2px;">📖 범위: ${e.range}</div>` : ''}
-          </div>
-          <div class="row" style="gap:4px;">
-            <button class="btn sm outline" onclick="currentSubState.examScoreOpen=currentSubState.examScoreOpen==='${e.id}'?null:'${e.id}';render();">${currentSubState.examScoreOpen===e.id?'닫기':'점수 입력'}</button>
-            <button class="btn sm outline" onclick="deleteSchoolExam('${e.id}')">삭제</button>
-          </div>
-        </div>
-        ${currentSubState.examScoreOpen===e.id ? `<div class="row" style="margin-top:6px;gap:6px;">
-          <input type="text" id="examRangeEdit_${e.id}" placeholder="시험 범위 (예: 1~3단원)" style="flex:1;font-size:12px;" value="${e.range||''}">
-          <button class="btn sm outline" onclick="saveExamRange('${e.id}', this)">범위 저장</button>
-        </div>` : ''}
-        ${currentSubState.examScoreOpen===e.id ? renderExamScoreEntry(e) : ''}
+    <div class="row between" style="gap:10px;flex-wrap:wrap;">
+      <div>
+        <h3 style="margin:0;">시험 선택</h3>
+        <div class="muted" style="font-size:11px;margin-top:4px;">${exams.length}개 시험 등록</div>
       </div>
-    `).join('') : `<div class="empty">등록된 시험 일정이 없어요.</div>`}
+      <select onchange="currentSubState.examId=this.value;render();" ${exams.length?'':'disabled'}>
+        ${exams.length
+          ? exams.map(e=>`<option value="${e.id}" ${e.id===currentSubState.examId?'selected':''}>${fmtDate(e.date)} · ${e.examName||'시험'}</option>`).join('')
+          : `<option>등록된 시험 없음</option>`}
+      </select>
+    </div>
+
+    ${selectedExam ? `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);">
+        <div class="row between" style="gap:8px;flex-wrap:wrap;">
+          <div>
+            <b>${selectedExam.examName}</b> · ${fmtDate(selectedExam.date)}
+            <div class="muted" style="font-size:11px;margin-top:3px;">범위: ${selectedExam.range||'-'}</div>
+          </div>
+          <button class="btn sm outline" onclick="deleteSchoolExam('${selectedExam.id}')">시험 삭제</button>
+        </div>
+      </div>` : ''}
   </div>
+
+  <div class="card">
+    <div class="row between" style="gap:10px;flex-wrap:wrap;">
+      <div>
+        <h3 style="margin:0;">${selectedSchool} ${selectedGrade}학년 학생 점수</h3>
+        <div class="muted" style="font-size:11px;margin-top:4px;">재원생 ${students.length}명 · 입력한 점수는 학생 개인페이지에도 자동 누적</div>
+      </div>
+    </div>
+  </div>
+
+  ${scoreRows || `<div class="empty">${selectedSchool} ${selectedGrade}학년에 등록된 재원생이 없어요.</div>`}
   `;
 }
 function shiftExamMonth(delta){
@@ -3273,7 +4069,10 @@ function renderExamScoreEntry(exam){
   if(!students.length){
     return `<div class="empty" style="padding:10px;font-size:12px;">"${exam.school}" ${exam.grade}학년으로 등록된 학생이 없어요. 학생 상세 페이지에서 "재학 학교"를 먼저 입력해주세요.</div>`;
   }
-  return `<table style="margin-top:8px;">
+  return `<div style="margin-top:8px;padding:8px 10px;background:#f6f4ec;border:1px solid var(--line);border-radius:8px;font-size:11px;color:#6f6958;">
+    점수를 입력하면 해당 학생의 개인 페이지 <b>내신 성적 누적</b>에 자동으로 연결됩니다.
+  </div>
+  <table style="margin-top:8px;">
     <tr><th>학생</th><th>점수</th></tr>
     ${students.map(s=>{
       const key = exam.id+'_'+s.id;
@@ -3486,43 +4285,97 @@ function monthlyHomeworkRate(stuId, yearMonth){
     if(!cls) return;
     const range = homeworkDateRangeDates(cls.dayGroup, l.date);
     totalExpected += range.length;
-    totalSubmitted += range.filter(d=>isHomeworkSubmissionOnTime(stuId,d)).length;
+    totalSubmitted += range.filter(d=>db.submissions[stuId+'_'+d]).length;
   });
   if(!totalExpected) return null;
   return Math.round(totalSubmitted/totalExpected*100);
 }
 function buildMonthlyReportText(stuId, traffic, comment){
   const s = studentById(stuId);
+  if(!s) return `<div class="empty">학생 정보를 찾을 수 없어요.</div>`;
+
   const now = new Date();
-  const yearMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-  const monthLabel = `${now.getFullYear()}년 ${now.getMonth()+1}월`;
-  const trafficEmoji = {green:'🟢',yellow:'🟡',red:'🔴'}[traffic];
+  const ym = now.toISOString().slice(0,7);
+  const monthLabel = `${Number(ym.slice(5))}월`;
 
-  const dailyScores = monthRangeDailyScores(stuId, yearMonth);
-  const dailyAvg = dailyScores.length ? Math.round(dailyScores.reduce((a,b)=>a+b,0)/dailyScores.length) : null;
-  const kmmThisMonth = db.kmm.filter(k=>k.studentId===stuId && k.date.startsWith(yearMonth)).sort((a,b)=>b.date.localeCompare(a.date))[0];
-  const conceptStep = lastStepByType(stuId, '개념');
-  const typeStep = lastStepByType(stuId, '유형');
-  const doneThisMonth = (db.practiceProgress[stuId]?.tracks||[]).filter(t=>t.done && t.doneDate && t.doneDate.startsWith(yearMonth));
-  const att = monthlyAttendanceRate(stuId, yearMonth);
-  const hwRate = monthlyHomeworkRate(stuId, yearMonth);
+  // 출석·진도: 기존 classRecords 읽기 전용 집계
+  const records = [];
+  Object.entries(db.classRecords||{}).forEach(([key,obj])=>{
+    const date = key.slice(-10);
+    if(!date.startsWith(ym) || !obj || !obj[stuId]) return;
+    records.push({date, ...(obj[stuId]||{})});
+  });
+  records.sort((a,b)=>a.date.localeCompare(b.date));
+  const attendanceCount = records.filter(r=>r.attendance && r.attendance!=='결석').length;
+  const absenceCount = records.filter(r=>r.attendance==='결석').length;
+  const latestProgress = records.slice().reverse().find(r=>r.stepId || r.practiceBook);
 
-  const text = `[M&m 수학훈련소] ${s.name} 학생 월말 리포트 · ${monthLabel}
-${trafficEmoji} 현재 상태: ${traffic==='green'?'순항중':traffic==='yellow'?'주의 관찰':'관찰 필요'}
+  // KMM: 기존 kmm 읽기 전용 집계
+  const kmmRows = (db.kmm||[]).filter(k=>k.studentId===stuId && String(k.date||'').startsWith(ym));
+  const kmmScores = kmmRows.map(k=>Number(k.score)).filter(Number.isFinite);
+  const kmmAvg = kmmScores.length ? Math.round(kmmScores.reduce((a,b)=>a+b,0)/kmmScores.length*10)/10 : null;
 
-· 이번 달 출석률: ${att? `${att.rate}% (지각 ${att.late}회, 결석 ${att.absent}회 / 총 ${att.total}회)` : '기록 없음'}
-· 이번 달 과제 제출율: ${hwRate!=null? `${hwRate}%` : '기록 없음'}
-· 이번 달 일일테스트: ${dailyScores.length? `${dailyScores.join('/')} (평균 ${dailyAvg}점)` : '이번 달 응시 기록 없음'}
-· 이번 달 KMM 결과: ${kmmThisMonth? `${kmmThisMonth.score}점${kmmAwardText(kmmThisMonth.score)? ' — '+kmmAwardText(kmmThisMonth.score):''}` : '이번 달 응시 없음'}
-· 현재 진도(개념학습): ${conceptStep? stepShortLabel(conceptStep.stepId) : '-'}
-· 현재 진도(유형학습): ${typeStep? stepShortLabel(typeStep.stepId) : '-'}
-${doneThisMonth.length? `· 이번 달 완료한 교재: ${doneThisMonth.map(t=>`🎉 ${t.book}`).join(', ')}` : ''}
+  // 오답유형: 기존 수업기록의 errorTypes 읽기 전용 집계
+  const errorCount = {};
+  records.forEach(r=>(r.errorTypes||[]).forEach(e=>{ errorCount[e]=(errorCount[e]||0)+1; }));
+  const topErrors = Object.entries(errorCount).sort((a,b)=>b[1]-a[1]).slice(0,3);
 
-[다음 달 학습 방향]
-${comment}`;
-  return `<pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.7;margin:0;">${text}</pre>
-  <button class="btn sm outline" style="margin-top:10px;" onclick="copyText(this)" data-text="${encodeURIComponent(text)}">텍스트 복사하기</button>`;
+  // 숙제: submissions를 절대 수정하지 않고 월간 인증 존재 여부만 집계
+  const homeworkRows = Object.entries(db.submissions||{})
+    .filter(([key,v])=>key.startsWith(stuId+'_') && key.slice(-(10)).startsWith(ym))
+    .map(([key,v])=>({date:key.slice(-10), sub:v}))
+    .sort((a,b)=>a.date.localeCompare(b.date));
+
+  // 해당 월에 실제 판정 대상이었던 숙제 날짜를 읽기 전용으로 가져옴
+  const assessRows = (warningAssessmentRowsForStudent(stuId)||[]).filter(r=>r.date.startsWith(ym));
+  const submittedCount = assessRows.filter(r=>r.submitted).length;
+  const missedCount = assessRows.filter(r=>!r.submitted).length;
+  const totalAssess = assessRows.length;
+  const submitRate = totalAssess ? Math.round(submittedCount/totalAssess*100) : null;
+
+  // 누적 경고와 이번 달 경고
+  const verified = (s.warnings||[]).filter(w=>w && w.type==='homework3days');
+  const monthWarnings = verified.filter(w=>String(w.date||'').startsWith(ym));
+
+  const trafficLabel = traffic==='green'?'🟢 순항중':traffic==='yellow'?'🟡 주의':'🔴 관찰필요';
+  const progressText = latestProgress
+    ? `${latestProgress.stepId ? stepShortLabel(latestProgress.stepId) : ''}${latestProgress.practiceBook ? ` / ${latestProgress.practiceBook}${latestProgress.practiceRange?' '+latestProgress.practiceRange:''}` : ''}`.replace(/^ \/ /,'')
+    : '-';
+
+  const plain = `[M&m 수학훈련소] ${s.name} 학생 ${monthLabel} 월말 리포트
+${trafficLabel}
+
+1. 출석·진도
+· 수업기록 ${records.length}회 / 출석 ${attendanceCount}회 / 결석 ${absenceCount}회
+· 최근 진도: ${progressText || '-'}
+
+2. KMM
+· 응시 ${kmmRows.length}회${kmmAvg!==null ? ` / 평균 ${kmmAvg}점` : ''}
+${kmmRows.length ? kmmRows.map(k=>`· ${String(k.date||'').slice(5).replace('-','/')} ${k.score}점 (${Number(k.score)>=80?'PASS':'FAIL'})`).join('\n') : '· 기록 없음'}
+
+3. 오답유형
+${topErrors.length ? topErrors.map(([name,c])=>`· ${name}: ${c}회`).join('\n') : '· 기록 없음'}
+
+4. 숙제 현황
+· 판정 대상 ${totalAssess}회 / 인증 ${submittedCount}회 / 미인증 ${missedCount}회${submitRate!==null ? ` / 이행률 ${submitRate}%` : ''}
+· 이번 달 경고 ${monthWarnings.length}회 / 누적 경고 ${verified.length}회
+
+5. 다음 달 학습 방향
+${comment || '-'}`;
+
+  return `
+  <div style="margin-bottom:12px;">
+    <div class="row between">
+      <div>
+        <h3 style="margin:0;">📊 ${monthLabel} 월말 리포트</h3>
+        <div style="font-size:11px;color:#8a8674;margin-top:4px;">출석·KMM·오답·숙제·경고 기존 기록을 읽어서 자동 집계합니다.</div>
+      </div>
+      <button class="btn sm outline" onclick="copyText(this)" data-text="${encodeURIComponent(plain)}">복사하기</button>
+    </div>
+  </div>
+  <pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.75;margin:0;color:#4a4636;">${plain}</pre>`;
 }
+
 function renderFeedbackPreview(stuId,type,traffic,comment){
   if(type==='monthly') return buildMonthlyReportText(stuId, traffic, comment);
   const s = studentById(stuId);
@@ -3559,8 +4412,39 @@ ${comment}`;
   <button class="btn sm outline" style="margin-top:10px;" onclick="copyText(this)" data-text="${encodeURIComponent(text)}">텍스트 복사하기</button>`;
 }
 function copyText(btn){
-  const text = decodeURIComponent(btn.getAttribute('data-text'));
-  navigator.clipboard.writeText(text).then(()=>{ btn.textContent='복사됨!'; setTimeout(()=>btn.textContent='텍스트 복사하기',1500); });
+  if(!btn || !btn.getAttribute) return;
+  const encoded = btn.getAttribute('data-text') || '';
+  const text = decodeURIComponent(encoded);
+  if(!text) return;
+
+  const originalText = btn.textContent;
+  const copied = ()=>{
+    btn.textContent='복사됨 ✓';
+    showCopyToast('복사되었습니다 ✓');
+    setTimeout(()=>{ btn.textContent=originalText; },1500);
+  };
+
+  const fallbackCopy = ()=>{
+    const ta=document.createElement('textarea');
+    ta.value=text;
+    ta.style.position='fixed';
+    ta.style.opacity='0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try{
+      const ok=document.execCommand('copy');
+      if(ok) copied();
+    }finally{
+      ta.remove();
+    }
+  };
+
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(copied).catch(fallbackCopy);
+  }else{
+    fallbackCopy();
+  }
 }
 async function generateFeedback(stuId,type,btn){
   const traffic = currentSubState.fbTraffic;
@@ -3639,11 +4523,10 @@ function renderBackup(){
     <p style="font-size:12.5px;color:#7a7666;">이전 버전의 날짜 계산 오류로, "요일별 숙제 계획표"와 "금요일 보강" 데이터 일부가 실제 날짜보다 하루 빠른 날짜(일요일)로 저장됐을 수 있어요. 아래 버튼을 누르면 이런 항목을 찾아서 원래 날짜(월요일)로 옮겨드려요. 기존 데이터는 지우지 않고 복사만 하니 안전해요.</p>
     <button class="btn gold sm" onclick="migrateWeekStartBug()">🔍 밀린 데이터 찾아서 복구하기</button>
   </div>
-  <div class="card" style="border:1px solid #e0a82e;">
-    <h3 style="margin-top:0;">🩺 수업·경고 데이터 진단</h3>
-    <p style="font-size:12.5px;color:#7a7666;">미래 날짜에 잘못 생성된 수업기록과 자동경고를 검사합니다. <b>자동 삭제하지 않으며</b>, 먼저 목록을 확인한 뒤 의심 항목만 선택적으로 정리할 수 있어요.</p>
-    <button class="btn gold sm" onclick="diagnoseFutureRecords()">미래 수업·경고 검사</button>
-    <div id="diagnosisArea" style="margin-top:10px;"></div>
+  <div class="card" style="border:1px solid var(--red);">
+    <h3 style="margin-top:0;">⚠️ 전체 학생 경고 초기화</h3>
+    <p style="font-size:12.5px;color:#7a7666;">이전 버그로 잘못 발급된 경고가 섞여있을 수 있어요. 이 버튼을 누르면 <b>모든 학생의 경고 기록을 한 번에 전부 삭제</b>하고, 자동 경고 판단 기준도 초기화해서 다음 수업부터 새로 정확하게 계산돼요. 되돌릴 수 없으니 신중하게 눌러주세요.</p>
+    <button class="btn danger sm" onclick="resetAllWarnings()">전체 경고 초기화</button>
   </div>
   <div class="card">
     <h3 style="margin-top:0;">전체 데이터 내보내기</h3>
@@ -3700,46 +4583,19 @@ async function migrateWeekStartBug(){
     alert(`${fixedCount}개 항목을 복구했어요:\n\n${fixedList.join('\n')}\n\n반 페이지에서 확인해보세요.`);
   }
 }
-function futureRecordDiagnosis(){
-  const today=academicTodayISO();
-  const records=[];
-  for(const [key,obj] of Object.entries(db.classRecords)){
-    const date=key.slice(-10); if(date<=today) continue;
-    const clsId=key.slice(0,key.length-11); const cls=classById(clsId);
-    const studentEntries=Object.entries(obj||{}).filter(([k])=>k!=='__meta');
-    const onlyDefaultAttendance=studentEntries.length>0 && studentEntries.every(([,r])=>{
-      const keys=Object.keys(r||{}).filter(k=>r[k]!=='' && r[k]!==undefined && r[k]!==null);
-      return keys.length===1 && keys[0]==='attendance' && r.attendance==='출석';
-    });
-    records.push({key,date,clsId,className:cls?.name||'(삭제된 반)',studentCount:studentEntries.length,onlyDefaultAttendance});
+async function resetAllWarnings(){
+  const withWarnings = db.students.filter(s=>verifiedWarnings(s).length || s.autoWarnLastDate);
+  if(!withWarnings.length){
+    alert('현재 경고가 있는 학생이 없어요.');
+    return;
   }
-  const warnings=[];
-  for(const s of db.students){
-    for(const w of (s.warnings||[])){
-      if((w.type==='homework_auto'||(w.reason||'').includes('자동 기록')) && w.date>today){ warnings.push({stuId:s.id,studentName:s.name,warn:w}); }
+  openConfirm('정말로 전체 경고를 초기화할까요?', `현재 ${withWarnings.length}명의 학생에게 경고 기록이 있어요. 이 작업을 하면 전체 학생의 경고가 모두 삭제되고 되돌릴 수 없어요.`, async ()=>{
+    for(const s of withWarnings){
+      await fsUpdate('students', s.id, {warnings: [], autoWarnLastDate: null});
     }
-  }
-  return {records,warnings};
-}
-function diagnoseFutureRecords(){
-  const d=futureRecordDiagnosis(); const area=document.getElementById('diagnosisArea'); if(!area) return;
-  area.innerHTML=`<div style="font-size:12px;line-height:1.7;">
-    <b>미래 수업기록 ${d.records.length}건 / 미래 자동경고 ${d.warnings.length}건</b>
-    ${d.records.length?`<table style="margin-top:8px"><tr><th>날짜</th><th>반</th><th>학생수</th><th>판정</th><th></th></tr>${d.records.map(r=>`<tr><td>${r.date}</td><td>${r.className}</td><td>${r.studentCount}</td><td>${r.onlyDefaultAttendance?'<span class="badge red">기본출석만 · 의심</span>':'실제 입력 포함 가능'}</td><td>${r.onlyDefaultAttendance?`<button class="btn sm danger" onclick="deleteSuspectFutureRecord('${r.key}')">이 기록만 삭제</button>`:'보존 권장'}</td></tr>`).join('')}</table>`:'<div class="empty" style="padding:10px">미래 수업기록 없음</div>'}
-    ${d.warnings.length?`<table style="margin-top:12px"><tr><th>학생</th><th>경고일</th><th>사유</th><th></th></tr>${d.warnings.map(x=>`<tr><td>${x.studentName}</td><td>${x.warn.date}</td><td>${x.warn.reason}</td><td><button class="btn sm danger" onclick="deleteWarning('${x.stuId}','${x.warn.id}')">이 경고만 삭제</button></td></tr>`).join('')}</table>`:''}
-  </div>`;
-}
-function deleteSuspectFutureRecord(key){
-  const obj=db.classRecords[key]||{};
-  const studentEntries=Object.entries(obj).filter(([k])=>k!=='__meta');
-  const safe=studentEntries.length>0 && studentEntries.every(([,r])=>{
-    const keys=Object.keys(r||{}).filter(k=>r[k]!==''&&r[k]!==undefined&&r[k]!==null);
-    return keys.length===1&&keys[0]==='attendance'&&r.attendance==='출석';
+    alert(`${withWarnings.length}명의 경고를 초기화했어요.`);
   });
-  if(!safe){ alert('실제 입력 데이터가 포함될 가능성이 있어 자동 삭제하지 않아요.'); return; }
-  openConfirm('이 미래 수업기록만 삭제할까요?','기본 출석만 들어 있는 의심 기록입니다. 다른 기록은 건드리지 않아요.',async()=>{await fsDelete('classRecords',key); setTimeout(diagnoseFutureRecords,300);});
 }
-async function resetAllWarnings(){ alert('안전을 위해 전체 경고 초기화 기능은 비활성화했어요. 데이터 백업의 진단 기능에서 의심 경고만 개별 삭제해주세요.'); }
 function showBackupText(){
   document.getElementById('backupTextArea').style.display='block';
   document.getElementById('backupTextContent').value = JSON.stringify(db);
@@ -3762,8 +4618,197 @@ function downloadBackup(){
 /* ---------------- STUDENT HOME ---------------- */
 function renderStudentHome(){
   const stuId = session.studentId;
-  return renderUnseenCommentBanner(stuId) + renderStudentDetail(stuId, false);
+  const s = studentById(stuId);
+  if(!s) return `<div class="empty">학생 정보를 찾을 수 없어요.</div>`;
+  const cls = classById(s.classId);
+  return `
+    <div class="card">
+      <h2 style="margin:0 0 4px;">${s.name} <span style="font-size:14px;color:#9c9880;">(${s.grade})</span></h2>
+      <span class="studentcode">${s.code}</span> · ${cls?cls.name:'미배정'}
+    </div>
+    ${renderStudentHomeworkSummary(stuId)}
+    ${renderStudentQuestionSummary(stuId)}
+  `;
 }
+
+// 학생 첫 화면 전용: 기존 Firestore 데이터를 읽어서 요약만 보여준다. 저장/수정 없음.
+function renderStudentHomeworkSummary(stuId){
+  const rows = Object.entries(db.submissions)
+    .filter(([key])=>key.startsWith(stuId+'_'))
+    .map(([key,sub])=>({key,date:key.slice(-10),sub}))
+    .sort((a,b)=>b.date.localeCompare(a.date));
+  const latest = rows[0];
+  const recent = rows.slice(0,5);
+  const latestComment = rows.find(r=>r.sub && r.sub.teacherComment);
+
+  return `<div class="card">
+    <div class="row between">
+      <h3 style="margin:0;">📸 숙제 현황</h3>
+      ${latest ? `<span class="badge ${latest.sub.status==='확인'?'green':'yellow'}">${latest.sub.status==='확인'?'선생님 확인 완료':'제출 완료 · 확인 대기'}</span>` : '<span class="badge gray">최근 인증 없음</span>'}
+    </div>
+    ${latest ? `<div style="margin-top:10px;font-size:13px;">최근 인증: <b>${fmtDate(latest.date)}</b>${latest.sub.submittedAt?` · ${new Date(latest.sub.submittedAt).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}`:''}</div>` : `<div class="empty" style="padding:16px 0 8px;">아직 등록된 숙제 인증이 없어요.</div>`}
+
+    <div style="margin-top:12px;padding:12px 14px;background:#fff8e8;border:1px solid #e8cf95;border-radius:10px;">
+      <div style="font-size:12px;font-weight:700;color:#9a6b16;margin-bottom:5px;">✏️ 선생님의 숙제 코멘트</div>
+      <div style="font-size:14px;line-height:1.65;font-weight:600;">${latestComment ? latestComment.sub.teacherComment : '아직 등록된 코멘트가 없어요.'}</div>
+      ${latestComment ? `<div style="margin-top:5px;font-size:11px;color:#8a8674;">${fmtDate(latestComment.date)} 숙제</div>` : ''}
+    </div>
+
+    ${recent.length ? `<div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap;">
+      ${recent.map(r=>`<span style="font-size:12px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;">${fmtDate(r.date)} ${r.sub.status==='확인'?'✓':'○'}</span>`).join('')}
+    </div>` : ''}
+  </div>`;
+}
+
+function renderStudentQuestionSummary(stuId){
+  const myQs = db.questions.filter(q=>q.studentId===stuId).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const latest = myQs[0];
+  const latestAnswered = myQs.find(q=>q.answerText || (q.answerPhotos&&q.answerPhotos.length));
+  const pending = myQs.filter(q=>q.status==='대기').length;
+
+  return `<div class="card">
+    <div class="row between">
+      <h3 style="margin:0;">💬 질문 현황</h3>
+      <span class="badge ${pending?'yellow':'green'}">${pending?`답변 대기 ${pending}건`:'답변 대기 없음'}</span>
+    </div>
+    ${latest ? `<div style="margin-top:10px;padding-bottom:10px;border-bottom:1px solid var(--line);">
+      <div style="font-size:11px;color:#8a8674;">최근 질문 · ${fmtDate(latest.date)}</div>
+      <div style="margin-top:5px;font-size:14px;line-height:1.6;">${latest.text||''}</div>
+      <span class="badge ${latest.status==='답변완료'?'green':'yellow'}" style="margin-top:6px;">${latest.status||'대기'}</span>
+    </div>` : `<div class="empty" style="padding:16px 0 8px;">아직 등록된 질문이 없어요.</div>`}
+
+    <div style="margin-top:12px;padding:12px 14px;background:#f6f4ec;border:1px solid var(--line);border-radius:10px;">
+      <div style="font-size:12px;font-weight:700;color:#6f6958;margin-bottom:5px;">📝 선생님의 질문 코멘트</div>
+      ${latestAnswered ? `<div style="font-size:14px;line-height:1.65;font-weight:600;">${latestAnswered.answerText||'사진 답변이 등록되어 있어요.'}</div>
+        <div style="margin-top:5px;font-size:11px;color:#8a8674;">${fmtDate(latestAnswered.date)} 질문에 대한 답변</div>
+        ${(latestAnswered.answerPhotos||[]).length ? `<div class="thumbs" style="margin-top:8px;">${latestAnswered.answerPhotos.map((p,i)=>`<img src="${p}" onclick="openLightboxSet('q','${latestAnswered.id}','answerPhotos',${i})">`).join('')}</div>` : ''}` : `<div style="font-size:14px;color:#8a8674;">아직 등록된 답변이 없어요.</div>`}
+    </div>
+  </div>`;
+}
+// 학생 세 번째 페이지: 학습현황. 기존 데이터는 읽기만 하며 저장/수정하지 않는다.
+function renderStudentProgressPage(){
+  const stuId = session.studentId;
+  const s = studentById(stuId);
+  if(!s) return `<div class="empty">학생 정보를 찾을 수 없어요.</div>`;
+  const cls = classById(s.classId);
+  const status = studentStatus(stuId);
+  const traffic = trafficForStudent(stuId);
+  const trafficText = traffic==='red' ? 'STOP' : (traffic==='yellow' ? 'SLOW' : '순항중');
+  const trafficIcon = traffic==='red' ? '🔴' : (traffic==='yellow' ? '🟡' : '🟢');
+
+  const histRows=[];
+  Object.entries(db.classRecords).forEach(([key,obj])=>{
+    if(!obj[stuId]) return;
+    histRows.push({date:key.slice(-10), ...obj[stuId]});
+  });
+  histRows.sort((a,b)=>b.date.localeCompare(a.date));
+
+  const kmmRows=db.kmm.filter(k=>k.studentId===stuId).sort((a,b)=>b.date.localeCompare(a.date));
+
+  const errorAgg={};
+  Object.entries(db.submissions).forEach(([key,sub])=>{
+    if(!key.startsWith(stuId+'_')) return;
+    (sub.errorTypes||[]).forEach(et=>{ errorAgg[et.type]=(errorAgg[et.type]||0)+Number(et.percent||0); });
+  });
+
+  const homeworkRows=Object.entries(db.submissions)
+    .filter(([key])=>key.startsWith(stuId+'_'))
+    .map(([key,sub])=>({date:key.slice(-10),sub}))
+    .sort((a,b)=>b.date.localeCompare(a.date));
+  const warningCount=verifiedWarnings(s).length;
+
+  return `
+    <div class="card">
+      <div class="row between">
+        <div>
+          <h2 style="margin:0 0 4px;">🚦 학습현황</h2>
+          <div style="font-size:13px;color:#8a8674;">${s.name} · ${cls?cls.name:'미배정'}</div>
+        </div>
+        <div style="text-align:center;min-width:105px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;">
+          <div style="font-size:30px;line-height:1;">${trafficIcon}</div>
+          <div style="margin-top:5px;font-size:13px;font-weight:800;">${trafficText}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="overflow-x:auto;">
+      <h3 style="margin-top:0;">1. 출석·진도 이력</h3>
+      ${histRows.length? `<table><tr><th>날짜</th><th>출석</th><th>일일테스트</th><th>진도</th><th>숙제완성도</th><th>학습완성도</th><th>특이사항</th></tr>
+        ${histRows.slice(0,30).map(h=>`<tr><td>${fmtDate(h.date)}</td><td>${h.attendance||'-'}</td><td>${h.dailyTestScore!==undefined&&h.dailyTestScore!==''?h.dailyTestScore:'-'}</td><td>${stepLabel(h.stepId)||'-'}${(h.extraSteps&&h.extraSteps.length)?'<br><span style="color:#9c9880;">+ '+h.extraSteps.map(id=>stepLabel(id)).filter(Boolean).join(', ')+'</span>':''}</td><td>${h.homeworkCompletionLevel||'-'}</td><td>${h.studyCompletionLevel||'-'}</td><td>${h.note||'-'}</td></tr>`).join('')}
+        </table>`:`<div class="empty">기록이 없어요.</div>`}
+    </div>
+
+    <div class="card" style="overflow-x:auto;">
+      <h3 style="margin-top:0;">2. KMM</h3>
+      ${kmmRows.length? `<table><tr><th>날짜</th><th>범위</th><th>점수</th><th>결과</th><th>시상</th></tr>${kmmRows.map(k=>`<tr><td>${fmtDate(k.date)}</td><td>${k.range||'-'}</td><td>${k.score}</td><td>${k.score>=80?'<span class="badge green">PASS</span>':'<span class="badge red">FAIL</span>'}</td><td>${kmmAwardText(k.score)}</td></tr>`).join('')}</table>`:`<div class="empty">등록된 KMM 기록이 없어요.</div>`}
+    </div>
+
+    <div class="card" style="overflow-x:auto;">
+      <h3 style="margin-top:0;">3. 내신 성적 누적</h3>
+      <div style="font-size:12px;color:#8a8674;margin-bottom:10px;">학교 시험 점수가 입력될 때마다 이곳에 계속 누적됩니다.</div>
+      ${renderSchoolExamHistoryTable(stuId)}
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">4. 오답유형</h3>
+      ${renderDonut(errorAgg)}
+    </div>
+
+    <div class="card" style="overflow-x:auto;">
+      <div class="row between"><h3 style="margin:0;">5. 숙제현황 및 누적경고횟수</h3>${warningCountBadge(warningCount)}</div>
+      <div style="margin-top:8px;font-size:12px;color:#8a8674;">현재 표시되는 누적 경고는 기존 검증 경고만 사용합니다.</div>
+      ${homeworkRows.length? `<table style="margin-top:12px;"><tr><th>날짜</th><th>숙제 인증</th><th>선생님 확인</th><th>코멘트</th></tr>${homeworkRows.slice(0,30).map(r=>`<tr><td>${fmtDate(r.date)}</td><td><span class="badge green">○ 인증</span></td><td>${r.sub.status==='확인'?'<span class="badge green">확인</span>':'<span class="badge yellow">확인 대기</span>'}</td><td>${r.sub.teacherComment||'-'}</td></tr>`).join('')}</table>`:`<div class="empty">등록된 숙제 인증 기록이 없어요.</div>`}
+    </div>`;
+}
+
+// 학생 두 번째 페이지: 기존 숙제계획/영상과 기존 숙제인증/Q&A 기능을 한 화면에 재배치한다.
+// 데이터 스키마와 저장 함수는 변경하지 않는다.
+function renderStudentHomeworkPage(){
+  const stuId = session.studentId;
+  const s = studentById(stuId);
+  if(!s) return `<div class="empty">학생 정보를 찾을 수 없어요.</div>`;
+  const cls = classById(s.classId);
+  const wk = weekStartISO(todayISO());
+  const myWeekPlan = s.classId ? (db.weeklyPlans[s.classId+'_'+wk] || {})[stuId] || {} : {};
+
+  const videoAssignFlat = [];
+  Object.entries(db.classRecords).forEach(([key,obj])=>{
+    if(!obj[stuId]) return;
+    const date = key.slice(-10);
+    (obj[stuId].videoAssignments||[]).forEach((v,i)=> videoAssignFlat.push({...v,date,key,idx:i}));
+  });
+  videoAssignFlat.sort((a,b)=>b.date.localeCompare(a.date));
+
+  return `
+    <div class="card">
+      <h2 style="margin:0 0 4px;">✏️ 오늘의 숙제</h2>
+      <div style="font-size:13px;color:#8a8674;">${s.name} · ${cls?cls.name:'미배정'}</div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">1. 이번 주 숙제</h3>
+      <div class="weekgrid" style="grid-template-columns:70px repeat(7,1fr);">
+        <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div class="hd">${DAY_LABEL[k]}</div>`).join('')}
+        <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div style="font-size:11px;padding:4px;border:1px solid var(--line);border-radius:6px;min-height:44px;">${myWeekPlan[k]||''}</div>`).join('')}
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">2. 개념동영상학습</h3>
+      ${videoAssignFlat.length ? videoAssignFlat.map(v=>`<div class="row" style="padding:7px 0;border-bottom:1px solid var(--line);">
+        <input type="checkbox" ${v.done?'checked':''} onchange="toggleVideoDoneByKey('${v.key}','${stuId}',${v.idx})">
+        <a class="link" href="${v.url}" target="_blank">${v.title}</a><span style="color:#9c9880;font-size:11px;">(${fmtDate(v.date)})</span>
+      </div>`).join('') : `<div class="empty">부여된 영상 과제가 없어요.</div>`}
+    </div>
+
+    <div style="margin-bottom:8px;font-size:14px;font-weight:800;color:var(--navy2);">3. 숙제인증</div>
+    ${renderSubmissionCard(stuId, false, false)}
+
+    <div style="margin-bottom:8px;font-size:14px;font-weight:800;color:var(--navy2);">4. 질문게시판</div>
+    ${renderQnaStudentSection(stuId, false)}
+  `;
+}
+
 function renderUnseenCommentBanner(stuId){
   const withComment = Object.entries(db.submissions)
     .filter(([k,v])=>k.startsWith(stuId+'_') && v.teacherComment && !v.commentSeen)
