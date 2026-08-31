@@ -180,7 +180,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-31 v52 (로딩 복구 · 일일 안내 · 월말 리포트)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-31 v53 (안전복구 · 일일안내+월말리포트)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -336,102 +336,23 @@ const SEED_DATA = {
 };
 
 /* ---------------- FIRESTORE INIT & REAL-TIME LISTENERS ---------------- */
-let startupSettled = false;
-let startupTimer = null;
-
-function promiseTimeout(promise, ms, label){
-  return Promise.race([
-    promise,
-    new Promise((_,reject)=>setTimeout(()=>reject(Object.assign(new Error(label+' 시간 초과'),{code:'timeout'})),ms))
-  ]);
-}
-
-function firebaseErrorText(e, stage){
-  const code = e && e.code ? String(e.code) : '';
-  if(code.includes('permission-denied')) return `${stage} 권한이 거부됐어요. Firestore 보안 규칙을 확인해주세요.`;
-  if(code.includes('unavailable')) return `${stage} 서버에 연결할 수 없어요. 인터넷 연결 또는 Firebase 상태를 확인해주세요.`;
-  if(code.includes('network-request-failed')) return `${stage} 네트워크 연결에 실패했어요.`;
-  if(code==='timeout') return `${stage} 응답이 너무 오래 걸리고 있어요.`;
-  return `${stage} 중 오류가 발생했어요${code ? ` (${code})` : ''}.`;
-}
-
-async function bootstrapEssentialData(){
-  const settingsRef = fsdb.collection('meta').doc('settings');
-  const studentsRef = fsdb.collection('students');
-
-  const [settingsDoc, studentsSnap] = await promiseTimeout(
-    Promise.all([settingsRef.get(), studentsRef.get()]),
-    12000,
-    '필수 데이터 불러오기'
-  );
-
-  if(settingsDoc.exists){
-    db.settings = settingsDoc.data();
-  }else{
-    db.settings = { adminPassword:'0000', isDefaultPassword:true };
-    try{ await settingsRef.set(db.settings); }catch(e){
-      console.warn('기본 settings 저장 실패', e);
-    }
-  }
-  db.students = studentsSnap.docs.map(d=>({id:d.id, ...d.data()}));
-  listenersReady.settings = true;
-  listenersReady.students = true;
-  maybeFinishLoading();
-}
-
 async function initFirebase(){
-  const loading = document.getElementById('loadingScreen');
-  startupTimer = setTimeout(()=>{
-    if(!startupSettled && loading && loading.style.display!=='none'){
-      showFatalError('앱 시작이 지연되고 있어요. Firebase 연결이 완료되지 않았습니다.', 'STARTUP_TIMEOUT');
-    }
-  }, 18000);
-
   try{
-    await promiseTimeout(fauth.signInAnonymously(), 10000, 'Firebase 인증');
+    await fauth.signInAnonymously();
   }catch(e){
-    startupSettled = true;
-    clearTimeout(startupTimer);
-    showFatalError(firebaseErrorText(e,'Firebase 인증'), e && e.code);
+    showFatalError('로그인 서버에 연결하지 못했어요. 인터넷 연결을 확인한 뒤 새로고침 해주세요.');
     return;
   }
-
-  try{
-    await bootstrapEssentialData();
-  }catch(e){
-    startupSettled = true;
-    clearTimeout(startupTimer);
-    showFatalError(firebaseErrorText(e,'필수 데이터 불러오기'), e && e.code);
-    return;
-  }
-
   attachListeners();
-  startupSettled = true;
-  clearTimeout(startupTimer);
 }
 
-function showFatalError(msg, code=''){
-  const el = document.getElementById('loadingScreen');
-  if(!el) return;
-  el.style.display='flex';
-  el.innerHTML = `
-    <div style="text-align:center;padding:24px;max-width:420px;">
-      <div style="font-size:38px;margin-bottom:10px;">⚠️</div>
-      <div style="font-size:17px;font-weight:800;margin-bottom:8px;">M&m 수학훈련소를 열지 못했어요</div>
-      <div style="font-size:13px;line-height:1.65;margin-bottom:10px;">${msg}</div>
-      ${code?`<div style="font-size:11px;color:#8e9ab5;margin-bottom:14px;word-break:break-all;">오류 코드: ${code}</div>`:''}
-      <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
-        <button class="btn-gold" onclick="location.reload()">다시 시도</button>
-        <button class="btn-gold" style="background:#fff;color:#17213b;" onclick="copyStartupInfo()">오류정보 복사</button>
-      </div>
+function showFatalError(msg){
+  document.getElementById('loadingScreen').innerHTML = `
+    <div style="text-align:center;padding:20px;max-width:340px;">
+      <div style="font-size:36px;margin-bottom:10px;">⚠️</div>
+      <div style="margin-bottom:16px;">${msg}</div>
+      <button class="btn-gold" onclick="location.reload()">다시 시도</button>
     </div>`;
-}
-
-function copyStartupInfo(){
-  const text = `M&m v52 시작 오류\nURL: ${location.href}\n시간: ${new Date().toString()}\n온라인: ${navigator.onLine}`;
-  if(navigator.clipboard && navigator.clipboard.writeText){
-    navigator.clipboard.writeText(text).then(()=>alert('오류정보를 복사했어요.')).catch(()=>alert(text));
-  }else alert(text);
 }
 
 function setConnStatus(ok){
@@ -452,14 +373,14 @@ function attachListeners(){
       listenersReady.settings = true;
       maybeFinishLoading();
       render();
-    }, err=>{ setConnStatus(false); console.error('settings listener error', err); }),
+    }, err=>{ setConnStatus(false); }),
 
     fsdb.collection('students').onSnapshot(snap=>{
       db.students = snap.docs.map(d=>({id:d.id, ...d.data()}));
       listenersReady.students = true;
       maybeFinishLoading();
       render();
-    }, err=>{ setConnStatus(false); console.error('students listener error', err); }),
+    }, err=>{ setConnStatus(false); }),
 
     fsdb.collection('classes').onSnapshot(snap=>{ db.classes = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
     fsdb.collection('courses').onSnapshot(snap=>{ db.courses = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
@@ -1481,7 +1402,7 @@ function renderClassDetail(cls){
 
   <div class="card">
     <h3 style="margin-top:0;">📋 일일 학습 안내</h3>
-    <p style="font-size:12px;color:#8a8674;margin:0 0 10px;">위 수업 기록 표에 입력한 내용을 바탕으로 학부모님께 바로 보낼 수 있는 일일 학습 안내가 자동으로 만들어져요.</p>
+    <p style="font-size:12px;color:#8a8674;margin:0 0 10px;">위 수업 기록 표에 입력한 내용을 바탕으로, 학부모님께 바로 보낼 수 있는 일일 학습 안내가 자동으로 만들어져요.</p>
     ${students.length ? students.map(s=>{
       const r = rec[s.id] || {};
       const text = buildDailyReportText(s, date, r, cls.dayGroup);
@@ -3163,69 +3084,19 @@ async function answerQuestion(qId){
 
 /* ---------------- FEEDBACK ---------------- */
 function renderFeedback(){
-  const mode = currentSubState.fbMode || 'daily';
+  const mode = currentSubState.fbMode || 'monthly';
   return `
   <h1 class="page-title">학부모 안내</h1>
-  <p class="page-sub">주간 리포트는 사용하지 않아요. 수업 후에는 <b>일일 학습 안내</b>, 매월 말에는 <b>월말 리포트</b>를 보내요.</p>
+  <p class="page-sub">매 수업 후에는 수업관리의 <b>일일 학습 안내</b>를 보내고, 매월 말에는 이곳에서 <b>월말 리포트</b>를 작성해요.</p>
+  <div class="card" style="border:1px solid var(--line);">
+    <div style="font-size:13px;line-height:1.7;"><b>📋 일일 학습 안내</b>는 별도 재입력 없이 <b>수업관리 → 해당 반/날짜</b>에서 바로 복사할 수 있어요.</div>
+  </div>
   <div class="tabs2">
-    <button class="${mode==='daily'?'active':''}" onclick="currentSubState.fbMode='daily';render();">일일 학습 안내</button>
     <button class="${mode==='monthly'?'active':''}" onclick="currentSubState.fbMode='monthly';render();">월말 리포트</button>
     <button class="${mode==='history'?'active':''}" onclick="currentSubState.fbMode='history';render();">발송 이력</button>
   </div>
-  ${mode==='daily'? renderParentDailyGuide() : mode==='monthly'? renderFbIndividual() : renderFbHistory()}
+  ${mode==='monthly'? renderFbIndividual() : renderFbHistory()}
   `;
-}
-function parentDailyRecord(stuId, date){
-  const s = studentById(stuId);
-  if(!s) return null;
-  const candidates = Object.entries(db.classRecords)
-    .filter(([key,obj])=> key.endsWith('_'+date) && obj && obj[stuId])
-    .map(([key,obj])=>({key, rec:obj[stuId], clsId:key.slice(0,key.length-11)}));
-  if(!candidates.length) return null;
-  const row = candidates[0];
-  const cls = classById(row.clsId);
-  return {student:s, rec:row.rec||{}, cls, clsId:row.clsId};
-}
-function renderParentDailyGuide(){
-  const active = sortedStudents(db.students.filter(st=>st.status!=='withdrawn'));
-  const stuId = currentSubState.fbDailyStudent || (active[0]&&active[0].id);
-  const date = currentSubState.fbDailyDate || academicTodayISO();
-  currentSubState.fbDailyStudent = stuId;
-  currentSubState.fbDailyDate = date;
-  if(!stuId) return `<div class="empty">등록된 학생이 없어요.</div>`;
-  const info = parentDailyRecord(stuId,date);
-  const s = studentById(stuId);
-  let body = '';
-  if(info && info.cls){
-    const dayGroup = info.rec.dayGroupSnapshot || info.cls.dayGroup;
-    const text = buildDailyReportText(s,date,info.rec,dayGroup)
-      .replace('오늘의 학습 리포트','일일 학습 안내');
-    body = `<pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.7;margin:0;">${text}</pre>
-      <div class="row" style="margin-top:10px;">
-        <button class="btn sm outline" onclick="copyText(this)" data-text="${encodeURIComponent(text)}">텍스트 복사하기</button>
-        <button class="btn sm gold" onclick="saveDailyParentGuide('${stuId}','${date}',this)">발송 이력 저장</button>
-      </div>`;
-  }else{
-    body = `<div class="empty"><div class="big">📭</div>${fmtDate(date)}에 이 학생의 수업기록이 없어요.<br><span style="font-size:12px;">수업관리에서 해당 날짜 기록을 입력한 뒤 다시 확인해주세요.</span></div>`;
-  }
-  return `
-  <div class="card">
-    <div class="row">
-      <select onchange="currentSubState.fbDailyStudent=this.value;render();">
-        ${active.map(st=>`<option value="${st.id}" ${st.id===stuId?'selected':''}>${st.name}</option>`).join('')}
-      </select>
-      <input type="date" value="${date}" max="${academicTodayISO()}" onchange="currentSubState.fbDailyDate=this.value;render();">
-    </div>
-    <p style="font-size:11px;color:#8a8674;margin:8px 0 0;">수업관리의 출석·테스트·진도·숙제·특이사항을 그대로 사용합니다. 같은 내용을 다시 입력할 필요가 없어요.</p>
-  </div>
-  <div class="card">${body}</div>`;
-}
-async function saveDailyParentGuide(stuId,date,btn){
-  const info = parentDailyRecord(stuId,date);
-  if(!info || !info.cls){ alert('저장할 수업기록이 없어요.'); return; }
-  const text = buildDailyReportText(info.student,date,info.rec,info.rec.dayGroupSnapshot||info.cls.dayGroup).replace('오늘의 학습 리포트','일일 학습 안내');
-  const ok = await fsAdd('feedbacks',{studentId:stuId,type:'daily',date,traffic:trafficForStudent(stuId),comment:text});
-  if(btn){ const old=btn.textContent; btn.textContent=ok?'✅ 저장됨':'❌ 저장 실패'; setTimeout(()=>btn.textContent=old,1600); }
 }
 function setIndividualTraffic(c){
   if(FUTURE_TEXT_KNOWN.includes(currentSubState.fbComment)){
@@ -3235,7 +3106,8 @@ function setIndividualTraffic(c){
   render();
 }
 function renderFbIndividual(){
-  const stuId = currentSubState.fbStudent || (sortedStudents(db.students.filter(st=>st.status!=='withdrawn'))[0]&&sortedStudents(db.students.filter(st=>st.status!=='withdrawn'))[0].id);
+  const active = sortedStudents(db.students.filter(st=>st.status!=='withdrawn'));
+  const stuId = currentSubState.fbStudent || (active[0]&&active[0].id);
   currentSubState.fbStudent = stuId;
   if(!stuId) return `<div class="empty">등록된 학생이 없어요.</div>`;
   const traffic = currentSubState.fbTraffic || trafficForStudent(stuId);
@@ -3245,14 +3117,14 @@ function renderFbIndividual(){
   <div class="card">
     <div class="row">
       <select onchange="currentSubState.fbStudent=this.value;currentSubState.fbTraffic=null;currentSubState.fbComment=undefined;render();">
-        ${sortedStudents(db.students.filter(st=>st.status!=='withdrawn')).map(st=>`<option value="${st.id}" ${st.id===stuId?'selected':''}>${st.name}</option>`).join('')}
+        ${active.map(st=>`<option value="${st.id}" ${st.id===stuId?'selected':''}>${st.name}</option>`).join('')}
       </select>
       <span class="badge gold">월말 리포트</span>
     </div>
   </div>
   <div class="card">
     <div class="row" style="margin-bottom:10px;">
-      <span>신호등:</span>
+      <span>현재 상태:</span>
       ${['green','yellow','red'].map(c=>`<button class="btn sm ${traffic===c?'':'outline'}" style="background:${traffic===c?({green:'#3EA55A',yellow:'#E0A82E',red:'#D65A4A'}[c]):'#fff'};color:${traffic===c?'#fff':'#333'};border-color:${({green:'#3EA55A',yellow:'#E0A82E',red:'#D65A4A'}[c])};" onclick="setIndividualTraffic('${c}')">${c==='green'?'🟢 순항중':c==='yellow'?'🟡 주의':'🔴 관찰필요'}</button>`).join('')}
     </div>
     <label style="font-size:12px;color:#8a8674;">다음 달 학습 방향 코멘트</label>
@@ -3620,10 +3492,9 @@ function monthlyHomeworkRate(stuId, yearMonth){
 }
 function buildMonthlyReportText(stuId, traffic, comment){
   const s = studentById(stuId);
-  const baseDate = academicTodayISO();
-  const [yy,mm] = baseDate.slice(0,7).split('-').map(Number);
-  const yearMonth = baseDate.slice(0,7);
-  const monthLabel = `${yy}년 ${mm}월`;
+  const now = new Date();
+  const yearMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const monthLabel = `${now.getFullYear()}년 ${now.getMonth()+1}월`;
   const trafficEmoji = {green:'🟢',yellow:'🟡',red:'🔴'}[traffic];
 
   const dailyScores = monthRangeDailyScores(stuId, yearMonth);
@@ -3679,16 +3550,52 @@ function setBulkTraffic(stuId, c){
   render();
 }
 function renderFbBulk(){
-  return `<div class="empty">주간 일괄 생성 기능은 v51부터 사용하지 않습니다.</div>`;
+  const clsId = currentSubState.fbClass || (db.classes[0]&&db.classes[0].id);
+  currentSubState.fbClass = clsId;
+  const cls = classById(clsId);
+  if(!cls) return `<div class="empty">등록된 반이 없어요.</div>`;
+  currentSubState.fbBulkData = currentSubState.fbBulkData || {};
+  return `
+  <div class="card"><div class="row">${sortedClasses().map(c=>`<button class="btn sm ${c.id===clsId?'':'outline'}" onclick="currentSubState.fbClass='${c.id}';render();">${c.name}</button>`).join('')}</div></div>
+  ${(cls.studentIds||[]).map(studentById).filter(Boolean).map(s=>{
+    const draft = currentSubState.fbBulkData[s.id] = currentSubState.fbBulkData[s.id] || {traffic:trafficForStudent(s.id), comment:defaultFutureDirectionText(s.id)};
+    return `<div class="card">
+      <div class="row between"><b>${s.name}</b>
+        <div class="row">${['green','yellow','red'].map(c=>`<button class="btn sm ${draft.traffic===c?'':'outline'}" onclick="setBulkTraffic('${s.id}','${c}')">${c==='green'?'🟢':c==='yellow'?'🟡':'🔴'}</button>`).join('')}</div>
+      </div>
+      <textarea rows="2" style="margin-top:8px;" onchange="currentSubState.fbBulkData['${s.id}'].comment=this.value;">${draft.comment}</textarea>
+      <details style="margin-top:8px;">
+        <summary style="cursor:pointer;font-size:12px;color:#8a8674;">전체 리포트 미리보기 (숙제완성도·출석률·진도 포함)</summary>
+        <div style="margin-top:8px;">${renderFeedbackPreview(s.id, 'weekly', draft.traffic, draft.comment)}</div>
+      </details>
+    </div>`;
+  }).join('')}
+  <button class="btn gold" onclick="generateBulkFeedback('${clsId}')">이 반 전체 일괄 생성</button>
+  `;
 }
 async function generateBulkFeedback(clsId){
-  alert('주간 일괄 생성 기능은 사용하지 않습니다.');
+  const cls = classById(clsId);
+  const data = currentSubState.fbBulkData || {};
+  const batch = fsdb.batch();
+  let count = 0;
+  (cls.studentIds||[]).forEach(stuId=>{
+    const d = data[stuId]; if(!d) return;
+    const ref = fsdb.collection('feedbacks').doc();
+    batch.set(ref, {studentId:stuId,type:'weekly',date:todayISO(),traffic:d.traffic,comment:d.comment});
+    count++;
+  });
+  try{
+    await batch.commit();
+    alert(`${count}명의 피드백이 이력에 저장됐어요.`);
+    currentSubState.fbBulkData = {};
+    render();
+  }catch(e){ alert('일괄 생성 중 문제가 발생했어요.'); }
 }
 function renderFbHistory(){
-  const rows=[...db.feedbacks].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-  return `<div class="card">${rows.length? `<table><tr><th>날짜</th><th>학생</th><th>유형</th><th>상태</th><th>내용/코멘트</th></tr>
-    ${rows.map(f=>{const st=studentById(f.studentId);const typeLabel=f.type==='daily'?'일일 안내':f.type==='monthly'?'월말':'과거 주간';return `<tr><td>${fmtDate(f.date)}</td><td>${st?st.name:'-'}</td><td>${typeLabel}</td><td>${f.traffic?(({green:'🟢',yellow:'🟡',red:'🔴'})[f.traffic]||'-'):'-'}</td><td style="max-width:360px;font-size:12px;white-space:pre-wrap;">${f.comment||''}</td></tr>`;}).join('')}
-    </table>`:`<div class="empty">저장된 학부모 안내 이력이 없어요.</div>`}</div>`;
+  const rows = [...db.feedbacks].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  return `<div class="card">${rows.length? `<table><tr><th>날짜</th><th>학생</th><th>유형</th><th>상태</th><th>코멘트</th></tr>
+    ${rows.map(f=>{const st=studentById(f.studentId);const typeLabel=f.type==='monthly'?'월말':f.type==='daily'?'일일 안내':'과거 주간';return `<tr><td>${fmtDate(f.date)}</td><td>${st?st.name:'-'}</td><td>${typeLabel}</td><td>${f.traffic?(({green:'🟢',yellow:'🟡',red:'🔴'})[f.traffic]||'-'):'-'}</td><td style="max-width:320px;font-size:12px;">${f.comment||''}</td></tr>`;}).join('')}
+    </table>` : `<div class="empty">저장된 학부모 안내 이력이 없어요.</div>`}</div>`;
 }
 
 /* ---------------- BACKUP ---------------- */
