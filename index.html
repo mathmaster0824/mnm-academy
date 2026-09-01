@@ -486,11 +486,41 @@ function studentLessonRecords(stuId){
   recs.sort((a,b)=>a.date.localeCompare(b.date));
   return recs;
 }
+
+const HOMEWORK_REVIEW_CUTOVER_DATE = '2026-09-01';
+function isLegacyHomeworkDate(date){
+  return !!date && String(date) < HOMEWORK_REVIEW_CUTOVER_DATE;
+}
+// v37 숙제 검토 상태 중앙 판정.
+// 기존 과거 데이터 보호: status 필드가 없는 예전 인증은 '승인'으로 간주한다.
+// 새 인증은 '대기', 원장 확인은 '확인', 불합격은 '불합격'.
+function submissionReviewState(sub,date){
+  if(!sub) return 'missing';
+  const recordDate=date || sub.date || '';
+  if(isLegacyHomeworkDate(recordDate)) return 'approved';
+  const status = String(sub.status||'').trim();
+  if(!status) return 'approved'; // 기존 레거시 제출 보호
+  if(status==='확인' || status==='approved') return 'approved';
+  if(status==='불합격' || status==='rejected') return 'rejected';
+  return 'pending'; // '대기' 및 알 수 없는 신규 상태는 안전하게 검토대기
+}
+function submissionIsApproved(sub,date){ return submissionReviewState(sub,date)==='approved'; }
+function submissionIsPending(sub,date){ return submissionReviewState(sub,date)==='pending'; }
+function submissionIsRejected(sub,date){ return submissionReviewState(sub,date)==='rejected'; }
+function homeworkReviewMark(sub,date){
+  const st=submissionReviewState(sub,date);
+  return st==='approved' ? '○' : st==='pending' ? '△' : '×';
+}
+function homeworkReviewLabel(sub,date){
+  const st=submissionReviewState(sub,date);
+  return st==='approved' ? '인정' : st==='pending' ? '검토대기' : st==='rejected' ? '불합격' : '미인증';
+}
+
 function lessonHadHomeworkSubmission(stuId, clsId, date){
   const cls = classById(clsId);
   const range = cls ? homeworkDateRangeDates(cls.dayGroup, date) : [];
-  if(!range.length) return !!db.submissions[stuId+'_'+date];
-  return range.some(d => !!db.submissions[stuId+'_'+d]);
+  if(!range.length) return submissionIsApproved(db.submissions[stuId+'_'+date]);
+  return range.some(d => submissionIsApproved(db.submissions[stuId+'_'+d],d));
 }
 function autoWarningCoreLine(count){
   if(count>=3) return '숙제가 3회 연속 제출되지 않아, 이번이 세 번째 경고로 기록되어 퇴원 조치 대상이 되었습니다.';
@@ -572,9 +602,19 @@ function warningAssessmentRowsForStudent(stuId){
       deadline.setDate(deadline.getDate()+1);
       deadline.setHours(6,0,0,0);
       if(Date.now() <= deadline.getTime()) continue;
-      // v1 대시보드와 동일하게 기존 submissions 문서 존재 여부를 '인증됨'으로 판정한다.
-      const submitted = !!db.submissions[stuId+'_'+d];
-      if(!byDate.has(d)) byDate.set(d,{date:d,submitted,assessedLessonDate:l.date,clsId:l.clsId});
+      const sub = db.submissions[stuId+'_'+d];
+      const reviewState = submissionReviewState(sub,d);
+      // 검토 대기는 원장 확인 전이므로 '인정'도 '미이행'도 확정하지 않는다.
+      // 원장의 검토가 늦었다는 이유로 학생에게 자동 경고가 생기는 것을 막는다.
+      if(!byDate.has(d)) byDate.set(d,{
+        date:d,
+        submitted:reviewState==='approved',
+        pending:reviewState==='pending',
+        rejected:reviewState==='rejected',
+        reviewState,
+        assessedLessonDate:l.date,
+        clsId:l.clsId
+      });
     }
   }
   return ([...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date))).filter(r => r.date >= WARNING_ASSESSMENT_START_DATE);
@@ -586,6 +626,7 @@ function warningEpisodesForStudentPreview(stuId){
   for(const row of rows){
     // 평가자료 사이에 날짜가 비면 '연속 3일'로 이어 붙이지 않는다.
     if(missed.length && !isNextISODate(missed[missed.length-1].date,row.date)) missed=[];
+    if(row.pending){ missed=[]; continue; } // 검토 대기는 판정 보류: 연속 미이행을 확정하지 않음
     if(row.submitted){ missed=[]; continue; }
     missed.push(row);
     if(missed.length===3){
@@ -620,8 +661,9 @@ function allStudentHomeworkWarningAuditRows(){
       const rows=warningAssessmentRowsForStudent(s.id);
       const episodes=warningEpisodesForStudentPreview(s.id);
       const submitted=rows.filter(r=>r.submitted).length;
-      const missing=rows.length-submitted;
-      return {student:s, rows, episodes, submitted, missing};
+      const pending=rows.filter(r=>r.pending).length;
+      const missing=rows.filter(r=>!r.submitted && !r.pending).length;
+      return {student:s, rows, episodes, submitted, pending, missing};
     })
     .sort((a,b)=>{
       const ac=classById(a.student.classId)?.name||'';
@@ -1059,14 +1101,17 @@ function warningDecisionDetailForStudent(stu){
   const parts = [];
   rows.forEach(r=>{
     if(prevDate && !isNextISODate(prevDate, r.date)) streak = 0;
-    if(r.submitted){
+    if(r.pending){
       streak = 0;
-      parts.push(`<span style="display:inline-block;margin:3px 4px 3px 0;padding:5px 8px;border-radius:9px;background:#eaf7ee;border:1px solid #b9dfc3"><b>○ ${escapeHtml(r.date.slice(5).replace('-','/'))}</b><br><small>인증 · 연속 0</small></span>`);
+      parts.push(`<span style="display:inline-block;margin:3px 4px 3px 0;padding:5px 8px;border-radius:9px;background:#fff9e8;border:1px solid #ead89a"><b>△ ${escapeHtml(r.date.slice(5).replace('-','/'))}</b><br><small>검토대기 · 판정 보류</small></span>`);
+    }else if(r.submitted){
+      streak = 0;
+      parts.push(`<span style="display:inline-block;margin:3px 4px 3px 0;padding:5px 8px;border-radius:9px;background:#eaf7ee;border:1px solid #b9dfc3"><b>○ ${escapeHtml(r.date.slice(5).replace('-','/'))}</b><br><small>인정 · 연속 0</small></span>`);
     }else{
       streak += 1;
       const hit = streak === 3;
-      parts.push(`<span style="display:inline-block;margin:3px 4px 3px 0;padding:5px 8px;border-radius:9px;background:${hit?'#fff0ed':'#fff7e8'};border:1px solid ${hit?'#e9aaa0':'#ead7a8'}"><b>× ${escapeHtml(r.date.slice(5).replace('-','/'))}</b><br><small>미인증 · 연속 ${streak}${hit?' → 경고':''}</small></span>`);
-      if(hit) streak = 0; // same preview rule: every completed 3-day episode counts once
+      parts.push(`<span style="display:inline-block;margin:3px 4px 3px 0;padding:5px 8px;border-radius:9px;background:${hit?'#fff0ed':'#fff7e8'};border:1px solid ${hit?'#e9aaa0':'#ead7a8'}"><b>× ${escapeHtml(r.date.slice(5).replace('-','/'))}</b><br><small>${r.rejected?'불합격':'미인증'} · 연속 ${streak}${hit?' → 경고':''}</small></span>`);
+      if(hit) streak = 0;
     }
     prevDate = r.date;
   });
@@ -1085,7 +1130,7 @@ function renderDashboard(){
   const dow = new Date().getDay();
   const todaysClasses = db.classes.filter(c=> (c.dayGroup==='mon-wed'&&(dow===1||dow===3)) || (c.dayGroup==='tue-thu'&&(dow===2||dow===4)) );
   let pendingHw=0, pendingQ=0, watchCount=0;
-  Object.values(db.submissions).forEach(s=>{ if(s.status==='대기') pendingHw++; });
+  Object.values(db.submissions).forEach(s=>{ if(submissionIsPending(s)) pendingHw++; });
   db.questions.forEach(q=>{ if(q.status==='대기') pendingQ++; });
   db.students.forEach(s=>{ const st=studentStatus(s.id); if(st!=='PASS') watchCount++; });
   const outStudents = db.students.filter(s=>verifiedWarnings(s).length>=3);
@@ -1099,8 +1144,11 @@ function renderDashboard(){
     const range = homeworkDateRangeDates(c.dayGroup, today);
     (c.studentIds||[]).map(studentById).filter(Boolean).forEach(s=>{
       if(!range.length) return;
-      const days = range.map(d=>({date:d, submitted:!!db.submissions[s.id+'_'+d]}));
-      const submittedCount = days.filter(x=>x.submitted).length;
+      const days = range.map(d=>{
+        const sub=db.submissions[s.id+'_'+d];
+        return {date:d, sub, approved:submissionIsApproved(sub,d), state:submissionReviewState(sub,d)};
+      });
+      const submittedCount = days.filter(x=>x.approved).length;
       homeworkRowsToday.push({
         studentId:s.id,
         name:s.name,
@@ -1120,7 +1168,7 @@ function renderDashboard(){
   <p class="page-sub">${new Date().toLocaleDateString('ko-KR',{year:'numeric',month:'long',day:'numeric',weekday:'long'})} · 오늘은 ${todaysClasses.length? todaysClasses.map(c=>c.name).join(', ')+' 수업일이에요.' : '등록된 수업이 없는 날이에요.'}</p>
   <div class="grid-stats">
     <div class="stat-card"><div class="num">${todaysClasses.length}</div><div class="lbl">오늘 수업 반</div></div>
-    <div class="stat-card" style="cursor:pointer;" onclick="goto('hwreview')"><div class="num">${pendingHw}</div><div class="lbl">숙제 인증 확인 대기</div></div>
+    <div class="stat-card" style="cursor:pointer;" onclick="goto('hwreview')"><div class="num">${pendingHw}</div><div class="lbl">숙제 검토 대기</div></div>
     <div class="stat-card"><div class="num">${pendingQ}</div><div class="lbl">답변 대기 질문</div></div>
     <div class="stat-card"><div class="num">${watchCount}</div><div class="lbl">SLOW·STOP 관찰 필요</div></div>
   </div>
@@ -1130,7 +1178,7 @@ function renderDashboard(){
   </div>
   ${todaysClasses.length ? `<div class="card" style="${missingHwToday.length?'border-color:var(--red);':''}">
     <h3 style="margin-top:0;">📸 오늘 수업 학생 숙제 제출 현황</h3>
-    <div style="font-size:12px;color:#8a8674;margin:-2px 0 10px;">최근 검사기간의 날짜별 인증 여부입니다. ○ 제출 · × 미제출</div>
+    <div style="font-size:12px;color:#8a8674;margin:-2px 0 10px;">최근 검사기간의 날짜별 숙제 판정입니다. ○ 인정 · △ 검토대기 · × 미인증/불합격</div>
     ${homeworkRowsToday.length ? `<div style="font-size:13px;">
       ${homeworkRowsToday.map(x=>`<div style="padding:10px 0;border-bottom:1px solid var(--line);">
         <div class="row between" style="gap:12px;align-items:flex-start;">
@@ -1140,10 +1188,15 @@ function renderDashboard(){
               const dt=new Date(day.date+'T00:00:00');
               const wd=['일','월','화','수','목','금','토'][dt.getDay()];
               const label=`${dt.getMonth()+1}/${dt.getDate()}(${wd})`;
-              return `<span title="${label} ${day.submitted?'제출':'미제출'}" style="display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border-radius:999px;border:1px solid ${day.submitted?'#bfe3c6':'#f3c5c0'};background:${day.submitted?'#f0faf2':'#fff3f1'};color:${day.submitted?'#2c7a3d':'#c94236'};font-size:12px;font-weight:700;white-space:nowrap;">${day.submitted?'○':'×'} ${label}</span>`;
+              const mark=homeworkReviewMark(day.sub,day.date);
+              const state=day.state;
+              const border=state==='approved'?'#bfe3c6':state==='pending'?'#ead89a':'#f3c5c0';
+              const bg=state==='approved'?'#f0faf2':state==='pending'?'#fff9e8':'#fff3f1';
+              const color=state==='approved'?'#2c7a3d':state==='pending'?'#9a6b16':'#c94236';
+              return `<span title="${label} ${homeworkReviewLabel(day.sub,day.date)}" style="display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border-radius:999px;border:1px solid ${border};background:${bg};color:${color};font-size:12px;font-weight:700;white-space:nowrap;">${mark} ${label}</span>`;
             }).join('')}
           </div>
-          <span class="badge ${x.submitted===x.total?'green':'red'}" style="white-space:nowrap;">${x.submitted}/${x.total} 제출</span>
+          <span class="badge ${x.submitted===x.total?'green':'red'}" style="white-space:nowrap;">${x.submitted}/${x.total} 인정</span>
         </div>
       </div>`).join('')}
     </div>` : `<div class="empty" style="padding:16px;">표시할 숙제 검사기간이 없어요.</div>`}
@@ -1200,6 +1253,7 @@ function renderDashboard(){
             <span><b>${x.student.name}</b> <span style="font-size:12px;color:#9c9880;">${clsName}</span></span>
             <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
               <span class="badge green">○ ${x.submitted}</span>
+              <span class="badge yellow">△ ${x.pending}</span>
               <span class="badge ${x.missing?'red':''}">× ${x.missing}</span>
               <span class="badge ${warningCount?'yellow':''}">예상경고 ${warningCount}</span>
             </span>
@@ -1210,7 +1264,12 @@ function renderDashboard(){
                 const dt=new Date(r.date+'T00:00:00');
                 const wd=['일','월','화','수','목','금','토'][dt.getDay()];
                 const label=`${dt.getMonth()+1}/${dt.getDate()}(${wd})`;
-                return `<span title="${r.date}" style="display:inline-flex;align-items:center;gap:4px;padding:4px 7px;border-radius:999px;border:1px solid ${r.submitted?'#bfe3c6':'#f3c5c0'};background:${r.submitted?'#f0faf2':'#fff3f1'};color:${r.submitted?'#2c7a3d':'#c94236'};font-size:12px;font-weight:700;white-space:nowrap;">${r.submitted?'○':'×'} ${label}</span>`;
+                const state=r.pending?'pending':r.submitted?'approved':'rejected';
+                const border=state==='approved'?'#bfe3c6':state==='pending'?'#ead89a':'#f3c5c0';
+                const bg=state==='approved'?'#f0faf2':state==='pending'?'#fff9e8':'#fff3f1';
+                const color=state==='approved'?'#2c7a3d':state==='pending'?'#9a6b16':'#c94236';
+                const mark=state==='approved'?'○':state==='pending'?'△':'×';
+                return `<span title="${r.date}" style="display:inline-flex;align-items:center;gap:4px;padding:4px 7px;border-radius:999px;border:1px solid ${border};background:${bg};color:${color};font-size:12px;font-weight:700;white-space:nowrap;">${mark} ${label}</span>`;
               }).join('')}
             </div>` : `<div class="empty" style="padding:12px 0 0;">현재 평가할 수 있는 숙제 날짜가 없어요.</div>`}
             ${warningCount ? `<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--line);font-size:12px;line-height:1.8;"><b style="color:var(--red);">예상 경고 구간</b><br>${x.episodes.map((ep,i)=>`${i+1}회: ${ep.missedDates.map(fmtDate).join(' → ')}`).join('<br>')}</div>` : ''}
@@ -1472,11 +1531,15 @@ function buildDailyReportText(s, date, r, dayGroup){
   const extraStepsTxt = (r.extraSteps&&r.extraSteps.length) ? ' + '+r.extraSteps.map(id=>stepShortLabel(id)).filter(Boolean).join(', ') : '';
   // 숙제완성도는 수업기록의 수기 등급이 아니라 실제 submissions 인증 기록으로 계산.
   const hwDates = homeworkDateRangeDates(dayGroup, date);
-  const hwSubmitted = hwDates.filter(d=>!!db.submissions[s.id+'_'+d]);
-  const hwMissing = hwDates.filter(d=>!db.submissions[s.id+'_'+d]);
+  const hwApproved = hwDates.filter(d=>submissionIsApproved(db.submissions[s.id+'_'+d],d));
+  const hwPending = hwDates.filter(d=>submissionIsPending(db.submissions[s.id+'_'+d],d));
+  const hwMissing = hwDates.filter(d=>{
+    const sub=db.submissions[s.id+'_'+d];
+    return !sub || submissionIsRejected(sub,d);
+  });
   const hwCompletionText = hwDates.length
-    ? `${hwSubmitted.length}/${hwDates.length} 인증${hwMissing.length ? ` · 미인증 ${hwMissing.map(d=>d.slice(5).replace('-','/')).join(', ')}` : ' · 전체 인증'}`
-    : '확인할 인증 날짜 없음';
+    ? `${hwApproved.length}/${hwDates.length} 인정${hwPending.length ? ` · 검토대기 ${hwPending.map(d=>d.slice(5).replace('-','/')).join(', ')}` : ''}${hwMissing.length ? ` · 미인증/불합격 ${hwMissing.map(d=>d.slice(5).replace('-','/')).join(', ')}` : (hwApproved.length===hwDates.length ? ' · 전체 인정' : '')}`
+    : '확인할 숙제 날짜 없음';
 
   const hwLevel = r.homeworkCompletionLevel || suggestedHomeworkLevel(s.id, dayGroup, date);
   const hwTxt = hwLevel ? `${hwLevel} — ${homeworkLevelPhrase(hwLevel)}` : '-';
@@ -1623,7 +1686,7 @@ function suggestedHomeworkLevel(stuId, dayGroup, date){
   const hwDateRange = homeworkDateRangeDates(dayGroup, date);
   const totalRangeDays = hwDateRange.length;
   if(!totalRangeDays) return '';
-  const submittedCount = hwDateRange.filter(d=>db.submissions[stuId+'_'+d]).length;
+  const submittedCount = hwDateRange.filter(d=>submissionIsApproved(db.submissions[stuId+'_'+d],d)).length;
   const ratio = submittedCount/totalRangeDays;
   return ratio>=0.8?'상':ratio>=0.5?'중':'하';
 }
@@ -1857,10 +1920,11 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames){
   const dayChecklist = hwDateRange.map(d=>{
     const daySub = db.submissions[s.id+'_'+d];
     const dowKey = DAY_KEYS[new Date(d+'T00:00:00').getDay()];
-    const cls2 = daySub ? (daySub.status==='확인'?'green':'yellow') : 'red';
-    return `<span class="badge ${cls2}" style="margin:2px 3px 0 0;font-size:9px;padding:2px 6px;">${DAY_LABEL[dowKey]} ${daySub?'✓':'✗'}</span>`;
+    const st = submissionReviewState(daySub,d);
+    const cls2 = st==='approved' ? 'green' : st==='pending' ? 'yellow' : 'red';
+    return `<span class="badge ${cls2}" title="${homeworkReviewLabel(daySub,d)}" style="margin:2px 3px 0 0;font-size:9px;padding:2px 6px;">${DAY_LABEL[dowKey]} ${homeworkReviewMark(daySub,d)}</span>`;
   }).join('');
-  const submittedCount = hwDateRange.filter(d=>db.submissions[s.id+'_'+d]).length;
+  const submittedCount = hwDateRange.filter(d=>submissionIsApproved(db.submissions[s.id+'_'+d],d)).length;
   const totalRangeDays = hwDateRange.length;
   const hwLevel = r.homeworkCompletionLevel || suggestedHomeworkLevel(s.id, cls.dayGroup, date);
   const status = studentStatus(s.id);
@@ -2388,7 +2452,7 @@ function renderStudents(){
       <tr><th>이름</th><th>학년</th><th>코드</th><th>소속반</th><th>최근진도</th><th>상태</th><th>경고</th><th>미확인 인증</th><th></th></tr>
       ${list.map(s=>{
         const cls=classById(s.classId);
-        const pending = Object.entries(db.submissions).filter(([k,v])=>k.startsWith(s.id+'_') && v.status==='대기').length;
+        const pending = Object.entries(db.submissions).filter(([k,v])=>k.startsWith(s.id+'_') && submissionIsPending(v)).length;
         const lastScoreRow = studentDailyScores(s.id).slice(-1)[0];
         const withdrawn = s.status==='withdrawn';
         return `<tr style="${withdrawn?'opacity:.55;':''}">
@@ -2609,14 +2673,20 @@ function renderHomeworkReview(){
     const studentId = key.slice(0, idx);
     const date = key.slice(idx+1);
     return {key, studentId, date, ...sub};
-  }).filter(r=> filter==='all' ? true : r.status==='대기')
+  }).filter(r=>{
+    const st=submissionReviewState(r);
+    if(filter==='all') return true;
+    if(filter==='rejected') return st==='rejected';
+    return st==='pending';
+  })
     .sort((a,b)=> b.date.localeCompare(a.date) || (studentById(b.studentId)?.name||'').localeCompare(studentById(a.studentId)?.name||''));
 
   return `
   <h1 class="page-title">숙제 확인</h1>
-  <p class="page-sub">모든 학생의 숙제 인증을 한 화면에서 모아보고 확인 처리할 수 있어요.</p>
+  <p class="page-sub">학생이 제출한 숙제를 확인한 뒤 인정 또는 불합격 처리합니다. 검토대기는 아직 숙제 인정으로 집계되지 않습니다.</p><div style="margin:10px 0 14px;padding:10px 12px;border:1px solid #e5dcc5;border-radius:10px;background:#fffaf0;font-size:12px;">🔒 <b>과거 기록 보호</b> · 2026년 8월 31일까지 숙제는 조회만 가능합니다. 승인·불합격은 2026년 9월 1일 제출분부터 적용됩니다.</div>
   <div class="tabs2">
-    <button class="${filter==='pending'?'active':''}" onclick="currentSubState.hwFilter='pending';render();">확인대기</button>
+    <button class="${filter==='pending'?'active':''}" onclick="currentSubState.hwFilter='pending';render();">검토대기</button>
+    <button class="${filter==='rejected'?'active':''}" onclick="currentSubState.hwFilter='rejected';render();">불합격</button>
     <button class="${filter==='all'?'active':''}" onclick="currentSubState.hwFilter='all';render();">전체</button>
   </div>
   ${rows.length? rows.map(r=>{
@@ -2626,8 +2696,15 @@ function renderHomeworkReview(){
       <div class="row between">
         <div><b>${s? s.name : '(삭제된 학생)'}</b> <span style="color:#9c9880;font-size:12px;">${cls? cls.name+' · ':''}${fmtDate(r.date)}</span></div>
         <div class="row">
-          <span class="badge ${r.status==='확인'?'green':'yellow'}">${r.status==='확인'?'확인 완료':'확인 대기'}</span>
-          ${r.status!=='확인' ? `<button class="btn sm gold" onclick="confirmSubmission('${r.studentId}','${r.date}')">확인 처리</button>` : ''}
+          ${(()=>{
+            const st=submissionReviewState(r);
+            const badge=st==='approved'?'green':st==='pending'?'yellow':'red';
+            return `<span class="badge ${badge}">${homeworkReviewLabel(r)}</span>`;
+          })()}
+          ${isLegacyHomeworkDate(r.date)
+            ? `<span class="badge">🔒 과거 기록 · 조회 전용</span>`
+            : `${submissionReviewState(r,r.date)!=='approved' ? `<button class="btn sm gold" onclick="confirmSubmission('${r.studentId}','${r.date}',this)">✓ 숙제 인정</button>` : ''}
+               ${submissionReviewState(r,r.date)!=='rejected' ? `<button class="btn sm danger" onclick="rejectSubmission('${r.studentId}','${r.date}')">✕ 불합격</button>` : ''}`}
           ${s ? `<button class="btn sm outline" onclick="goto('students');currentSubState.studentDetail='${r.studentId}';render();">학생 페이지</button>` : ''}
         </div>
       </div>
@@ -2639,9 +2716,10 @@ function renderHomeworkReview(){
       <div class="thumbs">${(r.practicePhotos||[]).map((p,i)=>`<img src="${p}" onclick="openLightboxSet('sub','${r.key}','practicePhotos',${i})">`).join('') || '-'}</div>
       ${(r.practicePhotos||[]).length>1 ? `<button class="btn sm outline" style="margin-top:6px;" onclick="downloadAllPhotos(db.submissions['${r.key}'].practicePhotos, '${s?s.name:'student'}_${r.date}_풀이연습장', this)">📥 풀이연습장 사진 모두 받기</button>` : ''}
       ${(r.errorTypes||[]).length? `<div style="margin-top:8px;font-size:12px;color:#8a8674;">오답유형: ${r.errorTypes.map(e=>`${e.type} ${e.percent}%`).join(', ')}</div>` : ''}
+      ${submissionIsRejected(r) ? `<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#fff3f1;color:#a83b32;font-size:12px;"><b>불합격 사유</b>: ${r.reviewReason||'사유 미입력'}</div>` : ''}
       ${renderTeacherCommentBox(r.studentId, r.date, r.teacherComment)}
     </div>`;
-  }).join('') : `<div class="empty"><div class="big">📸</div>${filter==='pending'?'확인 대기 중인 숙제 인증이 없어요.':'등록된 숙제 인증이 없어요.'}</div>`}
+  }).join('') : `<div class="empty"><div class="big">📸</div>${filter==='pending'?'검토 대기 중인 숙제 인증이 없어요.':filter==='rejected'?'불합격 처리된 숙제가 없어요.':'등록된 숙제 인증이 없어요.'}</div>`}
   `;
 }
 
@@ -2655,10 +2733,22 @@ function renderSubmissionCard(stuId, directorView, previewAsStudent){
       <div style="font-size:12px;font-weight:700;color:#9a6b16;margin-bottom:5px;">✏️ 선생님 코멘트</div>
       <div style="font-size:14px;line-height:1.65;color:var(--ink);font-weight:600;">${sub.teacherComment}</div>
     </div>` : '';
-  const statusBanner = (asStudent && sub) ? `<div style="background:#e8f5ea;border:1px solid #bfe3c6;color:#2c7a3d;padding:10px 14px;border-radius:10px;margin-bottom:12px;font-size:13px;font-weight:600;">
-      ✅ 오늘 숙제 인증이 잘 저장됐어요!${sub.submittedAt? ' ('+new Date(sub.submittedAt).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})+' 제출)' : ''}
-      <div style="font-weight:500;color:#4a4636;margin-top:2px;">${sub.status==='확인'? '선생님 확인까지 완료됐어요.' : '아직 선생님 확인 전이지만, 제출은 정상적으로 됐어요.'}</div>
-    </div>` : '';
+  const statusBanner = (asStudent && sub) ? (()=>{
+    const st=submissionReviewState(sub);
+    const bg=st==='approved'?'#e8f5ea':st==='pending'?'#fff9e8':'#fff3f1';
+    const border=st==='approved'?'#bfe3c6':st==='pending'?'#ead89a':'#f3c5c0';
+    const color=st==='approved'?'#2c7a3d':st==='pending'?'#9a6b16':'#a83b32';
+    const icon=st==='approved'?'✅':st==='pending'?'⏳':'❌';
+    const msg=st==='approved'
+      ? '선생님 확인 완료 — 숙제로 인정됐어요.'
+      : st==='pending'
+        ? '선생님 검토 대기 중이에요. 확인 전에는 숙제 인정으로 집계되지 않아요.'
+        : `숙제 불합격 처리됐어요.${sub.reviewReason? ' 사유: '+sub.reviewReason : ''} 수정해서 다시 제출하면 검토대기로 바뀝니다.`;
+    return `<div style="background:${bg};border:1px solid ${border};color:${color};padding:10px 14px;border-radius:10px;margin-bottom:12px;font-size:13px;font-weight:600;">
+      ${icon} 숙제 인증 제출${sub.submittedAt? ' ('+new Date(sub.submittedAt).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})+' 제출)' : ''}
+      <div style="font-weight:500;color:#4a4636;margin-top:2px;">${msg}</div>
+    </div>`;
+  })() : '';
   return `
   <div class="card">
     <div class="row between"><h3 style="margin:0;">📸 숙제 인증${previewAsStudent?' <span style="font-size:11px;color:var(--gold);">(미리보기)</span>':''}</h3><input type="date" value="${date}" onchange="currentSubState.subDate=this.value;render();"></div>
@@ -2670,8 +2760,13 @@ function renderSubmissionCard(stuId, directorView, previewAsStudent){
 function renderSubmissionReadonly(sub,stuId,date){
   return `
   <div class="row between">
-    <div>실측 시간: <b>${sub.time||'-'}</b> · 상태: ${sub.status==='확인'?'<span class="badge green">확인 완료</span>':'<span class="badge yellow">확인 대기</span>'}</div>
-    ${sub.status!=='확인' ? `<button class="btn sm gold" onclick="confirmSubmission('${stuId}','${date}')">확인 처리</button>` : ''}
+    <div>실측 시간: <b>${sub.time||'-'}</b> · 상태: <span class="badge ${submissionIsApproved(sub)?'green':submissionIsPending(sub)?'yellow':'red'}">${homeworkReviewLabel(sub)}</span></div>
+    <div class="row">
+      ${isLegacyHomeworkDate(date)
+        ? `<span class="badge">🔒 8/31까지 기존 기록 · 조회 전용</span>`
+        : `${!submissionIsApproved(sub,date) ? `<button class="btn sm gold" onclick="confirmSubmission('${stuId}','${date}',this)">✓ 숙제 인정</button>` : ''}
+           ${!submissionIsRejected(sub,date) ? `<button class="btn sm danger" onclick="rejectSubmission('${stuId}','${date}')">✕ 불합격</button>` : ''}`}
+    </div>
   </div>
   <div style="margin-top:8px;font-size:12px;color:#8a8674;">숙제 사진</div>
   <div class="thumbs">${(sub.hwPhotos||[]).map((p,i)=>`<img src="${p}" onclick="openLightboxSet('sub','${stuId}_${date}','hwPhotos',${i})">`).join('') || '-'}</div>
@@ -2713,7 +2808,35 @@ async function quickSetTeacherComment(stuId,date,text,btn){
     setTimeout(()=>{ btn.textContent = original; btn.disabled = false; }, 1500);
   }
 }
-async function confirmSubmission(stuId,date){ await fsUpdate('submissions', stuId+'_'+date, {status:'확인'}); }
+async function confirmSubmission(stuId,date,btn){
+  if(isLegacyHomeworkDate(date)){ alert('8/31까지의 과거 숙제는 조회만 가능합니다.'); return; }
+  if(btn){ btn.disabled=true; }
+  const ok = await fsUpdate('submissions', stuId+'_'+date, {
+    status:'확인',
+    reviewReason:'',
+    reviewedAt:new Date().toISOString()
+  });
+  if(!ok && btn){ btn.disabled=false; }
+}
+function rejectSubmission(stuId,date){
+  if(isLegacyHomeworkDate(date)){ alert('8/31까지의 과거 숙제는 조회만 가능합니다.'); return; }
+  const s=studentById(stuId);
+  const name=s?s.name:'학생';
+  const reason=prompt(`${name} 숙제를 불합격 처리합니다.\n사유를 짧게 적어주세요.`, '숙제 내용 미완료');
+  if(reason===null) return;
+  const trimmed=String(reason||'').trim();
+  openConfirm(
+    '이 숙제를 불합격 처리할까요?',
+    '불합격 숙제는 숙제 인정에서 제외됩니다. 학생이 수정해 다시 제출하면 검토대기 상태로 돌아옵니다.',
+    async ()=>{
+      await fsUpdate('submissions', stuId+'_'+date, {
+        status:'불합격',
+        reviewReason:trimmed,
+        reviewedAt:new Date().toISOString()
+      });
+    }
+  );
+}
 const ERROR_TYPES = ['개념부족','계산실수','문제해석','유형미숙','성실부족'];
 function draftStorageKey(stuId,date){ return `mnm_draft_${stuId}_${date}`; }
 function saveDraftLocal(stuId,date){
@@ -2885,7 +3008,7 @@ function setErrorPercent(type,val){
 async function submitHomework(stuId,date){
   const draft = currentSubState._draftSub;
   const key = stuId+'_'+date;
-  const payload = {...draft, status:'대기', submittedAt: new Date().toISOString()};
+  const payload = {...draft, status:'대기', reviewReason:'', reviewedAt:null, submittedAt: new Date().toISOString()};
   const sizeKB = new Blob([JSON.stringify(payload)]).size/1024;
   if(sizeKB > 850){
     alert('사진 용량이 너무 커요. 사진 개수를 줄이거나 다시 찍어서 올려주세요.');
@@ -3135,7 +3258,8 @@ function finalAuditRowForStudent(stu){
 
   const assessRows = warningAssessmentRowsForStudent(sid)||[];
   const submitted = assessRows.filter(r=>r.submitted).length;
-  const missed = assessRows.filter(r=>!r.submitted).length;
+  const pendingHomework = assessRows.filter(r=>r.pending).length;
+  const missed = assessRows.filter(r=>!r.submitted && !r.pending).length;
 
   const homeworkWarnings = (stu.warnings||[]).filter(w=>w && w.type==='homework3days');
   const pendingQuestions = questionRows.filter(q=>!(q.answerText || q.answerImage || q.teacherComment)).length;
@@ -3156,6 +3280,7 @@ function finalAuditRowForStudent(stu){
     pendingQuestions,
     homeworkAssess:assessRows.length,
     homeworkSubmitted:submitted,
+    homeworkPending:pendingHomework,
     homeworkMissed:missed,
     warnings:homeworkWarnings.length,
     issues
@@ -3329,8 +3454,8 @@ function parentDailyGuidanceText(stuId,date){
   const range = cls ? homeworkDateRangeDates(cls.dayGroup, date) : [];
   const authRows = range.map(d=>({date:d, sub:db.submissions[stuId+'_'+d]}));
   const authTxt = authRows.length
-    ? authRows.map(x=>`${x.date.slice(5).replace('-','/')} ${x.sub?'○':'×'}`).join(' · ')
-    : '확인할 숙제 인증 날짜 없음';
+    ? authRows.map(x=>`${x.date.slice(5).replace('-','/')} ${homeworkReviewMark(x.sub,x.date)}(${homeworkReviewLabel(x.sub,x.date)})`).join(' · ')
+    : '확인할 숙제 날짜 없음';
 
   const latestComment = authRows.slice().reverse().find(x=>x.sub && x.sub.teacherComment);
   const teacherHwComment = latestComment ? latestComment.sub.teacherComment : '-';
@@ -3388,8 +3513,8 @@ function dailyTrafficForStudentDate(stuId, date){
   const cls = classById(s.classId);
   const dayGroup = cls && cls.dayGroup;
   const hwDates = dayGroup ? homeworkDateRangeDates(dayGroup, date) : [];
-  const hwMissingCount = hwDates.filter(d=>!db.submissions[stuId+'_'+d]).length;
-  const homeworkTraffic = hwMissingCount > 0 ? 'yellow' : 'green';
+  const hwNotApprovedCount = hwDates.filter(d=>!submissionIsApproved(db.submissions[stuId+'_'+d],d)).length;
+  const homeworkTraffic = hwNotApprovedCount > 0 ? 'yellow' : 'green';
 
   // 4. 일일테스트 + 숙제 중 더 강한 상태를 최종 신호등으로 사용.
   const rank = {green:0, yellow:1, red:2};
@@ -3451,9 +3576,11 @@ function buildMonthlyReportPlainForMonth(stuId, traffic, comment, ym){
 
   const assessRows = (warningAssessmentRowsForStudent(stuId)||[]).filter(r=>r.date.startsWith(ym));
   const submittedCount = assessRows.filter(r=>r.submitted).length;
-  const missedCount = assessRows.filter(r=>!r.submitted).length;
+  const pendingCount = assessRows.filter(r=>r.pending).length;
+  const missedCount = assessRows.filter(r=>!r.submitted && !r.pending).length;
   const totalAssess = assessRows.length;
-  const submitRate = totalAssess ? Math.round(submittedCount/totalAssess*100) : null;
+  const decidedCount = submittedCount + missedCount;
+  const submitRate = decidedCount ? Math.round(submittedCount/decidedCount*100) : null;
 
   const verified = (s.warnings||[]).filter(w=>w && w.type==='homework3days');
   const monthWarnings = verified.filter(w=>String(w.date||'').startsWith(ym));
@@ -3486,7 +3613,7 @@ ${kmmRows.length ? kmmRows.map(k=>`· ${String(k.date||'').slice(5).replace('-',
 ${topErrors.length ? topErrors.map(([name,c])=>`· ${name}: ${c}회`).join('\n') : '· 기록 없음'}
 
 5. 숙제 현황
-· 판정 대상 ${totalAssess}회 / 인증 ${submittedCount}회 / 미인증 ${missedCount}회${submitRate!==null ? ` / 이행률 ${submitRate}%` : ''}
+· 판정 대상 ${totalAssess}회 / 인정 ${submittedCount}회 / 검토대기 ${pendingCount}회 / 미인증·불합격 ${missedCount}회${submitRate!==null ? ` / 확정분 이행률 ${submitRate}%` : ''}
 · 이번 달 경고 ${monthWarnings.length}회 / 누적 경고 ${verified.length}회
 
 6. 다음 달 학습 방향
@@ -4285,7 +4412,7 @@ function monthlyHomeworkRate(stuId, yearMonth){
     if(!cls) return;
     const range = homeworkDateRangeDates(cls.dayGroup, l.date);
     totalExpected += range.length;
-    totalSubmitted += range.filter(d=>db.submissions[stuId+'_'+d]).length;
+    totalSubmitted += range.filter(d=>submissionIsApproved(db.submissions[stuId+'_'+d],d)).length;
   });
   if(!totalExpected) return null;
   return Math.round(totalSubmitted/totalExpected*100);
@@ -4644,7 +4771,7 @@ function renderStudentHomeworkSummary(stuId){
   return `<div class="card">
     <div class="row between">
       <h3 style="margin:0;">📸 숙제 현황</h3>
-      ${latest ? `<span class="badge ${latest.sub.status==='확인'?'green':'yellow'}">${latest.sub.status==='확인'?'선생님 확인 완료':'제출 완료 · 확인 대기'}</span>` : '<span class="badge gray">최근 인증 없음</span>'}
+      ${latest ? `<span class="badge ${submissionIsApproved(latest.sub)?'green':submissionIsPending(latest.sub)?'yellow':'red'}">${submissionIsApproved(latest.sub)?'숙제 인정':submissionIsPending(latest.sub)?'제출 완료 · 검토대기':'숙제 불합격'}</span>` : '<span class="badge gray">최근 인증 없음</span>'}
     </div>
     ${latest ? `<div style="margin-top:10px;font-size:13px;">최근 인증: <b>${fmtDate(latest.date)}</b>${latest.sub.submittedAt?` · ${new Date(latest.sub.submittedAt).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}`:''}</div>` : `<div class="empty" style="padding:16px 0 8px;">아직 등록된 숙제 인증이 없어요.</div>`}
 
@@ -4655,7 +4782,7 @@ function renderStudentHomeworkSummary(stuId){
     </div>
 
     ${recent.length ? `<div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap;">
-      ${recent.map(r=>`<span style="font-size:12px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;">${fmtDate(r.date)} ${r.sub.status==='확인'?'✓':'○'}</span>`).join('')}
+      ${recent.map(r=>`<span style="font-size:12px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;">${fmtDate(r.date)} ${homeworkReviewMark(r.sub)} ${homeworkReviewLabel(r.sub)}</span>`).join('')}
     </div>` : ''}
   </div>`;
 }
@@ -4757,7 +4884,7 @@ function renderStudentProgressPage(){
     <div class="card" style="overflow-x:auto;">
       <div class="row between"><h3 style="margin:0;">5. 숙제현황 및 누적경고횟수</h3>${warningCountBadge(warningCount)}</div>
       <div style="margin-top:8px;font-size:12px;color:#8a8674;">현재 표시되는 누적 경고는 기존 검증 경고만 사용합니다.</div>
-      ${homeworkRows.length? `<table style="margin-top:12px;"><tr><th>날짜</th><th>숙제 인증</th><th>선생님 확인</th><th>코멘트</th></tr>${homeworkRows.slice(0,30).map(r=>`<tr><td>${fmtDate(r.date)}</td><td><span class="badge green">○ 인증</span></td><td>${r.sub.status==='확인'?'<span class="badge green">확인</span>':'<span class="badge yellow">확인 대기</span>'}</td><td>${r.sub.teacherComment||'-'}</td></tr>`).join('')}</table>`:`<div class="empty">등록된 숙제 인증 기록이 없어요.</div>`}
+      ${homeworkRows.length? `<table style="margin-top:12px;"><tr><th>날짜</th><th>제출</th><th>숙제 판정</th><th>코멘트</th></tr>${homeworkRows.slice(0,30).map(r=>`<tr><td>${fmtDate(r.date)}</td><td><span class="badge">제출됨</span></td><td><span class="badge ${submissionIsApproved(r.sub)?'green':submissionIsPending(r.sub)?'yellow':'red'}">${homeworkReviewMark(r.sub)} ${homeworkReviewLabel(r.sub)}</span>${submissionIsRejected(r.sub)&&r.sub.reviewReason?`<br><span style="font-size:11px;color:#a83b32;">${r.sub.reviewReason}</span>`:''}</td><td>${r.sub.teacherComment||'-'}</td></tr>`).join('')}</table>`:`<div class="empty">등록된 숙제 인증 기록이 없어요.</div>`}
     </div>`;
 }
 
