@@ -584,22 +584,31 @@ function homeworkEffectiveState(sub,date,nowValue){
     return submissionReviewState(sub,date);
   }
   if(!sub) return homeworkDeadlinePassed(date,nowValue) ? 'missing' : 'open';
-  if(!homeworkWasSubmittedOnTime(sub,date)) return 'late';
+
+  // 선생님이 '인정'한 숙제는 제출시각 판정과 관계없이 최종 인정한다.
+  // 기한 정보는 관리 참고값일 뿐, 교사 판정을 뒤집지 않는다.
+  if(submissionIsApproved(sub,date)) return 'approved';
+
   if(submissionIsFinalRejected(sub)) return 'finalRejected';
+  if(!homeworkWasSubmittedOnTime(sub,date)) return 'late';
   return submissionReviewState(sub,date);
 }
-
 function homeworkCountsAsCompleted(sub,date){
   if(!sub) return false;
   if(isLegacyHomeworkDate(date)) return true;
-  return homeworkWasSubmittedOnTime(sub,date) && submissionIsApproved(sub,date);
-}
 
+  // 최종 인정 여부는 선생님의 판정이 우선한다.
+  return submissionIsApproved(sub,date);
+}
 function homeworkCountsAsMissed(sub,date,nowValue){
   if(isLegacyHomeworkDate(date)) return !sub;
   if(!sub) return homeworkDeadlinePassed(date,nowValue);
-  if(!homeworkWasSubmittedOnTime(sub,date)) return true;
+
+  // 선생님이 인정한 기록은 어떤 경우에도 미이행/경고 대상으로 되돌리지 않는다.
+  if(submissionIsApproved(sub,date)) return false;
+
   if(submissionIsFinalRejected(sub)) return true;
+  if(!homeworkWasSubmittedOnTime(sub,date)) return true;
   return false;
 }
 function submissionReviewState(sub,date){
@@ -616,6 +625,23 @@ function submissionReviewState(sub,date){
 function submissionIsApproved(sub,date){ return submissionReviewState(sub,date)==='approved'; }
 function submissionIsPending(sub,date){ return submissionReviewState(sub,date)==='pending'; }
 function submissionIsRejected(sub,date){ return submissionReviewState(sub,date)==='rejected'; }
+
+function homeworkDeadlineAnomalyRows(){
+  return Object.entries(db.submissions||{}).map(([key,sub])=>{
+    const idx=key.lastIndexOf('_');
+    const studentId=key.slice(0,idx);
+    const date=key.slice(idx+1);
+    const first=homeworkFirstSubmittedAt(sub);
+    return {
+      key, studentId, date,
+      student:studentById(studentId),
+      approved:submissionIsApproved(sub,date),
+      onTime:homeworkWasSubmittedOnTime(sub,date),
+      firstSubmittedAt:first ? first.toISOString() : null
+    };
+  }).filter(x=>x.approved && !x.onTime && !isLegacyHomeworkDate(x.date));
+}
+
 function homeworkReviewMark(sub,date){
   const eff=homeworkEffectiveState(sub,date);
   return eff==='approved' ? '○' : (eff==='pending'||eff==='needsRevision') ? '△' : '×';
@@ -3036,7 +3062,7 @@ function renderHomeworkReview(){
       <div style="margin-top:8px;font-size:12px;color:#8a8674;">
         실측 시간: <b>${r.time||'-'}</b> · 검사 ${homeworkReviewCount(r)}/${HOMEWORK_MAX_REVIEWS}
         ${!submissionIsApproved(r,r.date)&&!submissionIsFinalRejected(r)?` · 남은 기회 <b>${homeworkReviewsRemaining(r)}회</b>`:''}
-        ${homeworkEffectiveState(r,r.date)==='late'?` · <span style="color:#a83b32;"><b>기한 미준수(미이행)</b></span>`:''}
+        ${(!submissionIsApproved(r,r.date) && homeworkEffectiveState(r,r.date)==='late')?` · <span style="color:#a83b32;"><b>기한 미준수(미이행)</b></span>`:''}
       </div>
       <div style="margin-top:6px;font-size:12px;color:#8a8674;">숙제 사진</div>
       <div class="thumbs">${(r.hwPhotos||[]).map((p,i)=>`<img src="${p}" onclick="openLightboxSet('sub','${r.key}','hwPhotos',${i})">`).join('') || '-'}</div>
