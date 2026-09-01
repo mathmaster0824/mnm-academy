@@ -264,7 +264,7 @@ let listenersReady = { settings:false, students:false };
 let db = {
   settings:{ adminPassword:'0000', isDefaultPassword:true },
   classes:[], students:[], courses:[], videos:[],
-  classRecords:{}, weeklyPlans:{}, homeworkPolicies:{}, fridaySupp:{}, submissions:{}, practiceProgress:{},
+  classRecords:{}, weeklyPlans:{}, fridaySupp:{}, submissions:{}, practiceProgress:{},
   questions:[], feedbacks:[], kmm:[], schoolExams:[], schoolScores:{}, timerState:{}, weekendSettings:{enabled:false}, weekendClasses:[], weekendSubmissions:{}
 };
 
@@ -402,9 +402,6 @@ function attachListeners(){
     fsdb.collection('weeklyPlans').onSnapshot(snap=>{
       const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.weeklyPlans=m; render();
     }),
-    fsdb.collection('homeworkPolicies').onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.homeworkPolicies=m; render(); maybeRunAutoWarnings();
-    }),
     fsdb.collection('fridaySupp').onSnapshot(snap=>{
       const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.fridaySupp=m; render();
     }),
@@ -526,34 +523,33 @@ function homeworkReviewCount(sub){
 function homeworkReviewsRemaining(sub){
   return Math.max(0, HOMEWORK_MAX_REVIEWS - homeworkReviewCount(sub));
 }
+
 function homeworkDeadlineAt(date){
-  if(!date) return null;
-  const d = new Date(date+'T00:00:00');
-  d.setDate(d.getDate()+1);
-  d.setHours(6,0,0,0);
-  return d;
+  const next = addDaysISO(date,1);
+  return new Date(`${next}T06:00:00`);
 }
+
 function homeworkFirstSubmittedAt(sub){
   if(!sub) return null;
-  const raw = sub.firstSubmittedAt || sub.submittedAt;
+  const raw = sub.firstSubmittedAt || sub.submittedAt || null;
   if(!raw) return null;
+  if(raw && typeof raw.toDate==='function') return raw.toDate();
+  if(raw && typeof raw.seconds==='number') return new Date(raw.seconds*1000);
   const d = new Date(raw);
-  return Number.isNaN(d.getTime()) ? null : d;
+  return isNaN(d.getTime()) ? null : d;
 }
+
 function homeworkWasSubmittedOnTime(sub,date){
-  if(isLegacyHomeworkDate(date)) return !!sub;
   if(!sub) return false;
+  if(isLegacyHomeworkDate(date)) return true;
   const first = homeworkFirstSubmittedAt(sub);
-  const deadline = homeworkDeadlineAt(date);
-  if(!first || !deadline) return false;
-  return first.getTime() <= deadline.getTime();
+  if(!first) return false;
+  return first.getTime() <= homeworkDeadlineAt(date).getTime();
 }
-function homeworkDeadlinePassed(date, nowValue){
-  if(isLegacyHomeworkDate(date)) return false;
-  const deadline = homeworkDeadlineAt(date);
-  if(!deadline) return false;
-  const now = nowValue instanceof Date ? nowValue : new Date();
-  return now.getTime() > deadline.getTime();
+
+function homeworkDeadlinePassed(date,nowValue){
+  const now = nowValue ? new Date(nowValue) : new Date();
+  return now.getTime() > homeworkDeadlineAt(date).getTime();
 }
 function submissionIsFinalRejected(sub){
   if(!sub) return false;
@@ -567,26 +563,31 @@ function submissionIsFinalRejected(sub){
   - 1·2차 불합격은 재검사 가능 상태, 3차 불합격만 최종 미이행.
   - 기한을 넘겨 최초 제출한 숙제는 이후 인정되더라도 'late'로 남아 미이행 집계.
 */
+
 function homeworkEffectiveState(sub,date,nowValue){
-  if(isLegacyHomeworkDate(date)) return sub ? 'approved' : 'missing';
-  if(!sub) return homeworkDeadlinePassed(date,nowValue) ? 'missed' : 'missing';
-
-  const reviewState = submissionReviewState(sub,date);
+  if(isLegacyHomeworkDate(date)){
+    if(!sub) return 'missing';
+    return submissionReviewState(sub,date);
+  }
+  if(!sub) return homeworkDeadlinePassed(date,nowValue) ? 'missing' : 'open';
   if(!homeworkWasSubmittedOnTime(sub,date)) return 'late';
-  if(submissionIsFinalRejected(sub)) return 'missed';
-  if(reviewState==='approved') return 'approved';
-  if(reviewState==='pending') return 'pending';
-  if(reviewState==='rejected') return 'needsRevision';
-  return 'pending';
-}
-function homeworkCountsAsCompleted(sub,date,nowValue){
-  return homeworkEffectiveState(sub,date,nowValue)==='approved';
-}
-function homeworkCountsAsMissed(sub,date,nowValue){
-  const st = homeworkEffectiveState(sub,date,nowValue);
-  return st==='missed' || st==='late';
+  if(submissionIsFinalRejected(sub)) return 'finalRejected';
+  return submissionReviewState(sub,date);
 }
 
+function homeworkCountsAsCompleted(sub,date){
+  if(!sub) return false;
+  if(isLegacyHomeworkDate(date)) return true;
+  return homeworkWasSubmittedOnTime(sub,date) && submissionIsApproved(sub,date);
+}
+
+function homeworkCountsAsMissed(sub,date,nowValue){
+  if(isLegacyHomeworkDate(date)) return !sub;
+  if(!sub) return homeworkDeadlinePassed(date,nowValue);
+  if(!homeworkWasSubmittedOnTime(sub,date)) return true;
+  if(submissionIsFinalRejected(sub)) return true;
+  return false;
+}
 function submissionReviewState(sub,date){
   if(!sub) return 'missing';
   const recordDate=date || sub.date || '';
@@ -617,7 +618,7 @@ function homeworkReviewLabel(sub,date){
 
 function lessonHadHomeworkSubmission(stuId, clsId, date){
   const cls = classById(clsId);
-  const range = cls ? homeworkRequiredDates(stuId, cls.dayGroup, date) : [];
+  const range = cls ? homeworkDateRangeDates(cls.dayGroup, date) : [];
   if(!range.length) return submissionIsApproved(db.submissions[stuId+'_'+date]);
   return range.some(d => homeworkCountsAsCompleted(db.submissions[stuId+'_'+d],d));
 }
@@ -695,7 +696,6 @@ function warningAssessmentRowsForStudent(stuId){
   const byDate=new Map();
   for(const l of lessons){
     for(const d of homeworkDateRangeDates(l.dayGroup,l.date)){
-      if(!homeworkPolicyNeedsAuth(stuId,d)) continue;
       // 마감 전 날짜는 미제출로 확정하지 않는다.
       // 이 기준본(v1)은 v49 이후의 deadline helper가 없으므로 여기서 독립적으로 오전 6시 마감을 계산한다.
       const deadline = new Date(d+'T00:00:00');
@@ -941,54 +941,6 @@ async function handleMultiPhotoInput(inputEl, targetArrPush, maxW=480, quality=0
 }
 
 /* ---------------- DOMAIN LOGIC ---------------- */
-
-function homeworkPolicyForDate(stuId,date){
-  return (db.homeworkPolicies||{})[stuId+'_'+date] || null;
-}
-function homeworkPolicyMode(stuId,date){
-  const p=homeworkPolicyForDate(stuId,date);
-  const m=String(p&&p.mode||'').trim();
-  return (m==='none'||m==='academyDone') ? m : 'homework';
-}
-function homeworkPolicyNeedsAuth(stuId,date){
-  return homeworkPolicyMode(stuId,date)==='homework';
-}
-function homeworkPolicyDisplay(stuId,date){
-  const p=homeworkPolicyForDate(stuId,date);
-  const m=homeworkPolicyMode(stuId,date);
-  if(m==='none') return p&&p.note ? `오늘은 숙제가 없습니다. · ${p.note}` : '오늘은 숙제가 없습니다.';
-  if(m==='academyDone') return p&&p.note ? `오늘 숙제는 학원에서 이미 완료했습니다. · ${p.note}` : '오늘 숙제는 학원에서 이미 완료했습니다.';
-  return '';
-}
-function homeworkRequiredDates(stuId,dayGroup,lessonDate){
-  return homeworkDateRangeDates(dayGroup,lessonDate).filter(d=>homeworkPolicyNeedsAuth(stuId,d));
-}
-async function setHomeworkPolicy(stuId,date,mode){
-  const key=stuId+'_'+date;
-  if(mode==='homework'){
-    // 명시적 기본값 문서를 남기지 않아도 기존 동작이 그대로 유지되도록 삭제 대신 빈 값 저장을 하지 않는다.
-    // 이미 별도 정책이 있는 경우에만 mode를 homework로 바꾼다.
-    if(db.homeworkPolicies[key]) await fsSet('homeworkPolicies',key,{mode:'homework',updatedAt:new Date().toISOString()});
-    return;
-  }
-  const defaultNote = mode==='none' ? '오늘은 숙제가 없습니다.' : '오늘 숙제는 학원에서 이미 완료했습니다.';
-  const current=db.homeworkPolicies[key]||{};
-  await fsSet('homeworkPolicies',key,{mode,note:current.note||defaultNote,updatedAt:new Date().toISOString()});
-}
-async function setHomeworkPolicyNote(stuId,date,note){
-  const key=stuId+'_'+date;
-  const current=db.homeworkPolicies[key]||{};
-  const mode=(current.mode==='none'||current.mode==='academyDone')?current.mode:'homework';
-  await fsSet('homeworkPolicies',key,{mode,note:String(note||''),updatedAt:new Date().toISOString()});
-}
-async function setHomeworkPolicyAll(clsId,wk,dayKey,mode){
-  const cls=classById(clsId); if(!cls) return;
-  const dates=weekDates(wk);
-  const order=['mon','tue','wed','thu','fri','sat','sun'];
-  const date=dates[order.indexOf(dayKey)];
-  if(!date) return;
-  for(const stuId of (cls.studentIds||[])) await setHomeworkPolicy(stuId,date,mode);
-}
 
 function studentById(id){ return db.students.find(s=>s.id===id); }
 function classById(id){ return db.classes.find(c=>c.id===id); }
@@ -1299,7 +1251,7 @@ function renderDashboard(){
   const homeworkRowsToday = [];
   todaysClasses.forEach(c=>{
     (c.studentIds||[]).map(studentById).filter(Boolean).forEach(s=>{
-      const range = homeworkRequiredDates(s.id,c.dayGroup,today);
+      const range = homeworkDateRangeDates(c.dayGroup,today);
       if(!range.length) return;
       const days = range.map(d=>{
         const sub=db.submissions[s.id+'_'+d];
@@ -1687,7 +1639,7 @@ function buildDailyReportText(s, date, r, dayGroup){
   const stepTxt = r.stepId ? stepShortLabel(r.stepId) : '-';
   const extraStepsTxt = (r.extraSteps&&r.extraSteps.length) ? ' + '+r.extraSteps.map(id=>stepShortLabel(id)).filter(Boolean).join(', ') : '';
   // 숙제완성도는 수업기록의 수기 등급이 아니라 실제 submissions 인증 기록으로 계산.
-  const hwDates = homeworkRequiredDates(s.id, dayGroup, date);
+  const hwDates = homeworkDateRangeDates(dayGroup, date);
   const hwApproved = hwDates.filter(d=>homeworkCountsAsCompleted(db.submissions[s.id+'_'+d],d));
   const hwPending = hwDates.filter(d=>submissionIsPending(db.submissions[s.id+'_'+d],d));
   const hwMissing = hwDates.filter(d=>{
@@ -1840,7 +1792,7 @@ async function removeExtraStep(clsId,date,stuId,stepId){
   await fsSet('classRecords', key, {[stuId]: {extraSteps: extra}});
 }
 function suggestedHomeworkLevel(stuId, dayGroup, date){
-  const hwDateRange = homeworkRequiredDates(stuId, dayGroup, date);
+  const hwDateRange = homeworkDateRangeDates(dayGroup, date);
   const totalRangeDays = hwDateRange.length;
   if(!totalRangeDays) return '';
   const submittedCount = hwDateRange.filter(d=>homeworkCountsAsCompleted(db.submissions[stuId+'_'+d],d)).length;
@@ -2073,7 +2025,7 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames){
   const r = rec[s.id] || {attendance:'출석', dailyTestScore:'', stepId:'', videoAssignments:[], homeworkCompletionLevel:'', studyCompletionLevel:'', note:''};
   const doneCount = (r.videoAssignments||[]).filter(v=>v.done).length;
   const videoTotal = (r.videoAssignments||[]).length;
-  const hwDateRange = homeworkRequiredDates(s.id, cls.dayGroup, date);
+  const hwDateRange = homeworkDateRangeDates(cls.dayGroup, date);
   const dayChecklist = hwDateRange.map(d=>{
     const daySub = db.submissions[s.id+'_'+d];
     const dowKey = DAY_KEYS[new Date(d+'T00:00:00').getDay()];
@@ -2300,52 +2252,26 @@ function renderWeeklyPlan(cls, date){
   const students = (cls.studentIds||[]).map(studentById).filter(Boolean);
   const plan = db.weeklyPlans[cls.id+'_'+wk] || {};
   const order = ['mon','tue','wed','thu','fri','sat','sun'];
-  const modeOptions=(mode)=>`
-    <option value="homework" ${mode==='homework'?'selected':''}>숙제 있음</option>
-    <option value="none" ${mode==='none'?'selected':''}>숙제 없음</option>
-    <option value="academyDone" ${mode==='academyDone'?'selected':''}>학원에서 완료</option>`;
-
   return `
   <div class="row between" style="margin-bottom:10px;">
     <button class="btn sm outline" onclick="shiftWeek('${cls.id}','${date}',-7)">← 이전 주</button>
     <b>${dates[0]} ~ ${dates[6]}</b>
     <button class="btn sm outline" onclick="shiftWeek('${cls.id}','${date}',7)">다음 주 →</button>
   </div>
-  <div style="font-size:12px;color:#8a8674;margin-bottom:10px;">
-    숙제가 없는 날은 <b>숙제 없음</b>, 학원에서 끝낸 날은 <b>학원에서 완료</b>로 지정하면 학생 인증·미이행·경고 판정에서 제외됩니다.
-  </div>
   <div class="weekgrid" style="margin-bottom:8px;">
     <div></div>${order.map(k=>`<div class="hd">${DAY_LABEL[k]}</div>`).join('')}
     <div style="font-weight:700;font-size:11px;">전체 적용</div>
-    ${order.map((k,i)=>`<div>
-      <textarea placeholder="공통 숙제" onchange="setWeekAll('${cls.id}','${wk}','${k}',this.value)"></textarea>
-      <select style="width:100%;margin-top:4px;font-size:11px;" onchange="setHomeworkPolicyAll('${cls.id}','${wk}','${k}',this.value)">
-        <option value="">상태 일괄...</option>
-        <option value="homework">숙제 있음</option>
-        <option value="none">숙제 없음</option>
-        <option value="academyDone">학원에서 완료</option>
-      </select>
-    </div>`).join('')}
+    ${order.map(k=>`<textarea placeholder="공통 숙제" onchange="setWeekAll('${cls.id}','${wk}','${k}',this.value)"></textarea>`).join('')}
   </div>
   ${students.map(s=>{
     const sp = plan[s.id]||{};
-    return `<div class="weekgrid" style="margin-bottom:6px;align-items:start;">
-      <div style="font-weight:600;padding-top:6px;">${s.name}</div>
-      ${order.map((k,i)=>{
-        const dayDate=dates[i];
-        const mode=homeworkPolicyMode(s.id,dayDate);
-        const p=homeworkPolicyForDate(s.id,dayDate);
-        return `<div>
-          <textarea onchange="setWeekOne('${cls.id}','${wk}','${s.id}','${k}',this.value)">${sp[k]||''}</textarea>
-          <select style="width:100%;margin-top:4px;font-size:11px;" onchange="setHomeworkPolicy('${s.id}','${dayDate}',this.value)">${modeOptions(mode)}</select>
-          ${mode!=='homework'?`<input type="text" style="width:100%;margin-top:4px;font-size:11px;" placeholder="안내 메모" value="${escapeHtml((p&&p.note)||'')}" onchange="setHomeworkPolicyNote('${s.id}','${dayDate}',this.value)">`:''}
-        </div>`;
-      }).join('')}
+    return `<div class="weekgrid" style="margin-bottom:4px;align-items:center;">
+    <div style="font-weight:600;">${s.name}</div>
+    ${order.map(k=>`<textarea onchange="setWeekOne('${cls.id}','${wk}','${s.id}','${k}',this.value)">${sp[k]||''}</textarea>`).join('')}
     </div>`;
   }).join('')}
   `;
 }
-
 function shiftWeek(clsId,date,days){
   const d=new Date(date+'T00:00:00'); d.setDate(d.getDate()+days);
   currentSubState.classDate = toLocalISODate(d);
@@ -3114,8 +3040,6 @@ function renderSubmissionCard(stuId, directorView, previewAsStudent){
   const date = currentSubState.subDate || (asStudent ? academicTodayISO() : todayISO());
   const key = stuId+'_'+date;
   const sub = db.submissions[key];
-  const homeworkPolicyMessage = homeworkPolicyDisplay(stuId,date);
-  const homeworkAuthRequired = homeworkPolicyNeedsAuth(stuId,date);
   // 학생/학생 미리보기에서는 선생님 코멘트를 숙제 화면의 최상단에 먼저 노출한다.
   const teacherCommentBanner = (asStudent && sub && sub.teacherComment) ? `<div style="background:#fff8e8;border:1px solid #e8cf95;border-radius:10px;padding:12px 14px;margin-bottom:10px;">
       <div style="font-size:12px;font-weight:700;color:#9a6b16;margin-bottom:5px;">✏️ 선생님 코멘트</div>
@@ -3148,16 +3072,14 @@ function renderSubmissionCard(stuId, directorView, previewAsStudent){
     <div class="row between"><h3 style="margin:0;">📸 숙제 인증${previewAsStudent?' <span style="font-size:11px;color:var(--gold);">(미리보기)</span>':''}</h3><input type="date" value="${date}" onchange="currentSubState.subDate=this.value;render();"></div>
     ${teacherCommentBanner}
     ${statusBanner}
-    ${homeworkAuthRequired
-      ? (asStudent ? renderSubmissionForm(stuId,date,sub) : (sub? renderSubmissionReadonly(sub,stuId,date) : `<div class="empty">이 날짜에 제출된 인증이 없어요.</div>`))
-      : `<div style="padding:16px;border-radius:10px;background:#f6f4ec;border:1px solid var(--line);font-weight:700;">✅ ${homeworkPolicyMessage}<div style="font-size:12px;font-weight:500;color:#8a8674;margin-top:5px;">별도의 숙제 인증이 필요하지 않습니다.</div></div>`}
+    ${asStudent ? renderSubmissionForm(stuId,date,sub) : (sub? renderSubmissionReadonly(sub,stuId,date) : `<div class="empty">이 날짜에 제출된 인증이 없어요.</div>`)}
   </div>`;
 }
 function renderSubmissionReadonly(sub,stuId,date){
   return `
   <div class="row between">
     <div>실측 시간: <b>${sub.time||'-'}</b> · 상태:
-      <span class="badge ${homeworkCountsAsCompleted(sub,date)?'green':submissionIsPending(sub,date)?'yellow':'red'}">${submissionIsFinalRejected(sub)?'최종 불합격':homeworkEffectiveState(sub,date)==='late'?'기한 미준수':homeworkReviewLabel(sub,date)}</span>
+      <span class="badge ${homeworkCountsAsCompleted(sub,date)?'green':submissionIsPending(sub,date)?'yellow':'red'}">${submissionIsFinalRejected(sub)?'최종 불합격':homeworkEffectiveState(sub,date)==='late'?'기한 미준수':homeworkEffectiveState(sub,date)==='pending'?'검토대기':homeworkReviewLabel(sub,date)}</span>
       · 검사 ${homeworkReviewCount(sub)}/${HOMEWORK_MAX_REVIEWS}
       ${!submissionIsApproved(sub,date)&&!submissionIsFinalRejected(sub)?` · 남은 기회 ${homeworkReviewsRemaining(sub)}회`:''}
     </div>
@@ -3175,6 +3097,7 @@ function renderSubmissionReadonly(sub,stuId,date){
   <div style="margin-top:8px;font-size:12px;color:#8a8674;">풀이연습장 사진</div>
   <div class="thumbs">${(sub.practicePhotos||[]).map((p,i)=>`<img src="${p}" onclick="openLightboxSet('sub','${stuId}_${date}','practicePhotos',${i})">`).join('') || '-'}</div>
   <div style="margin-top:10px;font-size:12px;color:#8a8674;">오답유형: ${(sub.errorTypes||[]).map(e=>`${e.type} ${e.percent}%`).join(', ')||'-'}</div>
+  ${sub.memo?`<div style="margin-top:10px;padding:9px 10px;border-radius:8px;background:#f6f4ec;font-size:12px;"><b>📝 학생 메모</b>: ${sub.memo}</div>`:''}
   ${renderTeacherCommentBox(stuId, date, sub.teacherComment)}
   `;
 }
@@ -3294,6 +3217,7 @@ function renderSubmissionForm(stuId,date,sub){
         hwPhotos: local.hwPhotos || [],
         practicePhotos: local.practicePhotos || [],
         errorTypes: local.errorTypes || [],
+        memo: local.memo || sub.memo || '',
         status: sub.status || '대기'
       };
     }else{
@@ -3346,6 +3270,12 @@ function renderSubmissionForm(stuId,date,sub){
       </select>
     </div>`;
   }).join('')}
+  <div style="margin-top:12px;">
+    <label style="font-size:12px;font-weight:700;">메모 <span style="font-weight:400;color:#8a8674;">(필요할 때만 작성)</span></label>
+    <textarea style="width:100%;margin-top:5px;min-height:64px;" placeholder="예: 오늘 숙제 없음 / 학원에서 완료함 / 기타 특이사항"
+      oninput="currentSubState._draftSub.memo=this.value;saveDraftLocal('${stuId}','${date}')">${draft.memo||''}</textarea>
+    <div style="font-size:11px;color:#8a8674;margin-top:4px;">메모는 상황 설명용입니다. 선생님이 확인하고 인정해야 숙제 완료가 됩니다.</div>
+  </div>
   ${renderDraftSizeIndicator(draft)}
   <div style="margin-top:10px;padding:8px 10px;border-radius:8px;background:#f7f4ea;font-size:12px;">
     숙제 검사 기회 <b>${homeworkReviewsRemaining(sub)}회 남음</b>
@@ -3438,6 +3368,8 @@ function setErrorPercent(type,val){
 }
 async function submitHomework(stuId,date){
   const draft = currentSubState._draftSub;
+  const existingSubmission = db.submissions[stuId+'_'+date] || null;
+  const preservedFirstSubmittedAt = existingSubmission ? (existingSubmission.firstSubmittedAt || existingSubmission.submittedAt || null) : null;
   const key = stuId+'_'+date;
   const existing = db.submissions[key];
 
@@ -3454,7 +3386,7 @@ async function submitHomework(stuId,date){
     reviewReason:'',
     reviewedAt:null,
     firstSubmittedAt:(existing && (existing.firstSubmittedAt || existing.submittedAt)) || nowIso,
-    submittedAt:nowIso
+    submittedAt: nowIso, firstSubmittedAt: preservedFirstSubmittedAt || nowIso
   };
   const sizeKB = new Blob([JSON.stringify(payload)]).size/1024;
   if(sizeKB > 850){
@@ -3898,7 +3830,7 @@ function parentDailyGuidanceText(stuId,date){
     : ((r.extraPractice&&r.extraPractice.length)? r.extraPractice.map(e=>`${e.book}${e.range?' '+e.range:''}`).join(', ') : '-');
 
   const homeworkPlan = homeworkPlanTextForStudentDate(stuId, cls, date);
-  const range = cls ? homeworkRequiredDates(stuId, cls.dayGroup, date) : [];
+  const range = cls ? homeworkDateRangeDates(cls.dayGroup, date) : [];
   const authRows = range.map(d=>({date:d, sub:db.submissions[stuId+'_'+d]}));
   const authTxt = authRows.length
     ? authRows.map(x=>`${x.date.slice(5).replace('-','/')} ${homeworkReviewMark(x.sub,x.date)}(${homeworkReviewLabel(x.sub,x.date)})`).join(' · ')
@@ -3959,7 +3891,7 @@ function dailyTrafficForStudentDate(stuId, date){
   // 해당 수업일 기준 확인 대상 숙제 중 미인증이 있으면 '주의(노랑)' 요소로 반영한다.
   const cls = classById(s.classId);
   const dayGroup = cls && cls.dayGroup;
-  const hwDates = dayGroup ? homeworkRequiredDates(stuId, dayGroup, date) : [];
+  const hwDates = dayGroup ? homeworkDateRangeDates(dayGroup, date) : [];
   const hwNotApprovedCount = hwDates.filter(d=>!homeworkCountsAsCompleted(db.submissions[stuId+'_'+d],d)).length;
   const homeworkTraffic = hwNotApprovedCount > 0 ? 'yellow' : 'green';
 
@@ -4857,7 +4789,7 @@ function monthlyHomeworkRate(stuId, yearMonth){
   lessons.forEach(l=>{
     const cls = classById(l.clsId);
     if(!cls) return;
-    const range = homeworkRequiredDates(stuId, cls.dayGroup, l.date);
+    const range = homeworkDateRangeDates(cls.dayGroup, l.date);
     totalExpected += range.length;
     totalSubmitted += range.filter(d=>homeworkCountsAsCompleted(db.submissions[stuId+'_'+d],d)).length;
   });
@@ -5344,8 +5276,6 @@ function renderStudentHomeworkPage(){
   const cls = classById(s.classId);
   const wk = weekStartISO(todayISO());
   const myWeekPlan = s.classId ? (db.weeklyPlans[s.classId+'_'+wk] || {})[stuId] || {} : {};
-  const weekDateList = weekDates(wk);
-  const weekOrder = ['mon','tue','wed','thu','fri','sat','sun'];
 
   const videoAssignFlat = [];
   Object.entries(db.classRecords).forEach(([key,obj])=>{
@@ -5365,11 +5295,7 @@ function renderStudentHomeworkPage(){
       <h3 style="margin-top:0;">1. 이번 주 숙제</h3>
       <div class="weekgrid" style="grid-template-columns:70px repeat(7,1fr);">
         <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div class="hd">${DAY_LABEL[k]}</div>`).join('')}
-        <div></div>${weekOrder.map((k,i)=>{
-          const d=weekDateList[i];
-          const msg=homeworkPolicyDisplay(stuId,d);
-          return `<div style="font-size:11px;padding:4px;border:1px solid var(--line);border-radius:6px;min-height:44px;">${msg?`<b>${msg}</b>`:(myWeekPlan[k]||'')}</div>`;
-        }).join('')}
+        <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div style="font-size:11px;padding:4px;border:1px solid var(--line);border-radius:6px;min-height:44px;">${myWeekPlan[k]||''}</div>`).join('')}
       </div>
     </div>
 
