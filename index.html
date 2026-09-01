@@ -473,29 +473,25 @@ function tryDirectorLogin(){
   else{ document.getElementById('pwErr').textContent = '비밀번호가 올바르지 않아요. 다시 확인해주세요.'; }
 }
 function tryStudentLogin(){
-  const input=document.getElementById('studentCodeInput');
-  const code=String(input ? input.value : '').trim();
-  if(!code){ alert('학생 코드를 입력해주세요.'); return; }
+  const input = document.getElementById('codeInput');
+  const err = document.getElementById('codeErr');
+  const v = String(input ? input.value : '').trim();
 
-  const normalizeCode=v=>String(v ?? '').trim();
-  const s=(db.students||[]).find(st=>{
-    const candidates=[
-      st.code,
-      st.studentCode,
-      st.loginCode,
-      st.studentIdCode
-    ].filter(v=>v!==undefined && v!==null && String(v).trim()!=='');
-    return candidates.some(v=>normalizeCode(v)===code);
-  });
+  // 기존 학생 code 값 자체는 절대 수정하지 않는다.
+  // Firestore에 숫자/문자열 어느 형식으로 저장돼 있어도 입력 코드와 같은 값이면 로그인한다.
+  const stu = (db.students||[]).find(s => String(s.code ?? '').trim() === v);
 
-  if(!s){
-    alert('등록되지 않은 코드예요. 선생님께 코드를 다시 확인해주세요.');
+  if(stu && stu.status==='withdrawn'){
+    if(err) err.textContent = '더 이상 사용할 수 없는 코드예요. 선생님께 문의해주세요.';
     return;
   }
-  session={role:'student',studentId:s.id};
-  localStorage.setItem('mnm_session',JSON.stringify(session));
-  currentView='studentHome';
-  render();
+  if(stu){
+    session = {mode:'student', studentId:stu.id};
+    saveSessionLocal();
+    enterApp();
+  }else{
+    if(err) err.textContent = '등록되지 않은 코드예요. 선생님께 코드를 다시 확인해주세요.';
+  }
 }
 function saveSessionLocal(){ try{ localStorage.setItem('mnm_session', JSON.stringify(session)); }catch(e){} }
 function logout(){
