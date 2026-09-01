@@ -473,11 +473,29 @@ function tryDirectorLogin(){
   else{ document.getElementById('pwErr').textContent = '비밀번호가 올바르지 않아요. 다시 확인해주세요.'; }
 }
 function tryStudentLogin(){
-  const v = document.getElementById('codeInput').value.trim();
-  const stu = db.students.find(s=>s.code===v);
-  if(stu && stu.status==='withdrawn'){ document.getElementById('codeErr').textContent = '더 이상 사용할 수 없는 코드예요. 선생님께 문의해주세요.'; return; }
-  if(stu){ session = {mode:'student', studentId:stu.id}; saveSessionLocal(); enterApp(); }
-  else{ document.getElementById('codeErr').textContent = '등록되지 않은 코드예요. 선생님께 코드를 다시 확인해주세요.'; }
+  const input=document.getElementById('studentCodeInput');
+  const code=String(input ? input.value : '').trim();
+  if(!code){ alert('학생 코드를 입력해주세요.'); return; }
+
+  const normalizeCode=v=>String(v ?? '').trim();
+  const s=(db.students||[]).find(st=>{
+    const candidates=[
+      st.code,
+      st.studentCode,
+      st.loginCode,
+      st.studentIdCode
+    ].filter(v=>v!==undefined && v!==null && String(v).trim()!=='');
+    return candidates.some(v=>normalizeCode(v)===code);
+  });
+
+  if(!s){
+    alert('등록되지 않은 코드예요. 선생님께 코드를 다시 확인해주세요.');
+    return;
+  }
+  session={role:'student',studentId:s.id};
+  localStorage.setItem('mnm_session',JSON.stringify(session));
+  currentView='studentHome';
+  render();
 }
 function saveSessionLocal(){ try{ localStorage.setItem('mnm_session', JSON.stringify(session)); }catch(e){} }
 function logout(){
@@ -3087,9 +3105,15 @@ function renderSubmissionReadonly(sub,stuId,date){
       ${isLegacyHomeworkDate(date)
         ? `<span class="badge">🔒 8/31까지 기존 기록 · 조회 전용</span>`
         : `${submissionIsFinalRejected(sub)
-            ? `<span class="badge red">최종 불합격 · 추가 판정 불가</span>`
-            : `${!submissionIsApproved(sub,date) ? `<button class="btn sm gold" onclick="confirmSubmission('${stuId}','${date}',this)">✓ 숙제 인정</button>` : ''}
-               ${!submissionIsRejected(sub,date) ? `<button class="btn sm danger" onclick="rejectSubmission('${stuId}','${date}')">✕ 불합격</button>` : ''}`}`}
+            ? `<span class="badge red">최종 불합격</span>
+               <button class="btn sm outline" onclick="resetSubmissionReview('${stuId}','${date}')">↩ 판정 수정</button>`
+            : `${submissionIsApproved(sub,date)
+                ? `<button class="btn sm outline" onclick="resetSubmissionReview('${stuId}','${date}')">↩ 판정 수정</button>`
+                : submissionIsRejected(sub,date)
+                  ? `<button class="btn sm gold" onclick="confirmSubmission('${stuId}','${date}',this)">✓ 재제출 인정</button>
+                     <button class="btn sm outline" onclick="resetSubmissionReview('${stuId}','${date}')">↩ 판정 수정</button>`
+                  : `<button class="btn sm gold" onclick="confirmSubmission('${stuId}','${date}',this)">✓ 숙제 인정</button>
+                     <button class="btn sm danger" onclick="rejectSubmission('${stuId}','${date}')">✕ 불합격</button>`}`}`}
     </div>
   </div>
   <div style="margin-top:8px;font-size:12px;color:#8a8674;">숙제 사진</div>
@@ -3176,6 +3200,41 @@ function rejectSubmission(stuId,date){
         reviewCount:nextCount,
         reviewReason:trimmed,
         reviewedAt:new Date().toISOString()
+      });
+    }
+  );
+}
+
+
+async function resetSubmissionReview(stuId,date){
+  if(isLegacyHomeworkDate(date)){
+    alert('8/31까지의 과거 숙제는 기존 기록 보호를 위해 조회만 가능합니다.');
+    return;
+  }
+  const key=stuId+'_'+date;
+  const sub=db.submissions[key];
+  if(!sub){ alert('제출된 숙제가 없습니다.'); return; }
+
+  const state=submissionReviewState(sub,date);
+  if(state==='pending'){
+    alert('아직 판정하지 않은 숙제입니다.');
+    return;
+  }
+
+  const currentCount=homeworkReviewCount(sub);
+  const nextCount=Math.max(0,currentCount-1);
+  const s=studentById(stuId);
+  const name=s?s.name:'학생';
+
+  openConfirm(
+    '숙제 판정을 취소할까요?',
+    `${name} · ${date}\n현재 판정을 취소하고 검토대기로 되돌립니다.\n검사 횟수도 ${currentCount}/${HOMEWORK_MAX_REVIEWS} → ${nextCount}/${HOMEWORK_MAX_REVIEWS}로 복구됩니다.`,
+    async ()=>{
+      await fsUpdate('submissions',key,{
+        status:'대기',
+        reviewCount:nextCount,
+        reviewReason:'',
+        reviewedAt:null
       });
     }
   );
