@@ -653,14 +653,14 @@ function autoWarningMessageText(studentName, count){
 // v2 경고 검증 단계: 아직 Firebase에 자동 경고를 기록하지 않는다.
 // 계산 결과만 관리자 대시보드에서 확인하고, 검증 완료 후 실제 기록 기능을 켠다.
 async function checkAutoWarnings(){
-  // v11: 2026-08-27 이후 숙제 판정만 사용.
+  // 저장된 경고 계산 시작일 이후 숙제 판정만 사용.
   // 기존 기록은 수정/삭제하지 않고, 확정된 3회 연속 미인증 경고만 중복 없이 추가한다.
   const students = Object.values(db.students || {}).filter(s => s && s.id && s.status !== '퇴원');
   for(const s of students){
     const episodes = warningEpisodesForStudentPreview(s.id) || [];
     for(const ep of episodes){
       const dates = ep.missedDates || [];
-      if(!dates.length || dates[0] < WARNING_ASSESSMENT_START_DATE) continue;
+      if(!dates.length || dates[0] < warningAssessmentStartDate()) continue;
 
       const episodeKey = ep.episodeKey || `homework3days|${s.id}|${dates.join('|')}`;
       const existing = (s.warnings || []).some(w =>
@@ -738,7 +738,7 @@ function warningAssessmentRowsForStudent(stuId){
       });
     }
   }
-  return ([...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date))).filter(r => r.date >= WARNING_ASSESSMENT_START_DATE);
+  return ([...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date))).filter(r => r.date >= warningAssessmentStartDate());
 }
 function warningEpisodesForStudentPreview(stuId){
   const rows=warningAssessmentRowsForStudent(stuId);
@@ -1213,9 +1213,12 @@ function getTodaysFridaySupp(){
   return rows;
 }
 
-// v10: warning assessment begins on 2026-08-27.
-// Historical records before this date remain untouched and visible elsewhere.
-const WARNING_ASSESSMENT_START_DATE = '2026-08-27';
+// 경고 계산 시작일은 관리자 '전체 경고 초기화' 시 자동 갱신됩니다.
+// 기존 설치본과의 호환을 위해 저장값이 없을 때만 2026-08-27을 fallback으로 사용합니다.
+const DEFAULT_WARNING_ASSESSMENT_START_DATE = '2026-08-27';
+function warningAssessmentStartDate(){
+  return (db.settings && db.settings.warningAssessmentStartDate) || DEFAULT_WARNING_ASSESSMENT_START_DATE;
+}
 
 // v9: READ-ONLY warning decision detail. No Firebase writes.
 function warningDecisionDetailForStudent(stu){
@@ -1366,7 +1369,7 @@ function renderDashboard(){
   <div class="card" style="border-color:#b9c6e6;">
     <div class="row between" style="align-items:flex-start;gap:12px;">
       <div>
-        <h3 style="margin:0 0 4px;">🔎 전체 학생 숙제·경고 검증 <span style="font-size:12px;font-weight:700;color:#8a5a00">(경고 판정 시작: 2026.08.27)</span>표</h3>
+        <h3 style="margin:0 0 4px;">🔎 전체 학생 숙제·경고 검증 <span style="font-size:12px;font-weight:700;color:#8a5a00">(경고 판정 시작: ${warningAssessmentStartDate().replaceAll('-','.')})</span>표</h3>
         <div style="font-size:12px;color:#7a7666;line-height:1.6;">재원생 전체를 대상으로 현재 Firestore의 숙제 인증 기록을 <b>읽기만</b> 해서 계산합니다. ○ 인증 · × 미인증 · 경고는 연속 3일 미인증 예상치이며 실제 경고에는 저장되지 않습니다.</div><div class="muted" style="margin:6px 0 10px">학생을 펼치면 날짜별 ○/×와 함께 <b>미인증 연속 횟수 → 경고 발생 지점</b>을 확인할 수 있습니다.</div>
       </div>
       <span class="badge">${homeworkWarningAudit.length}명</span>
@@ -5149,17 +5152,40 @@ async function migrateWeekStartBug(){
   }
 }
 async function resetAllWarnings(){
-  const withWarnings = db.students.filter(s=>verifiedWarnings(s).length || s.autoWarnLastDate);
-  if(!withWarnings.length){
-    alert('현재 경고가 있는 학생이 없어요.');
-    return;
-  }
-  openConfirm('정말로 전체 경고를 초기화할까요?', `현재 ${withWarnings.length}명의 학생에게 경고 기록이 있어요. 이 작업을 하면 전체 학생의 경고가 모두 삭제되고 되돌릴 수 없어요.`, async ()=>{
-    for(const s of withWarnings){
-      await fsUpdate('students', s.id, {warnings: [], autoWarnLastDate: null});
+  const newStart = todayISO();
+  const withWarnings = (db.students||[]).filter(s => ((s.warnings||[]).length>0) || s.autoWarnLastDate);
+  const startLabel = newStart.replaceAll('-','.');
+
+  openConfirm(
+    '전체 경고를 초기화하고 오늘부터 새로 시작할까요?',
+    `기존 경고 기록을 0회로 초기화하고, 경고 계산 시작일을 ${startLabel}로 저장합니다.\n숙제 제출 사진·인증·검사·코멘트 기록은 삭제하지 않습니다.\n${startLabel} 이전 숙제 미이행은 이후 경고 계산에 다시 사용되지 않습니다.`,
+    async ()=>{
+      warningAutoRunBusy = true;
+      try{
+        db.settings = {...(db.settings||{}), warningAssessmentStartDate:newStart};
+
+        const saved = await fsSet('meta','settings',{warningAssessmentStartDate:newStart},true);
+        if(!saved){
+          alert('경고 시작일 저장에 실패했습니다. 경고 초기화를 중단합니다.');
+          return;
+        }
+
+        for(const s of withWarnings){
+          const ok = await fsUpdate('students', s.id, {warnings: [], autoWarnLastDate: null});
+          if(ok){
+            s.warnings = [];
+            s.autoWarnLastDate = null;
+          }
+        }
+
+        alert(`경고를 초기화했습니다.\n새 경고 계산 시작일: ${startLabel}\n오늘 숙제부터 새롭게 계산합니다.`);
+      }finally{
+        warningAutoRunBusy = false;
+        render();
+        maybeRunAutoWarnings();
+      }
     }
-    alert(`${withWarnings.length}명의 경고를 초기화했어요.`);
-  });
+  );
 }
 function showBackupText(){
   document.getElementById('backupTextArea').style.display='block';
