@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-02 v57 (경고삭제버그수정+숙제현황카드)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-03 v63 (새벽시간 날짜버그 수정)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -784,7 +784,7 @@ function addDaysISO(dateISO, delta){
 }
 function isNextISODate(prevISO, nextISO){ return !!prevISO && addDaysISO(prevISO,1)===nextISO; }
 function warningAssessmentRowsForStudent(stuId){
-  const today = academicTodayISO();
+  const today = todayISO(); // 원장님이 보는 점검/리포트용 계산이므로 실제 달력 날짜 기준
   const seenLesson = new Set();
   const lessons = [];
   const addLesson = (date, clsId)=>{
@@ -1138,15 +1138,11 @@ function warningCountBadge(count){
   return `<span class="badge gray">경고 없음</span>`;
 }
 function trafficForStudent(studentId){
-  const stu = studentById(studentId);
   const status = studentStatus(studentId);
 
-  // 중대한 관리 이슈는 점수보다 우선합니다.
-  // 숙제 3회 연속 미이행으로 실제 생성된 경고가 있으면 관찰필요(빨강)로 추천합니다.
-  const homework3Warnings = ((stu && stu.warnings)||[]).filter(w=>w && w.type==='homework3days');
-  if(status==='STOP' || homework3Warnings.length>0) return 'red';
-
-  // 별도 관리상태가 SLOW이면 주의(노랑)로 추천합니다.
+  // 신호등은 경고 이력과 무관하게, 최근 학습 상태(시험 점수)만 기준으로 추천합니다.
+  // (경고는 별도로 "경고 기록" 카드에서 확인하고, 관리자가 직접 판단합니다.)
+  if(status==='STOP') return 'red';
   if(status==='SLOW') return 'yellow';
 
   // 일일테스트 기준: 80점 이상 순항 / 60~79점 주의 / 60점 미만 관찰필요.
@@ -1492,7 +1488,7 @@ function renderDashboard(){
     ${homeworkRowsToday.length ? `<div style="font-size:13px;">
       ${homeworkRowsToday.map(x=>`<div style="padding:10px 0;border-bottom:1px solid var(--line);">
         <div class="row between" style="gap:12px;align-items:flex-start;">
-          <div style="min-width:120px;"><b>${x.name}</b> <span style="color:#9c9880;font-size:12px;">${x.className}</span></div>
+          <div style="min-width:120px;"><b style="cursor:pointer;color:var(--navy2);text-decoration:underline;" onclick="goto('students');currentSubState.studentDetail='${x.studentId}';render();">${x.name}</b> <span style="color:#9c9880;font-size:12px;">${x.className}</span></div>
           <div style="flex:1;display:flex;flex-wrap:wrap;gap:6px 8px;">
             ${x.days.map(day=>{
               const dt=new Date(day.date+'T00:00:00');
@@ -1868,7 +1864,7 @@ function buildDailyReportText(s, date, r, dayGroup){
   }else{
     examLine = `· 일일테스트: 오늘은 시험이 없었어요`;
   }
-  const homeworkWarningCount = ((s.warnings||[]).filter(w=>w && w.type==='homework3days')).length;
+  const homeworkWarningCount = verifiedWarnings(s).length;
   const warnTxt = homeworkWarningCount > 0
     ? `
 ⚠️ 숙제 미인증이 3회 연속 확인되어 경고가 부과되었습니다. 현재 누적 경고는 ${homeworkWarningCount}회입니다.`
@@ -3200,9 +3196,12 @@ function renderHomeworkReview(){
   ${rows.length? rows.map(r=>{
     const s = studentById(r.studentId);
     const cls = s ? classById(s.classId) : null;
+    const hwContent = s ? homeworkContentForDate(r.studentId, s.classId, r.date) : '';
     return `<div class="card">
       <div class="row between">
-        <div><b>${s? s.name : '(삭제된 학생)'}</b> <span style="color:#9c9880;font-size:12px;">${cls? cls.name+' · ':''}${fmtDate(r.date)}</span></div>
+        <div><b>${s? s.name : '(삭제된 학생)'}</b> <span style="color:#9c9880;font-size:12px;">${cls? cls.name+' · ':''}${fmtDate(r.date)}</span>
+          ${hwContent? `<div style="font-size:12px;color:#6b6858;margin-top:2px;">📖 그날 숙제: ${hwContent}</div>` : ''}
+        </div>
         <div class="row">
           ${(()=>{
             const st=submissionReviewState(r,r.date);
@@ -3673,8 +3672,26 @@ async function updateStudentField(stuId,field,val){ await fsUpdate('students', s
 
 /* ---------------- 경고 기록 ---------------- */
 /* ---------------- 경고 판단용: 날짜별 숙제 제출 현황 한눈에 보기 (읽기 전용) ---------------- */
+function homeworkContentForDate(stuId, clsId, date){
+  if(!clsId) return '';
+  const wk = weekStartISO(date);
+  const plan = db.weeklyPlans[clsId+'_'+wk];
+  if(!plan) return '';
+  const per = plan[stuId] || {};
+  const dayKey = DAY_KEYS[new Date(date+'T00:00:00').getDay()];
+  return per[dayKey] || '';
+}
+function mostRecentLessonDateOnOrBefore(dayGroup, dateISO){
+  let d = new Date(dateISO+'T00:00:00');
+  for(let i=0;i<7;i++){
+    const iso = toLocalISODate(d);
+    if(isLessonDay(dayGroup, iso)) return iso;
+    d.setDate(d.getDate()-1);
+  }
+  return null;
+}
 function homeworkGlanceRowsForStudent(stuId, limitDays){
-  const today = academicTodayISO();
+  const today = todayISO(); // 원장님이 보는 화면이므로 실제 달력 날짜 기준 (학생 제출용 '오전 6시 규칙'은 여기 적용 안 함)
   const seenLesson = new Set();
   const lessons = [];
   const addLesson = (date, clsId)=>{
@@ -3689,19 +3706,27 @@ function homeworkGlanceRowsForStudent(stuId, limitDays){
   studentLessonRecords(stuId).forEach(r=>addLesson(r.date,r.clsId));
   const s=studentById(stuId);
   const cls=s&&s.classId?classById(s.classId):null;
-  if(cls && isLessonDay(cls.dayGroup,today)) addLesson(today,cls.id);
+  // 원장님이 그 반의 최근 수업 페이지를 아직 안 열어봤어도, 반 스케줄만으로 "가장 최근 수업일"을
+  // 항상 계산해서 추가한다 — 학생마다 범위가 들쭉날쭉해 보이지 않도록 일관되게 맞추기 위함.
+  if(cls){
+    const recent = mostRecentLessonDateOnOrBefore(cls.dayGroup, today);
+    if(recent) addLesson(recent, cls.id);
+  }
   lessons.sort((a,b)=>a.date.localeCompare(b.date));
 
   const byDate=new Map();
   for(const l of lessons){
     for(const d of homeworkDateRangeDates(l.dayGroup,l.date)){
       const sub = db.submissions[stuId+'_'+d];
-      byDate.set(d, homeworkEffectiveState(sub, d));
+      byDate.set(d, {state: homeworkEffectiveState(sub, d), clsId: l.clsId});
     }
   }
   const dates = [...byDate.keys()].sort();
   const sliced = limitDays ? dates.slice(-limitDays) : dates;
-  return sliced.map(d=>({date:d, state:byDate.get(d)}));
+  return sliced.map(d=>{
+    const info = byDate.get(d);
+    return {date:d, state:info.state, content: homeworkContentForDate(stuId, info.clsId, d)};
+  });
 }
 function renderHomeworkGlanceForWarning(stuId){
   const rows = homeworkGlanceRowsForStudent(stuId, 14);
@@ -3711,12 +3736,14 @@ function renderHomeworkGlanceForWarning(stuId){
   return `
   <div class="card">
     <div class="row between"><h3 style="margin:0;">📋 최근 숙제 제출 현황 (경고 판단용)</h3>${missedStreak>=3?`<span class="badge red">최근 ${missedStreak}일 연속 미이행</span>`:''}</div>
-    ${rows.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
-      ${rows.map(r=>`<div style="text-align:center;">
-        <div class="badge ${colorFor(r.state)}" style="display:block;font-size:10px;padding:4px 6px;white-space:nowrap;">${labelFor(r.state)}</div>
-        <div style="font-size:9px;color:#9c9880;margin-top:2px;">${r.date.slice(5).replace('-','/')}</div>
-      </div>`).join('')}
-    </div>
+    ${rows.length ? `<table style="margin-top:8px;">
+      <tr><th style="width:70px;">날짜</th><th style="width:90px;">상태</th><th>그날 숙제 내용</th></tr>
+      ${rows.map(r=>`<tr>
+        <td style="font-size:11px;color:#6b6858;white-space:nowrap;">${r.date.slice(5).replace('-','/')}</td>
+        <td><span class="badge ${colorFor(r.state)}" style="font-size:10px;">${labelFor(r.state)}</span></td>
+        <td style="font-size:12px;color:${r.content?'var(--ink)':'#b3aea0'};">${r.content || '(등록된 숙제 내용 없음)'}</td>
+      </tr>`).join('')}
+      </table>
     <div style="font-size:11px;color:#8a8674;margin-top:10px;">🟢 인정 · 🟡 검토대기·1/2차 불합격(재제출 가능) · 🔴 미제출·기한초과·최종불합격 · ⚪ 아직 마감 전</div>` : `<div class="empty" style="padding:14px;">아직 판정할 숙제 기록이 없어요.</div>`}
   </div>`;
 }
@@ -3940,7 +3967,10 @@ function finalAuditRowForStudent(stu){
   const pendingHomework = assessRows.filter(r=>r.pending).length;
   const missed = assessRows.filter(r=>!r.submitted && !r.pending).length;
 
-  const homeworkWarnings = (stu.warnings||[]).filter(w=>w && w.type==='homework3days');
+  // 2026-09-02부터 경고는 관리자가 수동으로만 입력하며, type:'homework3days' 표시를 달지 않는다.
+  // (그 표시는 이제 중단된 옛 자동경고 시스템 전용이었음.) 그래서 실제 화면에 보이는 경고 횟수와
+  // 항상 일치하도록, 여기서도 verifiedWarnings()와 같은 기준(수동경고 전체)으로 집계한다.
+  const homeworkWarnings = verifiedWarnings(stu);
   const pendingQuestions = questionRows.filter(q=>!(q.answerText || q.answerImage || q.teacherComment)).length;
 
   const issues = [];
@@ -4144,7 +4174,7 @@ function parentDailyGuidanceText(stuId,date){
     ? qs.map(q=>`${q.text||'질문'}${q.answerText? ` → ${q.answerText}` : ' → 답변 대기'}`).join(' / ')
     : '질문 없음';
 
-  const homeworkWarningCount = (s.warnings||[]).filter(w=>w && w.type==='homework3days').length;
+  const homeworkWarningCount = verifiedWarnings(s).length;
   const warningTxt = homeworkWarningCount > 0
     ? `
 ⚠️ 숙제 미인증이 3회 연속 확인되어 경고가 부과되었습니다. 현재 누적 경고는 ${homeworkWarningCount}회입니다.`
@@ -4170,13 +4200,9 @@ function dailyTrafficForStudentDate(stuId, date){
   const s = studentById(stuId);
   if(!s) return 'green';
 
-  // 1. 해당 날짜에 실제 숙제 3회 연속 미이행 경고가 발생하면 빨강 우선.
-  const hasHomework3Warning = ((s.warnings||[]).some(w=>
-    w && w.type==='homework3days' && String(w.date||'')===String(date||'')
-  ));
-  if(hasHomework3Warning) return 'red';
+  // 신호등은 경고 이력과 무관하게, 그날의 시험 점수·숙제 인증 상태만으로 판정합니다.
 
-  // 2. 해당 날짜 일일테스트 점수 판정.
+  // 1. 해당 날짜 일일테스트 점수 판정.
   const scoreRow = studentDailyScores(stuId).find(r=>String(r.date||'')===String(date||''));
   const hasScore = !!scoreRow && Number.isFinite(Number(scoreRow.score));
   const score = hasScore ? Number(scoreRow.score) : null;
@@ -4186,7 +4212,7 @@ function dailyTrafficForStudentDate(stuId, date){
     else if(score < 80) testTraffic = 'yellow';
   }
 
-  // 3. 숙제 인증 상태 판정.
+  // 2. 숙제 인증 상태 판정.
   // 한 번의 미인증만으로 빨강 처리하지 않는다.
   // 해당 수업일 기준 확인 대상 숙제 중 미인증이 있으면 '주의(노랑)' 요소로 반영한다.
   const cls = classById(s.classId);
@@ -4195,25 +4221,18 @@ function dailyTrafficForStudentDate(stuId, date){
   const hwNotApprovedCount = hwDates.filter(d=>!homeworkCountsAsCompleted(db.submissions[stuId+'_'+d],d)).length;
   const homeworkTraffic = hwNotApprovedCount > 0 ? 'yellow' : 'green';
 
-  // 4. 일일테스트 + 숙제 중 더 강한 상태를 최종 신호등으로 사용.
+  // 3. 일일테스트 + 숙제 중 더 강한 상태를 최종 신호등으로 사용.
   const rank = {green:0, yellow:1, red:2};
   return rank[testTraffic] >= rank[homeworkTraffic] ? testTraffic : homeworkTraffic;
 }
 
 function monthlyTrafficForStudent(stuId, ym){
-  const s = studentById(stuId);
   const monthScores = studentDailyScores(stuId)
     .filter(r=>String(r.date||'').startsWith(ym))
     .map(r=>Number(r.score))
     .filter(Number.isFinite);
 
-  // 해당 월에 숙제 3회 연속 미이행 실제 경고가 있으면 관찰필요(빨강) 우선 추천.
-  const monthWarnings = (((s && s.warnings)||[]).filter(w=>
-    w && w.type==='homework3days' && String(w.date||'').startsWith(ym)
-  ));
-  if(monthWarnings.length) return 'red';
-
-  // 월간 신호등은 해당 월 일일테스트 평균으로 판정.
+  // 신호등은 경고 이력과 무관하게, 해당 월 일일테스트 평균으로만 판정합니다.
   // 80점 이상: 순항 / 60~79점: 주의 / 60점 미만: 관찰필요.
   if(!monthScores.length) return 'green';
   const avg = monthScores.reduce((a,b)=>a+b,0) / monthScores.length;
@@ -4261,7 +4280,7 @@ function buildMonthlyReportPlainForMonth(stuId, traffic, comment, ym){
   const decidedCount = submittedCount + missedCount;
   const submitRate = decidedCount ? Math.round(submittedCount/decidedCount*100) : null;
 
-  const verified = (s.warnings||[]).filter(w=>w && w.type==='homework3days');
+  const verified = verifiedWarnings(s);
   const monthWarnings = verified.filter(w=>String(w.date||'').startsWith(ym));
 
   const trafficLabel = traffic==='green'?'🟢 순항중':traffic==='yellow'?'🟡 주의':'🔴 관찰필요';
@@ -5140,7 +5159,7 @@ function buildMonthlyReportText(stuId, traffic, comment){
   const submitRate = totalAssess ? Math.round(submittedCount/totalAssess*100) : null;
 
   // 누적 경고와 이번 달 경고
-  const verified = (s.warnings||[]).filter(w=>w && w.type==='homework3days');
+  const verified = verifiedWarnings(s);
   const monthWarnings = verified.filter(w=>String(w.date||'').startsWith(ym));
 
   const trafficLabel = traffic==='green'?'🟢 순항중':traffic==='yellow'?'🟡 주의':'🔴 관찰필요';
