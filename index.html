@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-02 v53 (안정성 전수점검)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-02 v56 (자동경고 완전중단, 수동경고 전환)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -358,11 +358,12 @@ function setConnStatus(ok){
 
 
 let warningAutoRunBusy = false;
-let warningInputsReady = { students:false, classes:false, classRecords:false, submissions:false };
+let warningInputsReady = { students:false, classes:false, classRecords:false, submissions:false, settings:false };
+let warningSettingsConfirmed = false; // 설정 문서가 실제로 응답을 받았는지(성공/실패 무관하게 "확인됨" 상태인지)
 
 async function maybeRunAutoWarnings(){
   if(warningAutoRunBusy) return;
-  if(!(warningInputsReady.students && warningInputsReady.classes && warningInputsReady.classRecords && warningInputsReady.submissions)) return;
+  if(!(warningInputsReady.students && warningInputsReady.classes && warningInputsReady.classRecords && warningInputsReady.submissions && warningInputsReady.settings)) return;
   warningAutoRunBusy = true;
   try{
     await checkAutoWarnings();
@@ -379,10 +380,20 @@ function attachListeners(){
         db.settings = { adminPassword:'0000', isDefaultPassword:true };
         try{ await fsdb.collection('meta').doc('settings').set(db.settings); }catch(e){}
       }
+      // 설정 문서가 실제로 응답(성공)했을 때만 "확인됨" 처리한다.
+      // 이 시점 이전에는 자동경고 계산 자체가 절대 실행되지 않는다 (FAIL-CLOSED, 원칙 A).
+      warningSettingsConfirmed = true;
+      warningInputsReady.settings = true;
       listenersReady.settings = true;
       maybeFinishLoading();
       render();
-    }, err=>{ setConnStatus(false); }),
+      maybeRunAutoWarnings();
+    }, err=>{
+      setConnStatus(false);
+      // 설정 로딩이 실패한 경우 절대 "확인됨" 처리하지 않는다 → 자동경고는 계속 보류된다.
+      warningSettingsConfirmed = false;
+      warningInputsReady.settings = false;
+    }),
 
     fsdb.collection('students').onSnapshot(snap=>{
       db.students = snap.docs.map(d=>({id:d.id, ...d.data()}));
@@ -676,9 +687,68 @@ function autoWarningMessageText(studentName, count){
   const footer = count>=2 ? '가정에서 지도 부탁드립니다.' : '가정에서도 확인 부탁드립니다.';
   return `[M&m 수학훈련소] ${studentName} 학생 숙제 미제출 경고 안내\n\n${studentName} 학생이 ${core}\n\n${footer}`;
 }
-// v2 경고 검증 단계: 아직 Firebase에 자동 경고를 기록하지 않는다.
-// 계산 결과만 관리자 대시보드에서 확인하고, 검증 완료 후 실제 기록 기능을 켠다.
+function confirmedWarningStartDateForGeneration(){
+  // 화면 표시용 warningAssessmentStartDate()와 달리, 이 함수는 절대 fallback 기본값을 반환하지 않는다.
+  // 설정이 아직 로딩되지 않았거나, 로딩됐어도 값이 없거나 형식이 이상하면 null을 반환해서
+  // 호출 측이 "생성 중단(FAIL-CLOSED)"으로 처리하게 한다.
+  if(!warningSettingsConfirmed) return null;
+  const v = db.settings && db.settings.warningAssessmentStartDate;
+  if(typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+  return v;
+}
+function warningEpisodeIsDuplicate(existingWarnings, episodeKey, dates){
+  return (existingWarnings || []).some(w =>
+    w && (
+      w.episodeKey === episodeKey ||
+      (String(w.reason || '').includes('숙제') && String(w.reason || '').includes(dates.join(', ')))
+    )
+  );
+}
+// 여러 탭/기기가 동시에 접속해 있어도 같은 경고가 두 번 기록되지 않도록,
+// 실제 Firestore 기록은 트랜잭션 안에서 "다시 한번" 중복을 확인한 뒤에만 쓴다.
+async function writeAutoWarningIfMissing(studentId, episodeKey, dates, warning){
+  const ref = fsdb.collection('students').doc(studentId);
+  try{
+    const wrote = await fsdb.runTransaction(async (tx)=>{
+      const snap = await tx.get(ref);
+      if(!snap.exists) return false;
+      const cur = snap.data() || {};
+      const curWarnings = cur.warnings || [];
+      if(warningEpisodeIsDuplicate(curWarnings, episodeKey, dates)) return false; // 이미 다른 탭/기기가 방금 기록함
+      tx.update(ref, {warnings: [...curWarnings, warning]});
+      return true;
+    });
+    return wrote;
+  }catch(e){
+    console.warn('[경고 엔진] 트랜잭션 기록 실패 — 이번 실행에서는 기록하지 않음', e);
+    return false;
+  }
+}
+// ============================================================
+// ★★★ 정책 변경 (2026-09-02): 자동경고 시스템 완전 중단 ★★★
+// 이제부터 경고는 관리자가 "+ 경고 추가" 버튼으로 수동 입력한 것만 인정한다.
+// 아래 상수가 false인 한, checkAutoWarnings()는 무엇이 와도(설정 유무·시작일 값·
+// 새로고침·다중 탭 등 어떤 조건에서도) Firestore에 단 한 건도 기록하지 않는다.
+// 기존 계산 로직(episode 계산, 트랜잭션 기록 등)은 향후 참고를 위해 아래에 그대로
+// 남겨두지만, 이 스위치 때문에 영원히 도달(실행)되지 않는다.
+// 다시 자동경고를 쓰고 싶다면 이 값만 true로 바꾸면 되고, 그 전까지는 이 라인이
+// 자동경고 WRITE 경로 전체를 원천 차단하는 유일하고 확실한 지점이다.
+// ============================================================
+const AUTO_WARNING_SYSTEM_ENABLED = false;
+// 실제 경고 생성(Firestore 기록) 경로. 화면 표시(감사/미리보기)에는 영향 없음.
 async function checkAutoWarnings(){
+  if(!AUTO_WARNING_SYSTEM_ENABLED){
+    // 자동경고 시스템 중단 — 이 아래 코드는 절대 실행되지 않는다 (FAIL-CLOSED보다 더 강한 전면 차단).
+    return;
+  }
+  // FAIL-CLOSED (원칙 A·B): 설정이 확인되지 않았거나 시작일이 확정되지 않았으면
+  // 절대로 경고를 계산하거나 Firestore에 기록하지 않는다.
+  // 과거 기본값(2026-08-27 등)으로 대체 계산하는 일은 이 함수 안에서 일어날 수 없다.
+  const confirmedStart = confirmedWarningStartDateForGeneration();
+  if(!confirmedStart){
+    console.warn('[경고 엔진] 경고 계산 시작일이 아직 확인되지 않아 자동경고 생성을 보류합니다 (FAIL-CLOSED).');
+    return;
+  }
   // 저장된 경고 계산 시작일 이후 숙제 판정만 사용.
   // 기존 기록은 수정/삭제하지 않고, 확정된 3회 연속 미인증 경고만 중복 없이 추가한다.
   const students = Object.values(db.students || {}).filter(s => s && s.id && s.status !== 'withdrawn' && s.status !== '퇴원');
@@ -686,16 +756,10 @@ async function checkAutoWarnings(){
     const episodes = warningEpisodesForStudentPreview(s.id) || [];
     for(const ep of episodes){
       const dates = ep.missedDates || [];
-      if(!dates.length || dates[0] < warningAssessmentStartDate()) continue;
+      if(!dates.length || dates[0] < confirmedStart) continue;
 
       const episodeKey = ep.episodeKey || `homework3days|${s.id}|${dates.join('|')}`;
-      const existing = (s.warnings || []).some(w =>
-        w && (
-          w.episodeKey === episodeKey ||
-          (String(w.reason || '').includes('숙제') && String(w.reason || '').includes(dates.join(', ')))
-        )
-      );
-      if(existing) continue;
+      if(warningEpisodeIsDuplicate(s.warnings, episodeKey, dates)) continue; // 빠른 로컬 사전 체크 (최종 확인은 트랜잭션에서)
 
       const warning = {
         date: dates[dates.length - 1],
@@ -705,9 +769,10 @@ async function checkAutoWarnings(){
         auto: true
       };
 
-      const nextWarnings = [...(s.warnings || []), warning];
-      await fsUpdate('students', s.id, {warnings: nextWarnings});
-      s.warnings = nextWarnings;
+      const wrote = await writeAutoWarningIfMissing(s.id, episodeKey, dates, warning);
+      if(wrote){
+        s.warnings = [...(s.warnings || []), warning];
+      }
     }
   }
 }
@@ -773,6 +838,9 @@ function warningEpisodesForStudentPreview(stuId){
     if(missed.length && !isNextISODate(missed[missed.length-1].date,row.date)) missed=[];
     if(row.pending){ missed=[]; continue; } // 검토 대기는 판정 보류: 연속 미이행을 확정하지 않음
     if(row.submitted){ missed=[]; continue; }
+    // 1차/2차 불합격(최종불합격 아님)은 재제출이 가능한 상태이므로 미이행으로 확정하지 않는다.
+    // (최종불합격만 'finalRejected'로 별도 판정되며, 그것만 미이행으로 카운트된다.)
+    if(row.effectiveState==='rejected'){ missed=[]; continue; }
     missed.push(row);
     if(missed.length===3){
       const dates=missed.map(x=>x.date);
@@ -820,18 +888,19 @@ function allStudentHomeworkWarningAuditRows(){
 // ===== 2026-08-31 오전 기준 응급복구 =====
 // 오늘 수정 과정에서 생성된 자동 경고는 DB에서 지우지 않고 화면/리포트에서 제외한다.
 // 원장이 직접 입력한 수동 경고만 유효 경고로 취급한다.
+// (예전 형식의 자동경고 문구뿐 아니라, auto:true로 명시된 것도 전부 화면 집계에서 제외한다.
+//  자동경고 시스템 자체는 이제 완전히 중단됐으므로, 이 필터는 과거에 남은 기록을 감추는 역할만 한다.
+//  실제 삭제는 "경고 오류 점검" 화면에서 관리자가 직접 확인 후 진행한다.)
 function verifiedWarnings(s){
-  return ((s&&s.warnings)||[]).filter(w => !((w.reason||'').includes('자동 기록')));
+  return ((s&&s.warnings)||[]).filter(w => w.auto!==true && !((w.reason||'').includes('자동 기록')));
 }
 function enterApp(){
   appEntered = true;
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appShell').style.display='block';
-  console.warn('RECOVERY MODE: 2026-08-31 오전 원본 + 자동 경고 표시/생성 차단');
   currentView = session.mode==='director' ? 'dashboard' : 'studentHome';
   buildNav();
   render();
-  /* RECOVERY: 자동 경고 실행 중지 */
 }
 
 /* ---------------- NAV ---------------- */
@@ -848,6 +917,7 @@ const DIRECTOR_NAV = [
   {id:'qna', label:'질문 게시판', icon:'💬'},
   {id:'feedback', label:'학부모 학습안내', icon:'📨'},
     {id:'audit', label:'전체 최종점검', icon:'✅'},
+  {id:'warningAudit', label:'경고 오류 점검', icon:'🔍'},
   {id:'backup', label:'데이터 백업', icon:'🗂️'},
 ];
 function buildNav(){
@@ -1201,6 +1271,7 @@ function renderInner(){
       case 'qna': html+=renderQnaDirector(); break;
       case 'feedback': html+=renderFeedback(); break;
       case 'audit': html+=renderFinalAudit(); break;
+      case 'warningAudit': html+=renderWarningAudit(); break;
       case 'backup': html+=renderBackup(); break;
       default: html+=renderDashboard();
     }
@@ -1242,6 +1313,91 @@ function getTodaysFridaySupp(){
 const DEFAULT_WARNING_ASSESSMENT_START_DATE = '2026-08-27';
 function warningAssessmentStartDate(){
   return (db.settings && db.settings.warningAssessmentStartDate) || DEFAULT_WARNING_ASSESSMENT_START_DATE;
+}
+
+// ---------------- 경고 오류 점검(관리자 전용) ----------------
+function extractWarningEvidenceDates(w){
+  if(!w) return [];
+  // episodeKey 형식: homework3days|studentId|date1|date2|date3 (가장 신뢰도 높은 근거)
+  if(w.episodeKey && typeof w.episodeKey === 'string'){
+    const parts = w.episodeKey.split('|');
+    if(parts.length >= 5 && parts[0]==='homework3days'){
+      const dates = parts.slice(2).filter(d=>/^\d{4}-\d{2}-\d{2}$/.test(d));
+      if(dates.length) return dates;
+    }
+  }
+  // episodeKey가 없거나 형식이 다르면 reason 문자열에서 YYYY-MM-DD 패턴을 추출 (예전 형식 보호)
+  if(w.reason){
+    const matches = String(w.reason).match(/\d{4}-\d{2}-\d{2}/g);
+    if(matches && matches.length) return matches;
+  }
+  return [];
+}
+function classifyWarningForAudit(student, w){
+  const isAuto = w.auto === true;
+  const evidenceDates = extractWarningEvidenceDates(w);
+  const startDate = warningAssessmentStartDate();
+
+  if(!isAuto){
+    return {verdict:'수동경고', detail:'auto 필드가 없어 수동으로 입력된 경고로 간주합니다. 자동 오류 판정 대상이 아니며, 삭제하려면 반드시 직접 내용을 확인해주세요.', evidenceDates, startDate};
+  }
+  if(!evidenceDates.length){
+    return {verdict:'확인 필요', detail:'근거 날짜를 추출할 수 없는 형식입니다. 직접 확인해주세요.', evidenceDates, startDate};
+  }
+  if(evidenceDates[0] < startDate){
+    return {verdict:'오류 의심', detail:`근거 날짜(${evidenceDates[0]})가 현재 경고 시작일(${startDate})보다 이전입니다.`, evidenceDates, startDate};
+  }
+  // 시작일 이후 근거 → episodeKey만 믿지 않고 실제 submissions로 재검증한다.
+  const recheck = evidenceDates.map(d=>({date:d, state: homeworkEffectiveState(db.submissions[student.id+'_'+d], d)}));
+  const approvedDay = recheck.find(r=>r.state==='approved');
+  if(approvedDay) return {verdict:'오류 의심', detail:`${approvedDay.date} 날짜는 선생님이 "인정" 처리한 기록입니다. 미이행에 포함되면 안 됩니다.`, evidenceDates, startDate, recheck};
+  const pendingDay = recheck.find(r=>r.state==='pending' || r.state==='needsRevision');
+  if(pendingDay) return {verdict:'오류 의심', detail:`${pendingDay.date} 날짜는 아직 "검토대기" 상태입니다. 미이행으로 확정하면 안 됩니다.`, evidenceDates, startDate, recheck};
+  const resubmittableDay = recheck.find(r=>r.state==='rejected');
+  if(resubmittableDay) return {verdict:'오류 의심', detail:`${resubmittableDay.date} 날짜는 1차/2차 불합격(재제출 가능) 상태입니다. 최종불합격이 아니므로 미이행이 아닙니다.`, evidenceDates, startDate, recheck};
+  const allConfirmedMissed = recheck.every(r=>r.state==='missing' || r.state==='finalRejected' || r.state==='late');
+  if(allConfirmedMissed) return {verdict:'정상', detail:'근거 날짜 3일 모두 재검증 결과 실제 미이행(미제출/기한초과/최종불합격)이 확인됩니다.', evidenceDates, startDate, recheck};
+  return {verdict:'확인 필요', detail:'재검증 결과가 애매합니다. 직접 확인해주세요.', evidenceDates, startDate, recheck};
+}
+function warningMatchesTarget(w, target){
+  if(!w) return false;
+  if(target.id) return w.id === target.id;
+  if(target.episodeKey) return w.episodeKey === target.episodeKey;
+  return w.date === target.date && w.reason === target.reason;
+}
+async function deleteSelectedAuditWarnings(targets){
+  // targets: [{studentId, episodeKey, date, reason}, ...]
+  if(!targets.length){ alert('선택된 경고가 없어요.'); return; }
+  const byStudent = {};
+  targets.forEach(t=>{ (byStudent[t.studentId] = byStudent[t.studentId]||[]).push(t); });
+  let successCount=0, failCount=0;
+  const failNames=[];
+  for(const [studentId, list] of Object.entries(byStudent)){
+    const ref = fsdb.collection('students').doc(studentId);
+    try{
+      const result = await fsdb.runTransaction(async (tx)=>{
+        // 삭제 직전에 항상 Firestore 최신값을 다시 읽는다 (다른 탭/기기가 그 사이 추가한 경고를 보존하기 위해).
+        const snap = await tx.get(ref);
+        if(!snap.exists) return {removed:0, total:list.length};
+        const cur = snap.data() || {};
+        let curWarnings = cur.warnings || [];
+        let removed = 0;
+        list.forEach(target=>{
+          const idx = curWarnings.findIndex(w=>warningMatchesTarget(w, target));
+          if(idx!==-1){ curWarnings = curWarnings.slice(0,idx).concat(curWarnings.slice(idx+1)); removed++; }
+        });
+        if(removed>0) tx.update(ref, {warnings: curWarnings});
+        return {removed, total:list.length};
+      });
+      successCount += result.removed;
+      if(result.removed < result.total){ failCount += (result.total-result.removed); failNames.push(studentById(studentId)?.name||studentId); }
+    }catch(e){
+      failCount += list.length;
+      failNames.push(studentById(studentId)?.name||studentId);
+    }
+  }
+  alert(`선택한 경고 삭제 결과\n성공: ${successCount}건\n실패: ${failCount}건${failNames.length?'\n확인 필요한 학생: '+failNames.join(', '):''}`);
+  render();
 }
 
 // v9: READ-ONLY warning decision detail. No Firebase writes.
@@ -3548,14 +3704,16 @@ async function addWarning(stuId){
   const reason = reasonEl.value.trim();
   if(!reason){ alert('경고 사유를 입력해주세요.'); return; }
   const s = studentById(stuId);
-  const newWarnings = [...(s.warnings||[]), {id:uid('warn'), date, reason}];
+  // 경고는 이제 관리자가 직접 입력한 것만 존재한다. manual:true / auto:false로 명확히 표시해서
+  // "경고 오류 점검" 화면 등 어디서든 자동경고와 절대 혼동되지 않게 한다.
+  const newWarnings = [...(s.warnings||[]), {id:uid('warn'), date, reason, manual:true, auto:false}];
   await fsUpdate('students', stuId, {warnings:newWarnings});
 }
 function deleteWarning(stuId, warnId){
   openConfirm('경고 기록을 삭제할까요?', '이 경고 기록이 학생 페이지에서도 함께 사라져요. 신중히 선택해주세요.', async ()=>{
-    const s = studentById(stuId);
-    const newWarnings = (s.warnings||[]).filter(w=>w.id!==warnId);
-    await fsUpdate('students', stuId, {warnings:newWarnings});
+    // 삭제 직전 Firestore 최신 문서를 다시 읽어, 그 사이 다른 탭/기기가 추가했을 수 있는
+    // 다른 경고를 건드리지 않고 이 경고 1건만 안전하게 제거한다.
+    await deleteSelectedAuditWarnings([{studentId:stuId, id:warnId}]);
   });
 }
 
@@ -5107,6 +5265,102 @@ function renderFbHistory(){
 }
 
 /* ---------------- BACKUP ---------------- */
+function renderWarningAudit(){
+  currentSubState._auditSelected = currentSubState._auditSelected || {};
+  const startDate = warningAssessmentStartDate();
+  const rows = [];
+  (db.students||[]).forEach(s=>{
+    (s.warnings||[]).forEach((w,idx)=>{
+      const cls = classifyWarningForAudit(s, w);
+      const targetKey = (w.episodeKey || `${s.id}|${w.date}|${w.reason}`);
+      rows.push({student:s, warning:w, idx, cls, targetKey});
+    });
+  });
+  const verdictOrder = {'오류 의심':0, '확인 필요':1, '수동경고':2, '정상':3};
+  rows.sort((a,b)=> (verdictOrder[a.cls.verdict]-verdictOrder[b.cls.verdict]) || (a.student.name||'').localeCompare(b.student.name||''));
+
+  const verdictBadge = v => {
+    if(v==='오류 의심') return '<span class="badge red">오류 의심</span>';
+    if(v==='확인 필요') return '<span class="badge yellow">확인 필요</span>';
+    if(v==='수동경고') return '<span class="badge gray">수동경고</span>';
+    return '<span class="badge green">정상</span>';
+  };
+  const sourceTag = w => w.auto===true ? '<span class="badge yellow" style="font-size:10px;">[기존 자동 경고]</span>' : '<span class="badge gray" style="font-size:10px;">[수동 경고]</span>';
+
+  const selectedCount = Object.values(currentSubState._auditSelected).filter(Boolean).length;
+
+  return `
+  <h1 class="page-title">🔍 경고 오류 점검 (관리자 전용)</h1>
+  <p class="page-sub">
+    <b>2026-09-02부로 자동경고 시스템은 완전히 중단됐어요.</b> 이제부터 경고는 "학생별 관리 → 경고 기록"에서 관리자가 직접 입력한 것만 생깁니다.<br>
+    이 화면은 <b>과거 자동경고 시스템이 남긴 기존 기록</b>을 읽기 전용으로 분석해서 정리하는 용도예요. 프로그램이 자동으로 삭제하지 않고, 확인 후 직접 선택해서 삭제할 수 있어요.
+  </p>
+  <div class="card" style="border:1px solid var(--gold);">
+    <div style="font-size:13px;"><b>참고용 경고 시작일: ${startDate.replaceAll('-','.')}</b> — 예전 자동경고의 근거 날짜가 이 날짜보다 이전이면 "오류 의심"으로 표시됩니다. (자동경고 자체는 더 이상 생성되지 않으므로, 이 값은 이제 기존 기록 판정에만 참고로 쓰여요.)</div>
+  </div>
+  ${rows.length===0 ? `<div class="empty">저장된 경고가 없어요.</div>` : `
+  <div class="card">
+    <div class="row between" style="margin-bottom:8px;">
+      <div style="font-size:12.5px;color:#8a8674;">총 ${rows.length}건 · 오류 의심 ${rows.filter(r=>r.cls.verdict==='오류 의심').length}건 · 확인 필요 ${rows.filter(r=>r.cls.verdict==='확인 필요').length}건</div>
+      <button class="btn sm danger" ${selectedCount===0?'disabled':''} onclick="runAuditBulkDelete()">선택한 오류 경고 삭제 (${selectedCount}건)</button>
+    </div>
+    ${rows.map(r=>{
+      const chkId = `auditchk_${r.student.id}_${r.idx}`;
+      return `<div class="card" style="margin-bottom:8px;border-left:4px solid ${r.cls.verdict==='오류 의심'?'var(--red)':r.cls.verdict==='확인 필요'?'#e0a82e':'var(--line)'};">
+        <div class="row between">
+          <div>
+            <label style="display:flex;align-items:center;gap:8px;">
+              <input type="checkbox" id="${chkId}" ${currentSubState._auditSelected[chkId]?'checked':''} onchange="currentSubState._auditSelected['${chkId}']=this.checked;render();">
+              <b>${r.student.name}</b> <span style="color:#9c9880;font-size:12px;">(${r.student.id})</span>
+              ${sourceTag(r.warning)}
+              ${verdictBadge(r.cls.verdict)}
+            </label>
+          </div>
+          <button class="btn sm outline" onclick="deleteOneAuditWarning('${r.student.id}', ${r.idx})">이 경고 삭제</button>
+        </div>
+        <div style="font-size:12.5px;line-height:1.8;margin-top:6px;padding-left:2px;">
+          · 경고 날짜: ${r.warning.date||'-'}<br>
+          · 사유: ${escapeHtml(r.warning.reason||'-')}<br>
+          · auto: ${r.warning.auto===true?'true':'false/없음'} · type: ${r.warning.type||'-'}<br>
+          · episodeKey: ${r.warning.episodeKey?escapeHtml(r.warning.episodeKey):'(없음)'}<br>
+          · 근거 미이행 날짜: ${r.cls.evidenceDates.length? r.cls.evidenceDates.join(', ') : '(추출 불가)'}<br>
+          ${r.cls.recheck? `· 재검증: ${r.cls.recheck.map(x=>`${x.date}=${x.state}`).join(', ')}<br>` : ''}
+          · <b>판정: ${r.cls.verdict}</b> — ${r.cls.detail}
+        </div>
+      </div>`;
+    }).join('')}
+  </div>
+  `}
+  `;
+}
+async function deleteOneAuditWarning(studentId, idx){
+  const s = studentById(studentId);
+  const w = s && (s.warnings||[])[idx];
+  if(!w){ alert('이미 삭제됐거나 목록이 바뀌었어요. 화면을 새로고침해주세요.'); render(); return; }
+  openConfirm('이 경고 1건을 삭제할까요?', `학생: ${s.name}\n사유: ${w.reason||'-'}\n\n이 경고 1건만 제거하며, 다른 경고나 숙제 데이터는 건드리지 않습니다.`, async ()=>{
+    await deleteSelectedAuditWarnings([{studentId, episodeKey:w.episodeKey||null, date:w.date||'', reason:w.reason||''}]);
+  });
+}
+async function runAuditBulkDelete(){
+  const targets = [];
+  Object.keys(currentSubState._auditSelected).forEach(chkId=>{
+    if(!currentSubState._auditSelected[chkId]) return;
+    // chkId 형식: auditchk_{studentId}_{idx} — studentId 자체에 밑줄이 있을 수 있어 마지막 밑줄로 idx만 분리한다.
+    const withoutPrefix = chkId.slice('auditchk_'.length);
+    const lastUnderscore = withoutPrefix.lastIndexOf('_');
+    const studentId = withoutPrefix.slice(0, lastUnderscore);
+    const idx = Number(withoutPrefix.slice(lastUnderscore+1));
+    const s = studentById(studentId);
+    const w = s && (s.warnings||[])[idx];
+    if(w) targets.push({studentId, episodeKey:w.episodeKey||null, date:w.date||'', reason:w.reason||''});
+  });
+  if(!targets.length){ alert('선택된 경고가 없어요.'); return; }
+  openConfirm(`선택한 경고 ${targets.length}건을 삭제할까요?`, '삭제 직전에 Firestore 최신 데이터를 다시 확인한 뒤, 선택한 경고만 정확히 제거합니다. 다른 경고는 건드리지 않습니다.', async ()=>{
+    await deleteSelectedAuditWarnings(targets);
+    currentSubState._auditSelected = {};
+    render();
+  });
+}
 function renderBackup(){
   return `
   <h1 class="page-title">데이터 백업</h1>
@@ -5116,10 +5370,9 @@ function renderBackup(){
     <p style="font-size:12.5px;color:#7a7666;">이전 버전의 날짜 계산 오류로, "요일별 숙제 계획표"와 "금요일 보강" 데이터 일부가 실제 날짜보다 하루 빠른 날짜(일요일)로 저장됐을 수 있어요. 아래 버튼을 누르면 이런 항목을 찾아서 원래 날짜(월요일)로 옮겨드려요. 기존 데이터는 지우지 않고 복사만 하니 안전해요.</p>
     <button class="btn gold sm" onclick="migrateWeekStartBug()">🔍 밀린 데이터 찾아서 복구하기</button>
   </div>
-  <div class="card" style="border:1px solid var(--red);">
-    <h3 style="margin-top:0;">⚠️ 전체 학생 경고 초기화</h3>
-    <p style="font-size:12.5px;color:#7a7666;">이전 버그로 잘못 발급된 경고가 섞여있을 수 있어요. 이 버튼을 누르면 <b>모든 학생의 경고 기록을 한 번에 전부 삭제</b>하고, 자동 경고 판단 기준도 초기화해서 다음 수업부터 새로 정확하게 계산돼요. 되돌릴 수 없으니 신중하게 눌러주세요.</p>
-    <button class="btn danger sm" onclick="resetAllWarnings()">전체 경고 초기화</button>
+  <div class="card" style="border:1px solid #cfc9b8;">
+    <h3 style="margin-top:0;color:#8a8674;">⚠️ 전체 학생 경고 초기화 (사용 중단)</h3>
+    <p style="font-size:12.5px;color:#7a7666;">2026-09-02부터 경고는 관리자가 직접 입력하는 방식으로 바뀌면서, "전체 초기화" 기능은 수동으로 입력해두신 경고까지 한꺼번에 지울 위험이 있어 화면에서 없앴어요. 예전 자동경고 시스템이 남긴 기존 기록을 정리하고 싶으시면 사이드바의 <b>"🔍 경고 오류 점검"</b> 메뉴에서 확인 후 하나씩 선택해서 지워주세요.</p>
   </div>
   <div class="card">
     <h3 style="margin-top:0;">전체 데이터 내보내기</h3>
@@ -5183,31 +5436,55 @@ async function resetAllWarnings(){
 
   openConfirm(
     '전체 경고를 초기화하고 오늘부터 새로 시작할까요?',
-    `기존 경고 기록을 0회로 초기화하고, 경고 계산 시작일을 ${startLabel}로 저장합니다.\n숙제 제출 사진·인증·검사·코멘트 기록은 삭제하지 않습니다.\n${startLabel} 이전 숙제 미이행은 이후 경고 계산에 다시 사용되지 않습니다.`,
+    `기존 경고 기록을 0회로 초기화하고, 경고 계산 시작일을 ${startLabel}로 저장합니다.\n대상 학생: ${withWarnings.length}명\n숙제 제출 사진·인증·검사·코멘트 기록은 삭제하지 않습니다.\n${startLabel} 이전 숙제 미이행은 이후 경고 계산에 다시 사용되지 않습니다.\n\n안전을 위해, 대상 학생 전원이 한 번에 초기화되지 않으면 전체가 취소되고 아무도 바뀌지 않습니다 (일부만 초기화되는 상태는 발생하지 않습니다).`,
     async ()=>{
-      warningAutoRunBusy = true;
+      // 원자적 순서: ①잠금 → ②새 시작일 결정 → ③Firestore 저장 확인 → ④학생 경고 일괄(batch) 초기화(전원 성공/전원 실패만 가능)
+      // → ⑤로컬 상태 확정(성공시에만) → ⑥결과 안내(성공/부분아님 명시) → ⑦잠금 해제 → ⑧성공했을 때만 자동경고 재개
+      warningAutoRunBusy = true; // ① 자동경고 생성 잠금
+      let resetSucceeded = false;
       try{
-        db.settings = {...(db.settings||{}), warningAssessmentStartDate:newStart};
-
+        // ② 새 시작일은 위에서 이미 결정됨(newStart)
+        // ③ Firestore에 먼저 저장하고, 성공을 "확인"하기 전에는 로컬 상태를 절대 바꾸지 않는다.
         const saved = await fsSet('meta','settings',{warningAssessmentStartDate:newStart},true);
         if(!saved){
-          alert('경고 시작일 저장에 실패했습니다. 경고 초기화를 중단합니다.');
+          alert('경고 시작일 저장에 실패했습니다. 경고 초기화를 중단합니다.\n(로컬 상태는 변경되지 않았습니다.)');
           return;
         }
 
-        for(const s of withWarnings){
-          const ok = await fsUpdate('students', s.id, {warnings: [], autoWarnLastDate: null});
-          if(ok){
-            s.warnings = [];
-            s.autoWarnLastDate = null;
+        // ④ 학생별 warnings/autoWarnLastDate 초기화 — Firestore batch로 원자적 처리.
+        //    batch.commit()은 전부 성공하거나 전부 실패하거나 둘 중 하나만 가능하다 (부분 성공 없음).
+        let batchOk = true;
+        if(withWarnings.length){
+          try{
+            const batch = fsdb.batch();
+            withWarnings.forEach(s=>{
+              batch.update(fsdb.collection('students').doc(s.id), {warnings: [], autoWarnLastDate: null});
+            });
+            await batch.commit();
+          }catch(e){
+            batchOk = false;
           }
         }
 
-        alert(`경고를 초기화했습니다.\n새 경고 계산 시작일: ${startLabel}\n오늘 숙제부터 새롭게 계산합니다.`);
+        if(!batchOk){
+          alert(`⚠️ 경고 초기화 실패\n\n경고 시작일(${startLabel})은 저장됐지만, 학생 경고 초기화 중 오류가 발생해서 대상 ${withWarnings.length}명 중 아무도 초기화되지 않았습니다. (일부만 반영되는 일은 없습니다.)\n\n네트워크를 확인한 뒤 다시 시도해주세요.\n안전을 위해 자동경고 재계산은 지금 실행하지 않습니다.`);
+          return;
+        }
+
+        // ⑤ Firestore 저장이 확실히 성공한 뒤에만 로컬 상태를 확정한다.
+        withWarnings.forEach(s=>{ s.warnings = []; s.autoWarnLastDate = null; });
+        db.settings = {...(db.settings||{}), warningAssessmentStartDate:newStart};
+        resetSucceeded = true;
+
+        // ⑥ 완료 확인 — "부분 성공"이라는 표현은 존재할 수 없다(batch가 원자적이므로), 항상 전원 성공만 보고한다.
+        alert(`경고를 초기화했습니다.\n대상 ${withWarnings.length}명 전원 성공.\n새 경고 계산 시작일: ${startLabel}\n오늘 숙제부터 새롭게 계산합니다.`);
       }finally{
-        warningAutoRunBusy = false;
+        warningAutoRunBusy = false; // ⑦ 잠금 해제 (실패해도 재시도할 수 있어야 하므로 항상 해제)
         render();
-        maybeRunAutoWarnings();
+        if(resetSucceeded){
+          maybeRunAutoWarnings(); // ⑧ 전원 성공했을 때만, 새 시작일 기준으로 자동경고 재개
+        }
+        // 실패한 경우 여기서 자동경고를 재실행하지 않는다 — 관리자가 재시도하거나 원인을 확인할 때까지 대기.
       }
     }
   );
