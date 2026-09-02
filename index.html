@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-02 v56 (자동경고 완전중단, 수동경고 전환)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-02 v57 (경고삭제버그수정+숙제현황카드)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -3133,6 +3133,7 @@ function renderStudentDetail(stuId, directorView){
     </div>
   </div>
 
+  ${directorView ? renderHomeworkGlanceForWarning(stuId) : ''}
   ${renderWarningsCard(stuId, directorView)}
   ${renderSubmissionCard(stuId, directorView, directorView && !!currentSubState.previewAsStudent)}
   ${renderMemoGoalCard(stuId, directorView)}
@@ -3671,8 +3672,57 @@ function renderMemoGoalCard(stuId, directorView){
 async function updateStudentField(stuId,field,val){ await fsUpdate('students', stuId, {[field]:val}); }
 
 /* ---------------- 경고 기록 ---------------- */
+/* ---------------- 경고 판단용: 날짜별 숙제 제출 현황 한눈에 보기 (읽기 전용) ---------------- */
+function homeworkGlanceRowsForStudent(stuId, limitDays){
+  const today = academicTodayISO();
+  const seenLesson = new Set();
+  const lessons = [];
+  const addLesson = (date, clsId)=>{
+    if(!date || !clsId || date>today) return;
+    const cls = classById(clsId);
+    if(!cls || !isLessonDay(cls.dayGroup,date)) return;
+    const k=clsId+'|'+date;
+    if(seenLesson.has(k)) return;
+    seenLesson.add(k);
+    lessons.push({date,clsId,dayGroup:cls.dayGroup});
+  };
+  studentLessonRecords(stuId).forEach(r=>addLesson(r.date,r.clsId));
+  const s=studentById(stuId);
+  const cls=s&&s.classId?classById(s.classId):null;
+  if(cls && isLessonDay(cls.dayGroup,today)) addLesson(today,cls.id);
+  lessons.sort((a,b)=>a.date.localeCompare(b.date));
+
+  const byDate=new Map();
+  for(const l of lessons){
+    for(const d of homeworkDateRangeDates(l.dayGroup,l.date)){
+      const sub = db.submissions[stuId+'_'+d];
+      byDate.set(d, homeworkEffectiveState(sub, d));
+    }
+  }
+  const dates = [...byDate.keys()].sort();
+  const sliced = limitDays ? dates.slice(-limitDays) : dates;
+  return sliced.map(d=>({date:d, state:byDate.get(d)}));
+}
+function renderHomeworkGlanceForWarning(stuId){
+  const rows = homeworkGlanceRowsForStudent(stuId, 14);
+  const labelFor = st => ({approved:'인정', pending:'검토대기', rejected:'불합격(재제출)', finalRejected:'최종불합격', missing:'미제출', late:'기한초과', open:'대기중'}[st] || st);
+  const colorFor = st => ({approved:'green', pending:'yellow', rejected:'yellow', finalRejected:'red', missing:'red', late:'red', open:'gray'}[st] || 'gray');
+  const missedStreak = (()=>{ let n=0; for(let i=rows.length-1;i>=0;i--){ const st=rows[i].state; if(st==='missing'||st==='late'||st==='finalRejected') n++; else break; } return n; })();
+  return `
+  <div class="card">
+    <div class="row between"><h3 style="margin:0;">📋 최근 숙제 제출 현황 (경고 판단용)</h3>${missedStreak>=3?`<span class="badge red">최근 ${missedStreak}일 연속 미이행</span>`:''}</div>
+    ${rows.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
+      ${rows.map(r=>`<div style="text-align:center;">
+        <div class="badge ${colorFor(r.state)}" style="display:block;font-size:10px;padding:4px 6px;white-space:nowrap;">${labelFor(r.state)}</div>
+        <div style="font-size:9px;color:#9c9880;margin-top:2px;">${r.date.slice(5).replace('-','/')}</div>
+      </div>`).join('')}
+    </div>
+    <div style="font-size:11px;color:#8a8674;margin-top:10px;">🟢 인정 · 🟡 검토대기·1/2차 불합격(재제출 가능) · 🔴 미제출·기한초과·최종불합격 · ⚪ 아직 마감 전</div>` : `<div class="empty" style="padding:14px;">아직 판정할 숙제 기록이 없어요.</div>`}
+  </div>`;
+}
 function renderWarningsCard(stuId, directorView){
   const s = studentById(stuId);
+  const allWarnings = s.warnings || [];
   const warnings = verifiedWarnings(s);
   const count = warnings.length;
   return `
@@ -3687,13 +3737,16 @@ function renderWarningsCard(stuId, directorView){
     ` : ''}
     ${count ? `<table style="margin-top:12px;">
       <tr><th>순번</th><th>날짜</th><th>사유</th><th></th>${directorView?'<th></th>':''}</tr>
-      ${warnings.map((w,i)=>`<tr>
+      ${warnings.map((w,i)=>{
+        const origIdx = allWarnings.indexOf(w); // verifiedWarnings는 필터링된 배열이라, 원본 s.warnings에서의 실제 위치를 다시 찾는다.
+        return `<tr>
         <td>${i+1}회${i+1>=3?' <span class="badge red">OUT</span>':''}</td>
         <td>${fmtDate(w.date)}</td>
         <td>${w.reason}</td>
         <td>${w.message? `<button class="btn sm outline" onclick="copyText(this)" data-text="${encodeURIComponent(w.message)}">문자 복사</button>` : ''}</td>
-        ${directorView?`<td><button class="btn sm outline" onclick="deleteWarning('${stuId}','${w.id}')">삭제</button></td>`:''}
-      </tr>`).join('')}
+        ${directorView?`<td><button class="btn sm outline" onclick="deleteWarningByIndex('${stuId}', ${origIdx})">삭제</button></td>`:''}
+      </tr>`;
+      }).join('')}
       </table>` : `<div class="empty" style="padding:16px;">아직 경고 기록이 없어요.</div>`}
   </div>`;
 }
@@ -3709,11 +3762,13 @@ async function addWarning(stuId){
   const newWarnings = [...(s.warnings||[]), {id:uid('warn'), date, reason, manual:true, auto:false}];
   await fsUpdate('students', stuId, {warnings:newWarnings});
 }
-function deleteWarning(stuId, warnId){
+function deleteWarningByIndex(stuId, idx){
+  const s = studentById(stuId);
+  const w = s && (s.warnings||[])[idx];
+  if(!w){ alert('이미 삭제됐거나 목록이 바뀌었어요. 화면을 새로고침해주세요.'); render(); return; }
   openConfirm('경고 기록을 삭제할까요?', '이 경고 기록이 학생 페이지에서도 함께 사라져요. 신중히 선택해주세요.', async ()=>{
-    // 삭제 직전 Firestore 최신 문서를 다시 읽어, 그 사이 다른 탭/기기가 추가했을 수 있는
-    // 다른 경고를 건드리지 않고 이 경고 1건만 안전하게 제거한다.
-    await deleteSelectedAuditWarnings([{studentId:stuId, id:warnId}]);
+    // id가 없는 예전 경고도 episodeKey → date+reason 순으로 안전하게 찾아서 지운다 (예전 삭제 실패 버그 수정).
+    await deleteSelectedAuditWarnings([{studentId:stuId, id:w.id||null, episodeKey:w.episodeKey||null, date:w.date||'', reason:w.reason||''}]);
   });
 }
 
