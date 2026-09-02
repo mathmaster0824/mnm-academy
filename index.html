@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-08-29 v45 (피드백오류수정)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-02 v53 (안정성 전수점검)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -539,10 +539,14 @@ function homeworkReviewsRemaining(sub){
 }
 
 function homeworkDeadlineAt(date){
-  const next = addDaysISO(date,1);
-  return new Date(`${next}T06:00:00`);
+  // 숙제 날짜 D의 마감 = D+1 오전 06:00 (한국시간 KST, UTC+9).
+  // 학생/선생님 기기의 시간대 설정이 달라도 같은 절대시각으로 판정한다.
+  const parts = String(date||'').split('-').map(Number);
+  if(parts.length!==3 || parts.some(x=>!Number.isFinite(x))) return new Date(NaN);
+  const [y,m,d] = parts;
+  // D+1 06:00 KST = D 21:00 UTC
+  return new Date(Date.UTC(y, m-1, d, 21, 0, 0, 0));
 }
-
 function homeworkFirstSubmittedAt(sub){
   if(!sub) return null;
   const raw = sub.firstSubmittedAt || sub.submittedAt || null;
@@ -575,7 +579,7 @@ function submissionIsFinalRejected(sub){
   - 학생이 '최초 제출'을 기한 안에 했는지가 기한 준수 기준.
   - 선생님 검토 시점은 기한 판정에 영향을 주지 않음.
   - 1·2차 불합격은 재검사 가능 상태, 3차 불합격만 최종 미이행.
-  - 기한을 넘겨 최초 제출한 숙제는 이후 인정되더라도 'late'로 남아 미이행 집계.
+  - 기한을 넘긴 제출도 선생님이 직접 '인정'하면 최종 인정이 우선한다.
 */
 
 function homeworkEffectiveState(sub,date,nowValue){
@@ -677,7 +681,7 @@ function autoWarningMessageText(studentName, count){
 async function checkAutoWarnings(){
   // 저장된 경고 계산 시작일 이후 숙제 판정만 사용.
   // 기존 기록은 수정/삭제하지 않고, 확정된 3회 연속 미인증 경고만 중복 없이 추가한다.
-  const students = Object.values(db.students || {}).filter(s => s && s.id && s.status !== '퇴원');
+  const students = Object.values(db.students || {}).filter(s => s && s.id && s.status !== 'withdrawn' && s.status !== '퇴원');
   for(const s of students){
     const episodes = warningEpisodesForStudentPreview(s.id) || [];
     for(const ep of episodes){
@@ -737,10 +741,8 @@ function warningAssessmentRowsForStudent(stuId){
   for(const l of lessons){
     for(const d of homeworkDateRangeDates(l.dayGroup,l.date)){
       // 마감 전 날짜는 미제출로 확정하지 않는다.
-      // 이 기준본(v1)은 v49 이후의 deadline helper가 없으므로 여기서 독립적으로 오전 6시 마감을 계산한다.
-      const deadline = new Date(d+'T00:00:00');
-      deadline.setDate(deadline.getDate()+1);
-      deadline.setHours(6,0,0,0);
+      // 숙제 화면과 경고 계산이 반드시 같은 KST 마감 helper를 사용한다.
+      const deadline = homeworkDeadlineAt(d);
       if(Date.now() <= deadline.getTime()) continue;
       const sub = db.submissions[stuId+'_'+d];
       const reviewState = submissionReviewState(sub,d);
@@ -3021,7 +3023,7 @@ function renderHomeworkReview(){
     const idx = key.lastIndexOf('_');
     const studentId = key.slice(0, idx);
     const date = key.slice(idx+1);
-    return {key, studentId, date, ...sub};
+    return {...sub, key, studentId, date};
   }).filter(r=>{
     const st=submissionReviewState(r,r.date);
     if(filter==='all') return true;
@@ -3089,7 +3091,7 @@ function renderSubmissionCard(stuId, directorView, previewAsStudent){
       <div style="font-size:14px;line-height:1.65;color:var(--ink);font-weight:600;">${sub.teacherComment}</div>
     </div>` : '';
   const statusBanner = (asStudent && sub) ? (()=>{
-    const st=submissionReviewState(sub);
+    const st=submissionReviewState(sub,date);
     const bg=st==='approved'?'#e8f5ea':st==='pending'?'#fff9e8':'#fff3f1';
     const border=st==='approved'?'#bfe3c6':st==='pending'?'#ead89a':'#f3c5c0';
     const color=st==='approved'?'#2c7a3d':st==='pending'?'#9a6b16':'#a83b32';
@@ -3469,8 +3471,9 @@ async function submitHomework(stuId,date){
     reviewCount:homeworkReviewCount(existing),
     reviewReason:'',
     reviewedAt:null,
-    firstSubmittedAt:(existing && (existing.firstSubmittedAt || existing.submittedAt)) || nowIso,
-    submittedAt: nowIso, firstSubmittedAt: preservedFirstSubmittedAt || nowIso
+    submittedAt:nowIso,
+    // 재제출해도 최초 제출시각은 절대 덮어쓰지 않는다.
+    firstSubmittedAt:preservedFirstSubmittedAt || nowIso
   };
   const sizeKB = new Blob([JSON.stringify(payload)]).size/1024;
   if(sizeKB > 850){
