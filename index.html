@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-03 v65 (로딩 무한대기 버그수정)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-05 v66 (주말학습 사진 여러장)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -969,7 +969,7 @@ function getPhotoArray(kind, a, b){
   if(kind==='newq'){ return currentSubState._newQDraftPhotos || []; }
   if(kind==='editq'){ return currentSubState._editQDraft ? currentSubState._editQDraft.photos : []; }
   if(kind==='q'){ const q = db.questions.find(x=>x.id===a); return q ? (q[b]||[]) : []; }
-  if(kind==='weekend'){ const w=db.weekendSubmissions[a]; return w&&w.photo ? [w.photo] : []; }
+  if(kind==='weekend'){ const w=db.weekendSubmissions[a]; return w ? (w.photos || (w.photo?[w.photo]:[])) : []; }
   return [];
 }
 function openLightboxSet(kind, a, b, idx){
@@ -2649,7 +2649,8 @@ function renderWeekendStudyAdmin(){
               <td><b>${s.name}</b></td>
               ${WEEKEND_SLOTS.map(x=>{
                 const sub=weekendSubmission(s.id,wk,x.id);
-                return `<td>${sub?`<span class="badge green" style="cursor:pointer;" onclick="openLightboxSet('weekend','${weekendSubmissionKey(s.id,wk,x.id)}','photo',0)">○ 인증</span>`:'<span class="badge gray">×</span>'}</td>`;
+                const photoCount = sub ? (sub.photos ? sub.photos.length : (sub.photo?1:0)) : 0;
+                return `<td>${sub?`<span class="badge green" style="cursor:pointer;" onclick="openLightboxSet('weekend','${weekendSubmissionKey(s.id,wk,x.id)}','photos',0)">○ 인증${photoCount>1?` (${photoCount}장)`:''}</span>`:'<span class="badge gray">×</span>'}</td>`;
               }).join('')}
               <td><b>${weekendCountForStudent(s.id,wk)}/4</b></td>
             </tr>`).join('')}
@@ -2704,16 +2705,41 @@ function renderWeekendStudyAdmin(){
 }
 
 async function uploadWeekendPhoto(input,stuId,wk,slot){
-  const file=input.files&&input.files[0]; if(!file)return;
+  const files = Array.from(input.files || []);
+  if(!files.length) return;
   input.disabled=true;
   try{
-    const photo=await fileToCompressedDataURL(file,720,0.5);
     const key=weekendSubmissionKey(stuId,wk,slot);
+    const existing = db.weekendSubmissions[key];
+    let photos = existing ? (existing.photos || (existing.photo ? [existing.photo] : [])) : [];
+    for(const file of files){
+      const params = photos.length>=6 ? {maxW:340, quality:0.3} : photos.length>=3 ? {maxW:420, quality:0.35} : {maxW:480, quality:0.4};
+      const durl = await fileToCompressedDataURL(file, params.maxW, params.quality);
+      photos.push(durl);
+    }
+    const sizeKB = new Blob([JSON.stringify(photos)]).size/1024;
+    if(sizeKB > 850){
+      alert('사진 용량이 너무 커요. 사진 개수를 줄이거나 다시 찍어서 올려주세요.');
+      input.disabled=false;
+      return;
+    }
     await fsSet('weekendSubmissions',key,{
-      studentId:stuId,weekStart:wk,slot,photo,submittedAt:new Date().toISOString()
+      studentId:stuId, weekStart:wk, slot, photos, submittedAt:new Date().toISOString()
     });
   }catch(e){ alert('사진 인증을 저장하지 못했습니다. 다시 시도해주세요.'); }
   input.disabled=false;
+}
+async function removeWeekendPhoto(stuId, wk, slot, idx){
+  const key = weekendSubmissionKey(stuId, wk, slot);
+  const existing = db.weekendSubmissions[key];
+  if(!existing) return;
+  let photos = existing.photos || (existing.photo ? [existing.photo] : []);
+  photos = photos.slice(0,idx).concat(photos.slice(idx+1));
+  if(photos.length===0){
+    await fsDelete('weekendSubmissions', key);
+  }else{
+    await fsSet('weekendSubmissions', key, {studentId:stuId, weekStart:wk, slot, photos, submittedAt:existing.submittedAt||new Date().toISOString()});
+  }
 }
 function renderStudentWeekendPage(){
   const stuId=session.studentId;
@@ -2729,19 +2755,20 @@ function renderStudentWeekendPage(){
       <div style="margin-top:10px;"><span class="badge ${count===4?'green':'yellow'}">이번 주 ${count}/4 인증</span></div>
     </div>
     <div class="card">
-      <div style="font-size:12px;color:#8a8674;margin-bottom:12px;">각 시간대마다 학습한 사진을 한 장씩 인증해주세요. 평일 숙제 경고와는 연결되지 않습니다.</div>
+      <div style="font-size:12px;color:#8a8674;margin-bottom:12px;">각 시간대마다 학습한 내용을 사진으로 인증해주세요 (여러 장 가능해요). 평일 숙제 경고와는 연결되지 않습니다.</div>
       <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;">
         ${WEEKEND_SLOTS.map(x=>{
           const key=weekendSubmissionKey(stuId,wk,x.id);
           const sub=db.weekendSubmissions[key];
+          const photos = sub ? (sub.photos || (sub.photo?[sub.photo]:[])) : [];
           return `<div style="border:1px solid var(--line);border-radius:12px;padding:14px;">
-            <div class="row between"><b>${x.label}</b>${sub?'<span class="badge green">○ 인증완료</span>':'<span class="badge gray">미인증</span>'}</div>
-            ${sub?`
-              <img src="${sub.photo}" style="width:100%;max-height:210px;object-fit:cover;border-radius:9px;margin-top:10px;cursor:pointer;" onclick="openLightboxSet('weekend','${key}','photo',0)">
+            <div class="row between"><b>${x.label}</b>${photos.length?`<span class="badge green">○ 인증완료 (${photos.length}장)</span>`:'<span class="badge gray">미인증</span>'}</div>
+            ${photos.length?`
+              <div class="thumbs" style="margin-top:10px;">${photos.map((p,i)=>`<div class="thumb-wrap"><img src="${p}" onclick="openLightboxSet('weekend','${key}','photos',${i})"><button class="thumb-x" onclick="removeWeekendPhoto('${stuId}','${wk}','${x.id}',${i})">✕</button></div>`).join('')}</div>
               <div style="font-size:11px;color:#8a8674;margin-top:6px;">${new Date(sub.submittedAt).toLocaleString('ko-KR')}</div>
-              <label class="btn sm outline" style="display:inline-block;margin-top:8px;">사진 다시 인증<input type="file" accept="image/*" style="display:none;" onchange="uploadWeekendPhoto(this,'${stuId}','${wk}','${x.id}')"></label>
+              <label class="btn sm outline" style="display:inline-block;margin-top:8px;">사진 추가하기<input type="file" accept="image/*" multiple style="display:none;" onchange="uploadWeekendPhoto(this,'${stuId}','${wk}','${x.id}')"></label>
             `:`
-              <label class="btn gold" style="display:inline-block;width:100%;text-align:center;margin-top:12px;">사진 인증하기<input type="file" accept="image/*" style="display:none;" onchange="uploadWeekendPhoto(this,'${stuId}','${wk}','${x.id}')"></label>
+              <label class="btn gold" style="display:inline-block;width:100%;text-align:center;margin-top:12px;">사진 인증하기<input type="file" accept="image/*" multiple style="display:none;" onchange="uploadWeekendPhoto(this,'${stuId}','${wk}','${x.id}')"></label>
             `}
           </div>`;
         }).join('')}
