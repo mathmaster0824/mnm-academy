@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-05 v67 (코드 정리 · 마감로직 제거 · 월말리포트 복구)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-07 v68 (Firestore 읽기량 최적화 · 역할별 리스너 분리)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -258,6 +258,7 @@ let loginMode = 'director';
 let currentView = 'dashboard';
 let currentSubState = {};
 let unsubscribers = [];
+let roleUnsubscribers = []; // 로그인 이후(원장/학생)에만 붙는, 날짜별로 계속 쌓이는 데이터용 리스너
 let listenersReady = { settings:false, students:false };
 
 // local in-memory mirror, kept in sync by Firestore real-time listeners
@@ -337,7 +338,7 @@ async function initFirebase(){
     showFatalError('로그인 서버에 연결하지 못했어요. 인터넷 연결을 확인한 뒤 새로고침 해주세요.');
     return;
   }
-  attachListeners();
+  attachCoreListeners();
   startLoadingTimeoutWatchdog();
 }
 
@@ -367,7 +368,9 @@ function setConnStatus(ok){
   txt.textContent = ok ? '실시간 연결됨' : '연결 끊김 - 재시도 중';
 }
 
-function attachListeners(){
+// 로그인 전부터 필요하고, 시간이 지나도 크게 늘어나지 않는 "기준정보" 컬렉션들.
+// 원장/학생 구분 없이 항상 전체를 구독해도 안전함 (읽기량이 크지 않음).
+function attachCoreListeners(){
   const subs = [
     fsdb.collection('meta').doc('settings').onSnapshot(async doc=>{
       if(doc.exists){ db.settings = doc.data(); }
@@ -390,31 +393,7 @@ function attachListeners(){
     fsdb.collection('classes').onSnapshot(snap=>{ db.classes = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
     fsdb.collection('courses').onSnapshot(snap=>{ db.courses = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
     fsdb.collection('videos').onSnapshot(snap=>{ db.videos = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
-    fsdb.collection('classRecords').onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.classRecords=m; render();
-    }),
-    fsdb.collection('weeklyPlans').onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.weeklyPlans=m; render();
-    }),
-    fsdb.collection('fridaySupp').onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.fridaySupp=m; render();
-    }),
-    fsdb.collection('submissions').onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.submissions=m; render();
-    }),
-    fsdb.collection('practiceProgress').onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.practiceProgress=m; render();
-    }),
-    fsdb.collection('timerState').onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.timerState=m;
-    }),
-    fsdb.collection('questions').onSnapshot(snap=>{ db.questions = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
-    fsdb.collection('feedbacks').onSnapshot(snap=>{ db.feedbacks = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
-    fsdb.collection('kmm').onSnapshot(snap=>{ db.kmm = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
     fsdb.collection('schoolExams').onSnapshot(snap=>{ db.schoolExams = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
-    fsdb.collection('schoolScores').onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.schoolScores=m; render();
-    }),
     fsdb.collection('weekendSettings').doc('main').onSnapshot(doc=>{
       db.weekendSettings = doc.exists ? doc.data() : {enabled:false};
       render();
@@ -422,12 +401,102 @@ function attachListeners(){
     fsdb.collection('weekendClasses').onSnapshot(snap=>{
       db.weekendClasses = snap.docs.map(d=>({id:d.id,...d.data()})); render();
     }),
-    fsdb.collection('weekendSubmissions').onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.weekendSubmissions=m; render();
-    }),
   ];
   unsubscribers = subs;
   setConnStatus(true);
+}
+
+// 문서ID가 'prefix'로 시작하는 문서만 가져오는 범위 쿼리.
+// (classRecords/weeklyPlans/fridaySupp는 '반ID_날짜', submissions/timerState/weekendSubmissions는
+//  '학생ID_날짜' 형태의 키를 쓰므로, 이 방식으로 "내 것"만 정확히 걸러낼 수 있음)
+function idRangeQuery(colName, prefix){
+  const fp = firebase.firestore.FieldPath.documentId();
+  return fsdb.collection(colName).where(fp, '>=', prefix).where(fp, '<', prefix + '\uf8ff');
+}
+
+// 로그인 이후에만 필요하고, 날짜가 지날수록 계속 쌓이는 "기록" 컬렉션들.
+// 원장은 전체 학생을 관리해야 하니 컬렉션 전체를 구독하고,
+// 학생은 자기 것만 구독해서 Firestore 읽기량을 크게 줄인다.
+// (예전 구조는 로그인 전부터 이 컬렉션들을 전부 구독해서, 학생이 접속할 때마다
+//  학원 전체의 몇 달치 기록을 통째로 다시 읽어와 Firestore 무료 할당량을 초과시켰음 — 2026-09-07 사건)
+function attachRoleListeners(){
+  roleUnsubscribers.forEach(u=>{ try{ u(); }catch(e){} });
+  roleUnsubscribers = [];
+  if(!session) return;
+
+  const isDirector = session.mode === 'director';
+  const stuId = session.studentId || null;
+  const stu = stuId ? studentById(stuId) : null;
+  const clsId = stu ? stu.classId : null;
+  const subs = [];
+
+  // 반ID_날짜 / 반ID_주 형태의 키를 쓰는 컬렉션: 원장은 전체, 학생은 자기 반 것만
+  ['classRecords','weeklyPlans','fridaySupp'].forEach(col=>{
+    if(isDirector){
+      subs.push(fsdb.collection(col).onSnapshot(snap=>{
+        const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db[col]=m; render();
+      }));
+    }else if(clsId){
+      db[col] = {};
+      subs.push(idRangeQuery(col, clsId+'_').onSnapshot(snap=>{
+        const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db[col]=m; render();
+      }));
+    }
+  });
+
+  // 학생ID_날짜(_슬롯) 형태의 키를 쓰는 컬렉션: 원장은 전체, 학생은 자기 것만
+  ['submissions','timerState','weekendSubmissions'].forEach(col=>{
+    if(isDirector){
+      subs.push(fsdb.collection(col).onSnapshot(snap=>{
+        const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db[col]=m; render();
+      }));
+    }else if(stuId){
+      db[col] = {};
+      subs.push(idRangeQuery(col, stuId+'_').onSnapshot(snap=>{
+        const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db[col]=m; render();
+      }));
+    }
+  });
+
+  // practiceProgress: 문서ID가 학생ID 그 자체 하나뿐이라, 학생은 그 문서 하나만 구독
+  if(isDirector){
+    subs.push(fsdb.collection('practiceProgress').onSnapshot(snap=>{
+      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.practiceProgress=m; render();
+    }));
+  }else if(stuId){
+    db.practiceProgress = {};
+    subs.push(fsdb.collection('practiceProgress').doc(stuId).onSnapshot(doc=>{
+      db.practiceProgress = doc.exists ? {[stuId]: doc.data()} : {};
+      render();
+    }));
+  }
+
+  // schoolScores: studentId 필드로 필터링 (키는 examId_학생ID라 접두어 필터는 안 맞음)
+  if(isDirector){
+    subs.push(fsdb.collection('schoolScores').onSnapshot(snap=>{
+      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.schoolScores=m; render();
+    }));
+  }else if(stuId){
+    db.schoolScores = {};
+    subs.push(fsdb.collection('schoolScores').where('studentId','==',stuId).onSnapshot(snap=>{
+      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.schoolScores=m; render();
+    }));
+  }
+
+  // questions / feedbacks / kmm: 자동생성 ID + studentId 필드를 가진 배열형 컬렉션.
+  // 원장은 전체 목록(질문함/피드백 발송이력)이 필요하니 전체, 학생은 studentId로 필터링.
+  ['questions','feedbacks','kmm'].forEach(col=>{
+    if(isDirector){
+      subs.push(fsdb.collection(col).onSnapshot(snap=>{ db[col] = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }));
+    }else if(stuId){
+      db[col] = [];
+      subs.push(fsdb.collection(col).where('studentId','==',stuId).onSnapshot(snap=>{
+        db[col] = snap.docs.map(d=>({id:d.id, ...d.data()})); render();
+      }));
+    }
+  });
+
+  roleUnsubscribers = subs;
 }
 
 let appEntered = false;
@@ -489,6 +558,8 @@ function tryStudentLogin(){
 }
 function saveSessionLocal(){ try{ localStorage.setItem('mnm_session', JSON.stringify(session)); }catch(e){} }
 function logout(){
+  roleUnsubscribers.forEach(u=>{ try{ u(); }catch(e){} });
+  roleUnsubscribers = [];
   session = null;
   try{ localStorage.removeItem('mnm_session'); }catch(e){}
   document.getElementById('appShell').style.display='none';
@@ -682,6 +753,7 @@ function enterApp(){
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appShell').style.display='block';
   currentView = session.mode==='director' ? 'dashboard' : 'studentHome';
+  attachRoleListeners();
   buildNav();
   render();
 }
