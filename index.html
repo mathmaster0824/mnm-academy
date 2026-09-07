@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-07 v68 (Firestore 읽기량 최적화 · 역할별 리스너 분리)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-07 v69 (숙제 리스타트 기준일 9/7로 이동)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -585,7 +585,7 @@ function studentLessonRecords(stuId){
   return recs;
 }
 
-const HOMEWORK_REVIEW_CUTOVER_DATE = '2026-09-01';
+const HOMEWORK_REVIEW_CUTOVER_DATE = '2026-09-07'; // 2026-09-07: 시스템 장애(서버 연결 지연) 사건으로 원장님 요청에 따라 리셋 기준일을 9/7로 이동
 function isLegacyHomeworkDate(date){
   return !!date && String(date) < HOMEWORK_REVIEW_CUTOVER_DATE;
 }
@@ -2943,7 +2943,7 @@ function renderHomeworkReview(){
 
   return `
   <h1 class="page-title">숙제 확인</h1>
-  <p class="page-sub">학생이 제출한 숙제를 확인한 뒤 인정 또는 불합격 처리합니다. 검토대기는 아직 숙제 인정으로 집계되지 않습니다.</p><div style="margin:10px 0 14px;padding:10px 12px;border:1px solid #e5dcc5;border-radius:10px;background:#fffaf0;font-size:12px;">🔒 <b>과거 기록 보호</b> · 2026년 8월 31일까지 숙제는 조회만 가능합니다. 승인·불합격은 2026년 9월 1일 제출분부터 적용됩니다.<br>📌 <b>숙제 검사</b> · 최대 3회. 선생님이 판정할 때 검사 횟수가 올라갑니다. 3차까지 불합격이면 최종 불합격입니다.</div>
+  <p class="page-sub">학생이 제출한 숙제를 확인한 뒤 인정 또는 불합격 처리합니다. 검토대기는 아직 숙제 인정으로 집계되지 않습니다.</p><div style="margin:10px 0 14px;padding:10px 12px;border:1px solid #e5dcc5;border-radius:10px;background:#fffaf0;font-size:12px;">🔒 <b>과거 기록 보호</b> · 2026년 9월 6일까지 숙제는 조회만 가능합니다 (시스템 장애로 인한 리스타트). 승인·불합격은 2026년 9월 7일 제출분부터 적용됩니다.<br>📌 <b>숙제 검사</b> · 최대 3회. 선생님이 판정할 때 검사 횟수가 올라갑니다. 3차까지 불합격이면 최종 불합격입니다.</div>
   <div class="tabs2">
     <button class="${filter==='pending'?'active':''}" onclick="currentSubState.hwFilter='pending';render();">검토대기</button>
     <button class="${filter==='rejected'?'active':''}" onclick="currentSubState.hwFilter='rejected';render();">불합격</button>
@@ -3093,7 +3093,7 @@ async function quickSetTeacherComment(stuId,date,text,btn){
   }
 }
 async function confirmSubmission(stuId,date,btn){
-  if(isLegacyHomeworkDate(date)){ alert('8/31까지의 과거 숙제는 조회만 가능합니다.'); return; }
+  if(isLegacyHomeworkDate(date)){ alert('9/6까지의 과거 숙제는 조회만 가능합니다 (시스템 장애로 인한 리스타트).'); return; }
   const sub = db.submissions[stuId+'_'+date];
   if(!sub){ alert('제출된 숙제가 없습니다.'); return; }
   if(submissionIsFinalRejected(sub)){ alert('3회 검사가 끝난 최종 불합격 숙제입니다.'); return; }
@@ -3108,7 +3108,7 @@ async function confirmSubmission(stuId,date,btn){
   if(!ok && btn){ btn.disabled=false; }
 }
 function rejectSubmission(stuId,date){
-  if(isLegacyHomeworkDate(date)){ alert('8/31까지의 과거 숙제는 조회만 가능합니다.'); return; }
+  if(isLegacyHomeworkDate(date)){ alert('9/6까지의 과거 숙제는 조회만 가능합니다 (시스템 장애로 인한 리스타트).'); return; }
   const s=studentById(stuId);
   const name=s?s.name:'학생';
   const sub=db.submissions[stuId+'_'+date];
@@ -3143,7 +3143,7 @@ function rejectSubmission(stuId,date){
 
 async function resetSubmissionReview(stuId,date){
   if(isLegacyHomeworkDate(date)){
-    alert('8/31까지의 과거 숙제는 기존 기록 보호를 위해 조회만 가능합니다.');
+    alert('9/6까지의 과거 숙제는 기존 기록 보호를 위해 조회만 가능합니다 (시스템 장애로 인한 리스타트).');
     return;
   }
   const key=stuId+'_'+date;
