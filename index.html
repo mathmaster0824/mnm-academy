@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-07 v69 (숙제 리스타트 기준일 9/7로 이동)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v70 (숙제 리스타트 로직 보강 · 제출기록 없는 날도 보호)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -625,24 +625,24 @@ function submissionIsFinalRejected(sub){
 */
 
 function homeworkEffectiveState(sub,date){
-  if(isLegacyHomeworkDate(date)){
-    if(!sub) return 'missing';
-    return submissionReviewState(sub,date);
-  }
+  // 리스타트 기준일 이전은 제출 유무와 무관하게 무조건 '인정'으로 취급한다.
+  if(isLegacyHomeworkDate(date)) return 'approved';
   if(!sub) return (date < todayISO()) ? 'missing' : 'open';
   if(submissionIsApproved(sub,date)) return 'approved';
   if(submissionIsFinalRejected(sub)) return 'finalRejected';
   return submissionReviewState(sub,date); // 'pending' 또는 'rejected'
 }
 function homeworkCountsAsCompleted(sub,date){
-  if(!sub) return false;
+  // 리스타트 기준일 이전은 제출 유무와 무관하게 무조건 완료로 취급한다.
   if(isLegacyHomeworkDate(date)) return true;
+  if(!sub) return false;
 
   // 최종 인정 여부는 선생님의 판정이 우선한다.
   return submissionIsApproved(sub,date);
 }
 function homeworkCountsAsMissed(sub,date){
-  if(isLegacyHomeworkDate(date)) return !sub;
+  // 리스타트 기준일 이전은 제출 유무와 무관하게 무조건 미이행이 아니라고 취급한다.
+  if(isLegacyHomeworkDate(date)) return false;
   if(!sub) return date < todayISO();
 
   // 선생님이 인정한 기록은 어떤 경우에도 미이행/경고 대상으로 되돌리지 않는다.
@@ -653,9 +653,11 @@ function homeworkCountsAsMissed(sub,date){
   return false;
 }
 function submissionReviewState(sub,date){
-  if(!sub) return 'missing';
-  const recordDate=date || sub.date || '';
+  const recordDate = date || (sub && sub.date) || '';
+  // 리스타트 기준일 이전은 제출 유무와 무관하게 무조건 보호(인정)한다.
+  // (카톡 등 앱 밖으로 제출해서 Firestore에 기록 자체가 없는 날도 여기 해당됨 — 2026-09-07 리스타트)
   if(isLegacyHomeworkDate(recordDate)) return 'approved';
+  if(!sub) return 'missing';
   const status = String(sub.status||'').trim();
   if(!status) return 'approved'; // 기존 레거시 제출 보호
   if(status==='확인' || status==='approved') return 'approved';
