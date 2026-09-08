@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v70 (숙제 리스타트 로직 보강 · 제출기록 없는 날도 보호)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v71 (주말학습 원장 수동인정 기능 추가)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -2278,6 +2278,18 @@ function weekendWeekStart(dateISO){
   d.setDate(d.getDate()+delta);
   return toLocalISODate(d);
 }
+async function toggleWeekendManualApprove(stuId, wk, slot){
+  const key = weekendSubmissionKey(stuId, wk, slot);
+  const existing = db.weekendSubmissions[key];
+  const hasPhoto = existing && (existing.photo || (existing.photos && existing.photos.length));
+  if(hasPhoto) return; // 실제 사진 제출 건은 여기서 건드리지 않음 (사진 보기는 기존 클릭으로 유지)
+  if(existing && existing.manual){
+    await fsDelete('weekendSubmissions', key); // 수동인정 취소
+  }else{
+    // 원장이 사진 없이 직접 '인정' 처리 (예: 시스템 장애로 다른 경로로 확인한 경우)
+    await fsSet('weekendSubmissions', key, {studentId:stuId, weekStart:wk, slot, photos:[], manual:true, submittedAt:new Date().toISOString()});
+  }
+}
 function weekendSubmissionKey(stuId,wk,slot){ return `${stuId}_${wk}_${slot}`; }
 function weekendSubmission(stuId,wk,slot){ return db.weekendSubmissions[weekendSubmissionKey(stuId,wk,slot)] || null; }
 function weekendCountForStudent(stuId,wk){
@@ -2338,7 +2350,7 @@ function renderWeekendStudyAdmin(){
         <h3 style="margin:0;">이번 주 인증 현황</h3>
         <input type="date" value="${wk}" onchange="currentSubState.weekendWeek=weekendWeekStart(this.value);render();">
       </div>
-      <div style="font-size:12px;color:#8a8674;margin:6px 0 12px;">주 시작 ${wk} · ○ 사진인증 / × 미인증</div>
+      <div style="font-size:12px;color:#8a8674;margin:6px 0 12px;">주 시작 ${wk} · ○ 사진인증 / ○ 수동인정(원장이 직접 처리) / × 미인증 — ×를 누르면 사진 없이 바로 인정 처리, 수동인정을 다시 누르면 취소돼요.</div>
       ${(db.weekendClasses||[]).map(c=>{
         const students=(c.studentIds||[]).map(studentById).filter(Boolean);
         return `<div style="margin-top:14px;">
@@ -2350,7 +2362,10 @@ function renderWeekendStudyAdmin(){
               ${WEEKEND_SLOTS.map(x=>{
                 const sub=weekendSubmission(s.id,wk,x.id);
                 const photoCount = sub ? (sub.photos ? sub.photos.length : (sub.photo?1:0)) : 0;
-                return `<td>${sub?`<span class="badge green" style="cursor:pointer;" onclick="openLightboxSet('weekend','${weekendSubmissionKey(s.id,wk,x.id)}','photos',0)">○ 인증${photoCount>1?` (${photoCount}장)`:''}</span>`:'<span class="badge gray">×</span>'}</td>`;
+                const key = weekendSubmissionKey(s.id,wk,x.id);
+                if(photoCount>0) return `<td><span class="badge green" style="cursor:pointer;" onclick="openLightboxSet('weekend','${key}','photos',0)">○ 인증${photoCount>1?` (${photoCount}장)`:''}</span></td>`;
+                if(sub && sub.manual) return `<td><span class="badge yellow" style="cursor:pointer;" onclick="toggleWeekendManualApprove('${s.id}','${wk}','${x.id}')" title="눌러서 수동인정 취소">○ 수동인정</span></td>`;
+                return `<td><span class="badge gray" style="cursor:pointer;" onclick="toggleWeekendManualApprove('${s.id}','${wk}','${x.id}')" title="눌러서 사진 없이 바로 인정 처리">×</span></td>`;
               }).join('')}
               <td><b>${weekendCountForStudent(s.id,wk)}/4</b></td>
             </tr>`).join('')}
