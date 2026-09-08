@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v71 (주말학습 원장 수동인정 기능 추가)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v72 (교재 체계 전면 재정리 · 개념/유형/심화 버튼)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -1519,9 +1519,11 @@ function renderClassDetail(cls){
 
   <div class="card">
     <h3 style="margin-top:0;">📖 반 전체 교재 일괄 등록</h3>
-    <p style="font-size:12px;color:#8a8674;margin:0 0 8px;">학년학기를 고르면, 반 학생 전체에게 그 학기 표준 교재(초등: 개념책+유형책 / 중등: 개념책+익힘책)가 한 번에 "누적 진도 현황"에 등록돼요. 이미 등록된 학생은 건너뛰어요.</p>
+    <p style="font-size:12px;color:#8a8674;margin:0 0 8px;">학년학기·분류·묶음을 고르면, 반 학생 전체에게 그 묶음의 교재들이 한 번에 "누적 진도 현황"에 등록돼요. 이미 등록된 학생은 건너뛰어요.</p>
     <div class="row">
-      <select id="bulkTrackCourseSel"><option value="">학년학기 선택</option>${sortedCourses().map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
+      <select id="bulkTrackCourseSel" onchange="onBulkTrackCourseChange()"><option value="">① 학년학기 선택</option>${sortedCourses().map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
+      <select id="bulkTrackCategorySel" onchange="onBulkTrackCategoryChange()"><option value="">② 분류 선택</option></select>
+      <select id="bulkTrackBundleSel"><option value="">③ 묶음 선택</option></select>
       <button class="btn sm gold" onclick="applyBulkTrack('${cls.id}', this)">반 전체 등록</button>
     </div>
   </div>
@@ -1727,11 +1729,35 @@ function suggestedHomeworkLevel(stuId, dayGroup, date){
   const ratio = submittedCount/totalRangeDays;
   return ratio>=0.8?'상':ratio>=0.5?'중':'하';
 }
+// 2026-09-08: 원장님 요청으로 교재 체계 전면 재정리.
+// 구조: 학년군('초'/'중'/'고') → 분류(개념/유형/심화 등) → 묶음 목록(묶음 하나 = 그 분류에서 같이 등록할 책들).
+// 분류 안에 묶음이 2개 이상이면 "택1" (그중 하나를 선택해서 등록)이라는 뜻.
 const BOOK_PRESETS = {
-  '초': ['개념책','유형책','연산책','쎈','최상위','에이급'],
-  '중': ['개념책','익힘책','최상위','일품','고쟁이','내신기출'],
-  '고': ['라쎈 1회독','라쎈 2회독','시너지 1회독','시너지 2회독','올림포스','내신기출', 'CODI']
+  '초': {
+    '개념': [['개념책','유형책','연산책']],
+    '유형': [['개념책 2회독','유형책 2회독','쎈']],
+    '심화': [['쎈 2회독','최상위'], ['쎈 2회독','에이급']] // 택1
+  },
+  '중': {
+    '개념': [['개념책','익힘책','연산책']],
+    '유형': [['익힘책 2회독','최상위라이트','일품']],
+    '심화': [['최상위 2회독','일품 2회독','고쟁이']]
+  },
+  '고': {
+    '특강': [['라쎈']],
+    '개념': [['CODI']],
+    '유형': [['라쎈 2회독','시너지']],
+    '심화': [['고쟁이']],
+    '내신': [['시너지 2회독','올림포스(고난도)']]
+  }
 };
+function allPresetBookNames(){
+  const names = new Set();
+  Object.values(BOOK_PRESETS).forEach(cats=>{
+    Object.values(cats).forEach(bundles=>{ bundles.forEach(bundle=>{ bundle.forEach(b=>names.add(b)); }); });
+  });
+  return names;
+}
 const UNIT_LIST_OVERRIDES = {
   '[중등] 중1-1학기': ['1. 소인수분해','2. 정수와 유리수','3. 문자와 식','4. 그래프'],
   '[중등] 중1-2학기': ['1. 기본도형','2. 평면도형','3. 입체도형','4. 통계'],
@@ -1796,55 +1822,46 @@ function renderOneTrack(stuId, track, date){
     </div>` : ''}
   </div>`;
 }
-function bookBundleForCourse(courseId){
-  const course = courseById(courseId);
-  if(!course) return [];
-  if(course.name.startsWith('[초등]')) return ['개념책','유형책'];
-  if(course.name.startsWith('[중등]')) return ['개념책','익힘책'];
-  return [];
-}
 function renderAddTrackForm(stuId){
   currentSubState._newTrackDraft = currentSubState._newTrackDraft || {};
-  const draft = currentSubState._newTrackDraft[stuId] = currentSubState._newTrackDraft[stuId] || {book:'', courseId:''};
+  const draft = currentSubState._newTrackDraft[stuId] = currentSubState._newTrackDraft[stuId] || {courseId:'', category:''};
   const s = studentById(stuId);
-  const gradeLevel = s.grade ? s.grade[0] : '';
-  const doneBooks = new Set((db.practiceProgress[stuId]?.tracks||[]).filter(t=>t.done).map(t=>t.book));
-  const bookOptions = [...new Set([...(BOOK_PRESETS[gradeLevel]||[]), ...Array.from(collectAllBookNames())])].filter(b=>!doneBooks.has(b));
-  const bundle = draft.courseId ? bookBundleForCourse(draft.courseId) : [];
+  const gradeLevel = s && s.grade ? s.grade[0] : '';
+  const levelPresets = BOOK_PRESETS[gradeLevel] || {};
+  const categories = Object.keys(levelPresets);
+  if(!draft.category && categories.length) draft.category = categories[0];
+  const bundles = levelPresets[draft.category] || [];
   return `<div style="background:#fff3f3;border-radius:8px;padding:6px 8px;margin-top:4px;">
-    <select style="width:100%;font-size:11px;margin-bottom:4px;" onchange="currentSubState._newTrackDraft['${stuId}'].courseId=this.value;render();">
+    <select style="width:100%;font-size:11px;margin-bottom:6px;" onchange="currentSubState._newTrackDraft['${stuId}'].courseId=this.value;render();">
       <option value="">① 학년학기 먼저 선택</option>
       ${sortedCourses().map(c=>`<option value="${c.id}" ${draft.courseId===c.id?'selected':''}>${c.name}</option>`).join('')}
     </select>
-    ${bundle.length ? `<button class="btn sm gold" style="width:100%;font-size:11px;padding:5px;margin-bottom:6px;" onclick="confirmAddBundle('${stuId}')">📦 ${bundle.join(' + ')} 한번에 등록</button>
-    <div style="font-size:10px;color:#8a8674;text-align:center;margin-bottom:6px;">— 또는 다른 교재 하나만 등록 —</div>` : ''}
-    <select style="width:100%;font-size:11px;margin-bottom:4px;" onchange="currentSubState._newTrackDraft['${stuId}'].book=this.value;">
-      <option value="">② 교재 선택</option>
-      ${bookOptions.map(b=>`<option value="${b}" ${draft.book===b?'selected':''}>${b}</option>`).join('')}
-    </select>
-    <div class="row" style="gap:4px;">
-      <button class="btn sm outline" style="font-size:10px;padding:3px 8px;" onclick="confirmAddTrack('${stuId}')">이 교재만 추가</button>
+    ${categories.length ? `
+    <div style="font-size:10px;color:#8a8674;margin-bottom:4px;">② 분류 선택</div>
+    <div class="row" style="gap:4px;margin-bottom:8px;flex-wrap:wrap;">
+      ${categories.map(cat=>`<button class="btn sm ${draft.category===cat?'gold':'outline'}" style="font-size:10.5px;padding:3px 8px;" onclick="currentSubState._newTrackDraft['${stuId}'].category='${cat}';render();">${cat}</button>`).join('')}
+    </div>
+    ${bundles.length ? `<div style="font-size:10px;color:#8a8674;margin-bottom:4px;">③ ${bundles.length>1?'아래 중 하나를 선택해서 등록하세요 (택1)':'아래 교재를 한번에 등록하세요'}</div>
+    ${bundles.map((b,i)=>`<button class="btn sm gold" style="width:100%;font-size:11px;padding:6px;margin-bottom:4px;" onclick="confirmAddPresetBundle('${stuId}',${i})">📦 ${b.join(' + ')}</button>`).join('')}` : '<div style="font-size:11px;color:#aaa;">이 분류에 등록된 교재가 없어요.</div>'}
+    ` : '<div style="font-size:11px;color:#aaa;">이 학생의 학년 정보가 없어서 교재 목록을 표시할 수 없어요. 학생 정보에서 학년을 먼저 입력해주세요.</div>'}
+    <div class="row" style="gap:4px;margin-top:2px;">
       <button class="btn sm outline" style="font-size:10px;padding:3px 8px;" onclick="currentSubState._addingTrack['${stuId}']=false;render();">취소</button>
     </div>
   </div>`;
 }
-async function confirmAddBundle(stuId){
+async function confirmAddPresetBundle(stuId, bundleIndex){
   const draft = currentSubState._newTrackDraft[stuId];
-  if(!draft || !draft.courseId){ alert('학년학기를 선택해주세요.'); return; }
-  const bundle = bookBundleForCourse(draft.courseId);
+  if(!draft || !draft.courseId){ alert('학년학기를 먼저 선택해주세요.'); return; }
+  const s = studentById(stuId);
+  const gradeLevel = s && s.grade ? s.grade[0] : '';
+  const bundles = (BOOK_PRESETS[gradeLevel]||{})[draft.category] || [];
+  const bundle = bundles[bundleIndex];
+  if(!bundle){ alert('교재 묶음을 찾을 수 없어요.'); return; }
   const rec = db.practiceProgress[stuId] || {tracks:[]};
   const existing = new Set((rec.tracks||[]).filter(t=>t.courseId===draft.courseId).map(t=>t.book));
   const newTracks = bundle.filter(b=>!existing.has(b)).map(b=>({id:uid('trk'), book:b, courseId:draft.courseId, completedUnits:[], done:false}));
   if(!newTracks.length){ alert('이미 이 학년학기에 등록되어 있어요.'); return; }
   const tracks = [...(rec.tracks||[]), ...newTracks];
-  const ok = await fsSet('practiceProgress', stuId, {tracks});
-  if(ok){ currentSubState._addingTrack[stuId] = false; delete currentSubState._newTrackDraft[stuId]; render(); }
-}
-async function confirmAddTrack(stuId){
-  const draft = currentSubState._newTrackDraft[stuId];
-  if(!draft || !draft.book || !draft.courseId){ alert('교재와 학년학기를 모두 선택해주세요.'); return; }
-  const rec = db.practiceProgress[stuId] || {tracks:[]};
-  const tracks = [...(rec.tracks||[]), {id:uid('trk'), book:draft.book, courseId:draft.courseId, completedUnits:[], done:false}];
   const ok = await fsSet('practiceProgress', stuId, {tracks});
   if(ok){ currentSubState._addingTrack[stuId] = false; delete currentSubState._newTrackDraft[stuId]; render(); }
 }
@@ -2131,11 +2148,38 @@ function onBulkCourseChange(){
   const sel = document.getElementById('bulkStep');
   sel.innerHTML = `<option value="">${course?'STEP 선택':'STEP (학년학기 먼저 선택)'}</option>` + (course ? (course.steps||[]).map(st=>`<option value="${st.id}">${st.name}</option>`).join('') : '');
 }
+function courseGradeLevel(courseId){
+  const c = courseById(courseId);
+  if(!c) return '';
+  if(c.name.startsWith('[초등]')) return '초';
+  if(c.name.startsWith('[중등]')) return '중';
+  if(c.name.startsWith('[고등]')) return '고';
+  return '';
+}
+function onBulkTrackCourseChange(){
+  const courseId = document.getElementById('bulkTrackCourseSel').value;
+  const level = courseGradeLevel(courseId);
+  const cats = Object.keys(BOOK_PRESETS[level]||{});
+  document.getElementById('bulkTrackCategorySel').innerHTML = `<option value="">② 분류 선택</option>` + cats.map(c=>`<option value="${c}">${c}</option>`).join('');
+  document.getElementById('bulkTrackBundleSel').innerHTML = `<option value="">③ 묶음 선택</option>`;
+}
+function onBulkTrackCategoryChange(){
+  const courseId = document.getElementById('bulkTrackCourseSel').value;
+  const level = courseGradeLevel(courseId);
+  const category = document.getElementById('bulkTrackCategorySel').value;
+  const bundles = (BOOK_PRESETS[level]||{})[category] || [];
+  document.getElementById('bulkTrackBundleSel').innerHTML = bundles.length
+    ? bundles.map((b,i)=>`<option value="${i}">${b.join(' + ')}</option>`).join('')
+    : `<option value="">묶음 없음</option>`;
+}
 async function applyBulkTrack(clsId, btn){
   const courseId = document.getElementById('bulkTrackCourseSel').value;
-  if(!courseId){ alert('학년학기를 선택해주세요.'); return; }
-  const bundle = bookBundleForCourse(courseId);
-  if(!bundle.length){ alert('이 학년학기는 자동으로 등록할 표준 교재 세트가 없어요 (초등/중등만 지원해요). 학생별로 개별 등록해주세요.'); return; }
+  const category = document.getElementById('bulkTrackCategorySel').value;
+  const bundleIdx = document.getElementById('bulkTrackBundleSel').value;
+  if(!courseId || !category || bundleIdx===''){ alert('학년학기·분류·묶음을 모두 선택해주세요.'); return; }
+  const level = courseGradeLevel(courseId);
+  const bundle = ((BOOK_PRESETS[level]||{})[category]||[])[Number(bundleIdx)];
+  if(!bundle || !bundle.length){ alert('선택한 묶음을 찾을 수 없어요.'); return; }
   const cls = classById(clsId);
   const students = (cls.studentIds||[]).map(studentById).filter(Boolean);
   const original = btn.textContent;
@@ -2540,7 +2584,7 @@ function renderVideoLib(){
   let list = filter==='all'? [...db.videos] : db.videos.filter(v=>v.courseId===filter);
   if(filter!=='all' && unitFilter!=='all') list = list.filter(v=>v.unit===unitFilter);
   if(search.trim()) list = list.filter(v=>v.title.toLowerCase().includes(search.trim().toLowerCase()));
-  const allBooks = [...new Set([...Object.values(BOOK_PRESETS).flat(), ...Array.from(collectAllBookNames())])];
+  const allBooks = [...new Set([...Array.from(allPresetBookNames()), ...Array.from(collectAllBookNames())])];
   const courseOrderIdx = c=>{ const idx=COURSE_ORDER.indexOf(courseById(c)?.name); return idx===-1?999:idx; };
   list.sort((a,b)=>{
     const ca = courseOrderIdx(a.courseId), cb = courseOrderIdx(b.courseId);
@@ -2617,7 +2661,7 @@ function renderVideoRow(v){
     </tr>`;
   }
   const units = v.courseId ? courseUnitsList(v.courseId) : [];
-  const allBooks = [...new Set([...Object.values(BOOK_PRESETS).flat(), ...Array.from(collectAllBookNames())])];
+  const allBooks = [...new Set([...Array.from(allPresetBookNames()), ...Array.from(collectAllBookNames())])];
   return `<tr style="background:#fff8e6;">
     <td colspan="10">
       <div class="row" style="flex-wrap:wrap;">
