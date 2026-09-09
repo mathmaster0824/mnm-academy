@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v72 (교재 체계 전면 재정리 · 개념/유형/심화 버튼)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v73 (질문 답변 사진 삭제 기능 추가)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -3751,12 +3751,18 @@ function renderQnaDirector(){
       <div style="margin-top:10px;">
         <textarea rows="2" placeholder="답변 메모" id="ans_${q.id}">${q.answerText||''}</textarea>
         <input type="file" accept="image/*" multiple id="ansPhoto_${q.id}" style="margin-top:6px;">
-        <div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<img src="${p}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})">`).join('')}</div>
+        <div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<div class="thumb-wrap"><img src="${p}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})"><button class="thumb-x" onclick="removeAnswerPhoto('${q.id}',${i})">✕</button></div>`).join('')}</div>
         <button class="btn sm gold" style="margin-top:8px;" onclick="answerQuestion('${q.id}')">답변 등록</button>
       </div>
     </div>`;
   }).join('') : `<div class="empty"><div class="big">💬</div>표시할 질문이 없어요.</div>`}
   `;
+}
+async function removeAnswerPhoto(qId, idx){
+  const q = db.questions.find(x=>x.id===qId);
+  if(!q) return;
+  const answerPhotos = (q.answerPhotos||[]).filter((_,i)=>i!==idx);
+  await fsUpdate('questions', qId, {answerPhotos});
 }
 async function answerQuestion(qId){
   const q = db.questions.find(x=>x.id===qId);
