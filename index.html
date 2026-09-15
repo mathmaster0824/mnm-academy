@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v74 (입력 중 화면 리셋 버그 수정)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v75 (내신 성적 페이지 표 형태로 재구성)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -4310,84 +4310,63 @@ function renderSchoolExams(){
     extractGradeNumber(s.grade)===selectedGrade
   ));
 
+  // 과거 → 최근 순으로 정렬해서, 표에서 왼쪽부터 지난 시험들이 나오고 가장 오른쪽(최신)이 이번 시험 입력칸이 되게 한다.
   const exams = (db.schoolExams||[])
     .filter(e=>e.school===selectedSchool && Number(e.grade)===selectedGrade)
-    .sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+    .sort((a,b)=>(a.date||'').localeCompare(b.date||''));
 
-  if(currentSubState.examId && !exams.some(e=>e.id===currentSubState.examId)){
-    currentSubState.examId = '';
-  }
-  if(!currentSubState.examId && exams.length){
-    currentSubState.examId = exams[0].id;
-  }
-  const selectedExam = exams.find(e=>e.id===currentSubState.examId) || null;
-
-  const scoreRows = students.map(st=>{
-    const history = schoolExamHistoryForStudent(st.id)
-      .filter(h=>h.school===selectedSchool && Number(h.grade)===selectedGrade);
-    const nums = history.map(h=>Number(h.score)).filter(Number.isFinite);
-    const avg = nums.length ? Math.round(nums.reduce((a,b)=>a+b,0)/nums.length*10)/10 : null;
-    const latest = history[0] || null;
-    const key = selectedExam ? selectedExam.id+'_'+st.id : '';
-    const val = selectedExam ? (db.schoolScores[key]?.score ?? '') : '';
-
-    return `
-      <div class="card" style="margin-bottom:10px;">
-        <div class="row between" style="gap:10px;flex-wrap:wrap;">
-          <div>
-            <div style="font-weight:900;font-size:15px;">${st.name}</div>
-            <div class="muted" style="font-size:11px;">${st.school||''} · ${st.grade||''}</div>
-          </div>
-          <div class="row" style="gap:6px;flex-wrap:wrap;">
-            <span class="badge gray">누적 ${history.length}회</span>
-            ${avg!==null?`<span class="badge gray">평균 ${avg}점</span>`:''}
-            ${latest?`<span class="badge gray">최근 ${latest.score}점</span>`:''}
-          </div>
-        </div>
-
-        ${selectedExam ? `
-          <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);">
-            <div class="row between" style="gap:10px;flex-wrap:wrap;">
-              <div>
-                <b>${selectedExam.examName||'시험'}</b>
-                <div class="muted" style="font-size:11px;margin-top:2px;">${fmtDate(selectedExam.date)} · 범위 ${selectedExam.range||'-'}</div>
-              </div>
-              <div class="row" style="gap:6px;align-items:center;">
-                <input type="number" min="0" max="100" step="1"
-                  value="${val}"
-                  placeholder="점수"
-                  style="width:86px;"
-                  onchange="saveSchoolScore('${selectedExam.id}','${st.id}',this.value)">
-                <b>점</b>
-              </div>
-            </div>
-          </div>` : `
-          <div class="empty" style="margin-top:10px;">시험을 먼저 등록해주세요.</div>`}
-
-        <details style="margin-top:10px;">
-          <summary style="cursor:pointer;font-weight:700;font-size:12px;">누적 내신 기록 보기</summary>
-          <div style="margin-top:10px;overflow-x:auto;">${renderSchoolExamHistoryTable(st.id)}</div>
-        </details>
-      </div>`;
-  }).join('');
+  const scoreTable = `
+  <div class="card">
+    <div class="row between" style="gap:10px;flex-wrap:wrap;margin-bottom:4px;">
+      <div>
+        <h3 style="margin:0;">${selectedSchool} ${selectedGrade}학년 성적표</h3>
+        <div class="muted" style="font-size:11px;margin-top:4px;">재원생 ${students.length}명 · 지난 시험 점수 옆에 바로 이번 시험 점수를 입력하세요 (가장 오른쪽 노란 칸이 최신 시험). 입력하면 학생 개인페이지에도 자동 누적돼요.</div>
+      </div>
+    </div>
+    ${!exams.length ? `<div class="empty" style="margin-top:10px;">아직 등록된 시험이 없어요. 아래 "시험 추가"에서 먼저 등록해주세요.</div>`
+    : !students.length ? `<div class="empty" style="margin-top:10px;">${selectedSchool} ${selectedGrade}학년에 등록된 재원생이 없어요.</div>`
+    : `<div style="overflow-x:auto;margin-top:10px;">
+      <table style="width:100%;border-collapse:collapse;">
+        <tr>
+          <th style="text-align:left;position:sticky;left:0;background:#fff;z-index:1;min-width:70px;">학생</th>
+          ${exams.map((e,i)=>`<th style="font-size:10px;min-width:66px;padding:4px 2px;${i===exams.length-1?'background:#fff3d0;':''}">${fmtDate(e.date).slice(5)}<br>${escapeHtml(e.examName||'시험')}</th>`).join('')}
+          <th style="font-size:10.5px;min-width:50px;">평균</th>
+        </tr>
+        ${students.map(st=>{
+          const scores = exams.map(e=> db.schoolScores[e.id+'_'+st.id]?.score ?? '');
+          const nums = scores.filter(v=>v!==''&&v!=null).map(Number).filter(Number.isFinite);
+          const avg = nums.length ? Math.round(nums.reduce((a,b)=>a+b,0)/nums.length*10)/10 : null;
+          return `<tr>
+            <td style="position:sticky;left:0;background:#fff;z-index:1;"><b style="font-size:12.5px;">${st.name}</b></td>
+            ${exams.map((e,i)=>`<td style="text-align:center;padding:3px 2px;${i===exams.length-1?'background:#fffaf0;':''}">
+              <input type="number" min="0" max="100" step="1" value="${scores[i]}" style="width:50px;text-align:center;font-size:12px;padding:3px;" onchange="saveSchoolScore('${e.id}','${st.id}',this.value)">
+            </td>`).join('')}
+            <td style="text-align:center;font-size:12px;">${avg!==null?avg:'-'}</td>
+          </tr>`;
+        }).join('')}
+      </table>
+    </div>`}
+  </div>`;
 
   return `
   <h1 class="page-title">🏫 내신 성적</h1>
-  <p class="page-sub">학교 → 학년 → 시험을 선택해 학생별 점수를 입력하고, 누적 성적까지 한 화면에서 확인합니다.</p>
+  <p class="page-sub">달력에서 전체 학교의 시험 일정을 한눈에 보고, 아래 표에서 학교·학년별로 지난 점수 옆에 바로 이번 시험 점수를 입력합니다.</p>
 
   ${renderSchoolExamCalendar()}
 
   <div class="card">
     <h3 style="margin-top:0;">학교 · 학년 선택</h3>
     <div class="row" style="gap:8px;flex-wrap:wrap;">
-      <select onchange="currentSubState.examSchool=this.value;currentSubState.examGrade=1;currentSubState.examId='';render();">
+      <select onchange="currentSubState.examSchool=this.value;currentSubState.examGrade=1;render();">
         ${schools.map(sc=>`<option value="${sc}" ${sc===selectedSchool?'selected':''}>${sc}</option>`).join('')}
       </select>
-      <select onchange="currentSubState.examGrade=Number(this.value);currentSubState.examId='';render();">
+      <select onchange="currentSubState.examGrade=Number(this.value);render();">
         ${[1,2,3].map(g=>`<option value="${g}" ${g===selectedGrade?'selected':''}>${g}학년</option>`).join('')}
       </select>
     </div>
   </div>
+
+  ${scoreTable}
 
   <div class="card">
     <h3 style="margin-top:0;">+ ${selectedSchool} ${selectedGrade}학년 시험 추가</h3>
@@ -4399,43 +4378,17 @@ function renderSchoolExams(){
       <input type="date" id="examDate" value="${todayISO()}">
       <button class="btn sm gold" onclick="addSchoolExam()">시험 등록</button>
     </div>
-  </div>
-
-  <div class="card">
-    <div class="row between" style="gap:10px;flex-wrap:wrap;">
-      <div>
-        <h3 style="margin:0;">시험 선택</h3>
-        <div class="muted" style="font-size:11px;margin-top:4px;">${exams.length}개 시험 등록</div>
-      </div>
-      <select onchange="currentSubState.examId=this.value;render();" ${exams.length?'':'disabled'}>
-        ${exams.length
-          ? exams.map(e=>`<option value="${e.id}" ${e.id===currentSubState.examId?'selected':''}>${fmtDate(e.date)} · ${e.examName||'시험'}</option>`).join('')
-          : `<option>등록된 시험 없음</option>`}
-      </select>
-    </div>
-
-    ${selectedExam ? `
-      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);">
-        <div class="row between" style="gap:8px;flex-wrap:wrap;">
-          <div>
-            <b>${selectedExam.examName}</b> · ${fmtDate(selectedExam.date)}
-            <div class="muted" style="font-size:11px;margin-top:3px;">범위: ${selectedExam.range||'-'}</div>
-          </div>
-          <button class="btn sm outline" onclick="deleteSchoolExam('${selectedExam.id}')">시험 삭제</button>
+    ${exams.length ? `<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line);">
+      <div class="muted" style="font-size:11px;margin-bottom:6px;">등록된 시험 관리 (범위 수정 · 삭제)</div>
+      ${exams.slice().reverse().map(e=>`<div class="row between" style="padding:5px 0;font-size:12px;flex-wrap:wrap;gap:6px;">
+        <div>${fmtDate(e.date)} · <b>${escapeHtml(e.examName||'시험')}</b> · 범위:
+          <input type="text" id="examRangeEdit_${e.id}" value="${e.range||''}" style="width:120px;font-size:11px;">
+          <button class="btn sm outline" style="font-size:10px;padding:2px 6px;" onclick="saveExamRange('${e.id}', this)">저장</button>
         </div>
-      </div>` : ''}
+        <button class="btn sm outline" style="font-size:10px;padding:2px 6px;" onclick="deleteSchoolExam('${e.id}')">삭제</button>
+      </div>`).join('')}
+    </div>` : ''}
   </div>
-
-  <div class="card">
-    <div class="row between" style="gap:10px;flex-wrap:wrap;">
-      <div>
-        <h3 style="margin:0;">${selectedSchool} ${selectedGrade}학년 학생 점수</h3>
-        <div class="muted" style="font-size:11px;margin-top:4px;">재원생 ${students.length}명 · 입력한 점수는 학생 개인페이지에도 자동 누적</div>
-      </div>
-    </div>
-  </div>
-
-  ${scoreRows || `<div class="empty">${selectedSchool} ${selectedGrade}학년에 등록된 재원생이 없어요.</div>`}
   `;
 }
 function shiftExamMonth(delta){
