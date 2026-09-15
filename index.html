@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v73 (질문 답변 사진 삭제 기능 추가)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v74 (입력 중 화면 리셋 버그 수정)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -380,26 +380,26 @@ function attachCoreListeners(){
       }
       listenersReady.settings = true;
       maybeFinishLoading();
-      render();
+      scheduleRender();
     }, err=>{ setConnStatus(false); }),
 
     fsdb.collection('students').onSnapshot(snap=>{
       db.students = snap.docs.map(d=>({id:d.id, ...d.data()}));
       listenersReady.students = true;
       maybeFinishLoading();
-      render();
+      scheduleRender();
     }, err=>{ setConnStatus(false); }),
 
-    fsdb.collection('classes').onSnapshot(snap=>{ db.classes = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
-    fsdb.collection('courses').onSnapshot(snap=>{ db.courses = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
-    fsdb.collection('videos').onSnapshot(snap=>{ db.videos = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
-    fsdb.collection('schoolExams').onSnapshot(snap=>{ db.schoolExams = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }),
+    fsdb.collection('classes').onSnapshot(snap=>{ db.classes = snap.docs.map(d=>({id:d.id, ...d.data()})); scheduleRender(); }),
+    fsdb.collection('courses').onSnapshot(snap=>{ db.courses = snap.docs.map(d=>({id:d.id, ...d.data()})); scheduleRender(); }),
+    fsdb.collection('videos').onSnapshot(snap=>{ db.videos = snap.docs.map(d=>({id:d.id, ...d.data()})); scheduleRender(); }),
+    fsdb.collection('schoolExams').onSnapshot(snap=>{ db.schoolExams = snap.docs.map(d=>({id:d.id, ...d.data()})); scheduleRender(); }),
     fsdb.collection('weekendSettings').doc('main').onSnapshot(doc=>{
       db.weekendSettings = doc.exists ? doc.data() : {enabled:false};
-      render();
+      scheduleRender();
     }),
     fsdb.collection('weekendClasses').onSnapshot(snap=>{
-      db.weekendClasses = snap.docs.map(d=>({id:d.id,...d.data()})); render();
+      db.weekendClasses = snap.docs.map(d=>({id:d.id,...d.data()})); scheduleRender();
     }),
   ];
   unsubscribers = subs;
@@ -434,12 +434,12 @@ function attachRoleListeners(){
   ['classRecords','weeklyPlans','fridaySupp'].forEach(col=>{
     if(isDirector){
       subs.push(fsdb.collection(col).onSnapshot(snap=>{
-        const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db[col]=m; render();
+        const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db[col]=m; scheduleRender();
       }));
     }else if(clsId){
       db[col] = {};
       subs.push(idRangeQuery(col, clsId+'_').onSnapshot(snap=>{
-        const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db[col]=m; render();
+        const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db[col]=m; scheduleRender();
       }));
     }
   });
@@ -448,12 +448,12 @@ function attachRoleListeners(){
   ['submissions','timerState','weekendSubmissions'].forEach(col=>{
     if(isDirector){
       subs.push(fsdb.collection(col).onSnapshot(snap=>{
-        const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db[col]=m; render();
+        const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db[col]=m; scheduleRender();
       }));
     }else if(stuId){
       db[col] = {};
       subs.push(idRangeQuery(col, stuId+'_').onSnapshot(snap=>{
-        const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db[col]=m; render();
+        const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db[col]=m; scheduleRender();
       }));
     }
   });
@@ -461,25 +461,25 @@ function attachRoleListeners(){
   // practiceProgress: 문서ID가 학생ID 그 자체 하나뿐이라, 학생은 그 문서 하나만 구독
   if(isDirector){
     subs.push(fsdb.collection('practiceProgress').onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.practiceProgress=m; render();
+      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.practiceProgress=m; scheduleRender();
     }));
   }else if(stuId){
     db.practiceProgress = {};
     subs.push(fsdb.collection('practiceProgress').doc(stuId).onSnapshot(doc=>{
       db.practiceProgress = doc.exists ? {[stuId]: doc.data()} : {};
-      render();
+      scheduleRender();
     }));
   }
 
   // schoolScores: studentId 필드로 필터링 (키는 examId_학생ID라 접두어 필터는 안 맞음)
   if(isDirector){
     subs.push(fsdb.collection('schoolScores').onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.schoolScores=m; render();
+      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.schoolScores=m; scheduleRender();
     }));
   }else if(stuId){
     db.schoolScores = {};
     subs.push(fsdb.collection('schoolScores').where('studentId','==',stuId).onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.schoolScores=m; render();
+      const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.schoolScores=m; scheduleRender();
     }));
   }
 
@@ -487,11 +487,11 @@ function attachRoleListeners(){
   // 원장은 전체 목록(질문함/피드백 발송이력)이 필요하니 전체, 학생은 studentId로 필터링.
   ['questions','feedbacks','kmm'].forEach(col=>{
     if(isDirector){
-      subs.push(fsdb.collection(col).onSnapshot(snap=>{ db[col] = snap.docs.map(d=>({id:d.id, ...d.data()})); render(); }));
+      subs.push(fsdb.collection(col).onSnapshot(snap=>{ db[col] = snap.docs.map(d=>({id:d.id, ...d.data()})); scheduleRender(); }));
     }else if(stuId){
       db[col] = [];
       subs.push(fsdb.collection(col).where('studentId','==',stuId).onSnapshot(snap=>{
-        db[col] = snap.docs.map(d=>({id:d.id, ...d.data()})); render();
+        db[col] = snap.docs.map(d=>({id:d.id, ...d.data()})); scheduleRender();
       }));
     }
   });
@@ -1105,6 +1105,27 @@ function render(){
       </div>`;
   }
 }
+// 2026-09-08: 실시간 리스너(다른 사람의 활동)로 인한 재렌더링이 타이핑 도중 끼어들어
+// 입력창 포커스/내용이 날아가는 문제를 고치기 위한 지연 렌더링.
+// Firestore onSnapshot 콜백은 render() 대신 이 함수를 호출한다.
+// (버튼 클릭 등 사용자가 직접 한 조작은 그대로 render()를 써서 즉시 반영된다)
+let renderPending = false;
+function scheduleRender(){
+  const active = document.activeElement;
+  const main = document.getElementById('mainArea');
+  if(active && main && main.contains(active) && (active.tagName==='INPUT' || active.tagName==='TEXTAREA')){
+    renderPending = true; // 지금 입력 중이면 미뤄뒀다가, 입력창에서 빠져나갈 때 다시 그린다
+    return;
+  }
+  render();
+}
+document.addEventListener('focusout', (e)=>{
+  const main = document.getElementById('mainArea');
+  if(renderPending && main && main.contains(e.target)){
+    renderPending = false;
+    setTimeout(render, 30);
+  }
+}, true);
 function renderInner(){
   buildNav();
   const main = document.getElementById('mainArea');
