@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v79 (STAD 신청 시 입금 안내 문구 추가)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v80 (STAD 줌 링크 접속 버튼 추가)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -267,7 +267,7 @@ let db = {
   classes:[], students:[], courses:[], videos:[],
   classRecords:{}, weeklyPlans:{}, fridaySupp:{}, submissions:{}, practiceProgress:{},
   questions:[], feedbacks:[], kmm:[], schoolExams:[], schoolScores:{}, timerState:{}, weekendSettings:{enabled:false}, weekendClasses:[], weekendSubmissions:{},
-  stadSettings:{enabled:false, infoText:'', applyOpen:'', applyClose:''}, stadApplications:{}, stadDaily:{}
+  stadSettings:{enabled:false, infoText:'', applyOpen:'', applyClose:'', zoomLink:''}, stadApplications:{}, stadDaily:{}
 };
 
 function uid(prefix){ return prefix+'_'+Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-4); }
@@ -2691,7 +2691,8 @@ async function toggleStadSettlementApproval(stuId, date){
 }
 async function saveStadSettings(){
   const infoText = document.getElementById('stadInfoText').value;
-  const ok = await fsSet('stadSettings','main',{enabled:true, infoText}, true);
+  const zoomLink = document.getElementById('stadZoomLink').value.trim();
+  const ok = await fsSet('stadSettings','main',{enabled:true, infoText, zoomLink}, true);
   if(ok) alert('저장됐어요.');
 }
 const STAD_INFO_DEFAULT = `⏰ STAD (Save Time And Do)란?
@@ -2718,6 +2719,7 @@ function renderStadAdmin(){
   const month = STAD_MONTH();
   const win = stadCurrentApplyWindow();
   const infoText = s.infoText || STAD_INFO_DEFAULT;
+  const zoomLink = s.zoomLink || '';
 
   const allApps = Object.values(db.stadApplications||{}).filter(a=>a.month===month);
   const pending = allApps.filter(a=>a.status==='pending').map(a=>({...a, s: studentById(a.studentId)})).filter(x=>x.s);
@@ -2734,8 +2736,11 @@ function renderStadAdmin(){
   <p class="page-sub">신청 기간(매월 20일~말일)은 자동으로 열려요. 승인 → 아침 출석체크 → 저녁 정산검토 → 월말 집계 순서로 관리하시면 돼요.</p>
 
   <div class="card">
-    <h3 style="margin-top:0;">① 안내문구 설정</h3>
+    <h3 style="margin-top:0;">① 줌 주소 · 안내문구 설정</h3>
     <div class="muted" style="font-size:11.5px;margin-bottom:8px;">신청 기간은 <b>매월 20일 ~ 말일</b>로 자동 반복돼요. 따로 날짜를 입력하실 필요 없어요.</div>
+    <label style="font-size:12px;display:block;margin-bottom:6px;">아침 줌(Zoom) 주소<br>
+      <input type="text" id="stadZoomLink" value="${escapeHtml(zoomLink)}" placeholder="https://zoom.us/j/..." style="width:100%;margin-top:4px;">
+    </label>
     <textarea id="stadInfoText" rows="8" style="width:100%;font-size:12.5px;">${escapeHtml(infoText)}</textarea>
     <div class="muted" style="font-size:11px;margin:4px 0 8px;">이 안내문구가 학생 STAD 페이지에 그대로 보여요.</div>
     <button class="btn sm gold" onclick="saveStadSettings()">저장</button>
@@ -2840,6 +2845,7 @@ function renderStadPage(){
 
   <div class="card">
     <h3 style="margin-top:0;">🌅 오늘의 to-do list ${todoOpen?'':'<span class=\"badge red\">7시 마감됨</span>'}</h3>
+    ${(db.stadSettings && db.stadSettings.zoomLink) ? `<a href="${escapeHtml(db.stadSettings.zoomLink)}" target="_blank" rel="noopener" class="btn gold" style="display:block;width:100%;padding:12px;text-align:center;text-decoration:none;margin-bottom:10px;">📹 6:20 줌 접속하기</a>` : ''}
     ${daily.todoText ? `
       <div style="white-space:pre-line;font-size:13px;background:#f6f4ec;border-radius:8px;padding:10px;">${escapeHtml(daily.todoText)}</div>
       <div class="muted" style="font-size:11px;margin-top:4px;">작성 시각: ${new Date(daily.todoSubmittedAt).toLocaleTimeString('ko-KR')}</div>
