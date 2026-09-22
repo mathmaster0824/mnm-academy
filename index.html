@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v77 (STAD 프로그램 신규 추가)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v78 (STAD 신청기간 매월 20일~말일 자동 반복)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -2578,11 +2578,24 @@ function stadAppKey(stuId, month){ return `${stuId}_${month}`; }
 function stadDailyKey(stuId, date){ return `${stuId}_${date}`; }
 function stadApplicationFor(stuId, month){ return db.stadApplications[stadAppKey(stuId, month||STAD_MONTH())] || null; }
 function stadDailyFor(stuId, date){ return db.stadDaily[stadDailyKey(stuId, date||STAD_TODAY())] || null; }
-function isStadApplyOpen(){
+// 매월 20일 ~ 말일이 기본 신청기간. 특정 달만 다르게 하고 싶을 때는
+// stadSettings.applyMode==='manual' + applyOpen/applyClose로 예외 지정 가능.
+function stadRecurringApplyWindow(dateISO){
+  const d = new Date((dateISO||STAD_TODAY())+'T00:00:00');
+  const y = d.getFullYear(), m = d.getMonth();
+  const mm = String(m+1).padStart(2,'0');
+  const lastDay = new Date(y, m+1, 0).getDate(); // 그 달의 마지막 날짜(28~31)
+  return { open: `${y}-${mm}-20`, close: `${y}-${mm}-${String(lastDay).padStart(2,'0')}` };
+}
+function stadCurrentApplyWindow(){
   const s = db.stadSettings||{};
-  if(!s.applyOpen || !s.applyClose) return false;
+  if(s.applyMode==='manual' && s.applyOpen && s.applyClose) return {open:s.applyOpen, close:s.applyClose};
+  return stadRecurringApplyWindow(STAD_TODAY());
+}
+function isStadApplyOpen(){
+  const {open, close} = stadCurrentApplyWindow();
   const today = STAD_TODAY();
-  return today >= s.applyOpen && today <= s.applyClose;
+  return today >= open && today <= close;
 }
 function isStadParticipant(stuId, month){
   const app = stadApplicationFor(stuId, month);
@@ -2673,10 +2686,8 @@ async function toggleStadSettlementApproval(stuId, date){
   await fsSet('stadDaily', key, {...existing, settlementApproved: !existing.settlementApproved, settlementApprovedAt:new Date().toISOString()});
 }
 async function saveStadSettings(){
-  const applyOpen = document.getElementById('stadApplyOpen').value;
-  const applyClose = document.getElementById('stadApplyClose').value;
   const infoText = document.getElementById('stadInfoText').value;
-  const ok = await fsSet('stadSettings','main',{enabled:true, applyOpen, applyClose, infoText}, true);
+  const ok = await fsSet('stadSettings','main',{enabled:true, infoText}, true);
   if(ok) alert('저장됐어요.');
 }
 const STAD_INFO_DEFAULT = `⏰ STAD (Save Time And Do)란?
@@ -2701,8 +2712,7 @@ function renderStadInfoBox(){
 function renderStadAdmin(){
   const s = db.stadSettings || {};
   const month = STAD_MONTH();
-  const applyOpen = s.applyOpen || '';
-  const applyClose = s.applyClose || '';
+  const win = stadCurrentApplyWindow();
   const infoText = s.infoText || STAD_INFO_DEFAULT;
 
   const allApps = Object.values(db.stadApplications||{}).filter(a=>a.month===month);
@@ -2717,18 +2727,15 @@ function renderStadAdmin(){
 
   return `
   <h1 class="page-title">⏰ STAD 관리</h1>
-  <p class="page-sub">신청기간 설정 → 승인 → 아침 출석체크 → 저녁 정산검토 → 월말 집계 순서로 관리해요.</p>
+  <p class="page-sub">신청 기간(매월 20일~말일)은 자동으로 열려요. 승인 → 아침 출석체크 → 저녁 정산검토 → 월말 집계 순서로 관리하시면 돼요.</p>
 
   <div class="card">
-    <h3 style="margin-top:0;">① 신청 기간 · 안내문구 설정</h3>
-    <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">
-      <label style="font-size:12px;">시작일 <input type="date" id="stadApplyOpen" value="${applyOpen}"></label>
-      <label style="font-size:12px;">종료일 <input type="date" id="stadApplyClose" value="${applyClose}"></label>
-    </div>
-    <textarea id="stadInfoText" rows="8" style="width:100%;margin-top:8px;font-size:12.5px;">${escapeHtml(infoText)}</textarea>
+    <h3 style="margin-top:0;">① 안내문구 설정</h3>
+    <div class="muted" style="font-size:11.5px;margin-bottom:8px;">신청 기간은 <b>매월 20일 ~ 말일</b>로 자동 반복돼요. 따로 날짜를 입력하실 필요 없어요.</div>
+    <textarea id="stadInfoText" rows="8" style="width:100%;font-size:12.5px;">${escapeHtml(infoText)}</textarea>
     <div class="muted" style="font-size:11px;margin:4px 0 8px;">이 안내문구가 학생 STAD 페이지에 그대로 보여요.</div>
     <button class="btn sm gold" onclick="saveStadSettings()">저장</button>
-    <div class="muted" style="font-size:11px;margin-top:8px;">${isStadApplyOpen()?`✅ 지금 신청 기간이에요 (~${applyClose})`:'⏸️ 지금은 신청 기간이 아니에요'}</div>
+    <div class="muted" style="font-size:11px;margin-top:8px;">${isStadApplyOpen()?`✅ 지금 신청 기간이에요 (${fmtDate(win.open)} ~ ${fmtDate(win.close)})`:`⏸️ 지금은 신청 기간이 아니에요 · 다음 신청 기간: ${fmtDate(win.open)} ~ ${fmtDate(win.close)}`}</div>
   </div>
 
   <div class="card">
@@ -2808,7 +2815,7 @@ function renderStadPage(){
         ? (!app || app.status==='rejected'
             ? `<button class="btn gold" style="width:100%;padding:12px;" onclick="applyForStad('${stuId}')">STAD 신청하기</button>`
             : `<div class="muted" style="font-size:12px;">이미 신청했어요.</div>`)
-        : `<div class="muted" style="font-size:12px;">${db.stadSettings&&db.stadSettings.applyOpen?`다음 신청 기간: ${fmtDate(db.stadSettings.applyOpen)} ~ ${fmtDate(db.stadSettings.applyClose)}`:'아직 신청 기간이 공지되지 않았어요.'}</div>`}
+        : `<div class="muted" style="font-size:12px;">다음 신청 기간: ${fmtDate(stadCurrentApplyWindow().open)} ~ ${fmtDate(stadCurrentApplyWindow().close)}</div>`}
     </div>`;
   }
 
