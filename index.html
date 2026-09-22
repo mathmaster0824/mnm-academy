@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v78 (STAD 신청기간 매월 20일~말일 자동 반복)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v79 (STAD 신청 시 입금 안내 문구 추가)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -2629,6 +2629,7 @@ function stadMonthStats(stuId, month){
   const rate = possibleDays>0 ? Math.round(morning/possibleDays*100) : 0;
   return { morning, evening, total: morning+evening, possibleDays, rate };
 }
+const STAD_BANK_INFO = '카카오뱅크 3333-29-2008780 (예금주: 백지하) 계좌로 참여비 2만원을 입금해주세요. 입금완료시 신청완료입니다.';
 async function applyForStad(stuId){
   const month = STAD_MONTH();
   if(!isStadApplyOpen()){ alert('지금은 신청 기간이 아니에요.'); return; }
@@ -2638,6 +2639,9 @@ async function applyForStad(stuId){
     studentId: stuId, month, status:'pending', appliedAt: new Date().toISOString(), paymentConfirmed:false
   });
   if(ok) render();
+}
+function confirmApplyForStad(stuId){
+  openConfirm('STAD 신청', STAD_BANK_INFO+' 신청하시겠어요?', async ()=>{ await applyForStad(stuId); });
 }
 async function approveStadApplication(stuId, month, paymentConfirmed){
   await fsSet('stadApplications', stadAppKey(stuId, month), {
@@ -2801,7 +2805,7 @@ function renderStadPage(){
   if(!participant){
     let statusBox = '';
     if(app && app.status==='pending'){
-      statusBox = `<div class="card" style="border-color:var(--gold);"><b>⏳ 신청 완료 · 원장님 승인 대기중</b><div class="muted" style="font-size:12px;margin-top:4px;">입금 확인 후 승인되면 참여가 시작돼요.</div></div>`;
+      statusBox = `<div class="card" style="border-color:var(--gold);"><b>⏳ 신청 완료 · 원장님 승인 대기중</b><div class="muted" style="font-size:12px;margin-top:4px;">${escapeHtml(STAD_BANK_INFO)}</div></div>`;
     }else if(app && app.status==='rejected'){
       statusBox = `<div class="card" style="border-color:var(--red);"><b>❌ 신청이 반려됐어요</b><div class="muted" style="font-size:12px;margin-top:4px;">궁금한 점은 선생님께 문의해주세요. 신청 기간이면 다시 신청할 수 있어요.</div></div>`;
     }
@@ -2813,7 +2817,7 @@ function renderStadPage(){
     <div class="card">
       ${applyOpen
         ? (!app || app.status==='rejected'
-            ? `<button class="btn gold" style="width:100%;padding:12px;" onclick="applyForStad('${stuId}')">STAD 신청하기</button>`
+            ? `<button class="btn gold" style="width:100%;padding:12px;" onclick="confirmApplyForStad('${stuId}')">STAD 신청하기</button>`
             : `<div class="muted" style="font-size:12px;">이미 신청했어요.</div>`)
         : `<div class="muted" style="font-size:12px;">다음 신청 기간: ${fmtDate(stadCurrentApplyWindow().open)} ~ ${fmtDate(stadCurrentApplyWindow().close)}</div>`}
     </div>`;
