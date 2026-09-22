@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v75 (내신 성적 페이지 표 형태로 재구성)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v77 (STAD 프로그램 신규 추가)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -266,7 +266,8 @@ let db = {
   settings:{ adminPassword:'0000', isDefaultPassword:true },
   classes:[], students:[], courses:[], videos:[],
   classRecords:{}, weeklyPlans:{}, fridaySupp:{}, submissions:{}, practiceProgress:{},
-  questions:[], feedbacks:[], kmm:[], schoolExams:[], schoolScores:{}, timerState:{}, weekendSettings:{enabled:false}, weekendClasses:[], weekendSubmissions:{}
+  questions:[], feedbacks:[], kmm:[], schoolExams:[], schoolScores:{}, timerState:{}, weekendSettings:{enabled:false}, weekendClasses:[], weekendSubmissions:{},
+  stadSettings:{enabled:false, infoText:'', applyOpen:'', applyClose:''}, stadApplications:{}, stadDaily:{}
 };
 
 function uid(prefix){ return prefix+'_'+Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-4); }
@@ -401,6 +402,10 @@ function attachCoreListeners(){
     fsdb.collection('weekendClasses').onSnapshot(snap=>{
       db.weekendClasses = snap.docs.map(d=>({id:d.id,...d.data()})); scheduleRender();
     }),
+    fsdb.collection('stadSettings').doc('main').onSnapshot(doc=>{
+      db.stadSettings = doc.exists ? doc.data() : {enabled:false, infoText:'', applyOpen:'', applyClose:''};
+      scheduleRender();
+    }),
   ];
   unsubscribers = subs;
   setConnStatus(true);
@@ -445,7 +450,7 @@ function attachRoleListeners(){
   });
 
   // 학생ID_날짜(_슬롯) 형태의 키를 쓰는 컬렉션: 원장은 전체, 학생은 자기 것만
-  ['submissions','timerState','weekendSubmissions'].forEach(col=>{
+  ['submissions','timerState','weekendSubmissions','stadApplications','stadDaily'].forEach(col=>{
     if(isDirector){
       subs.push(fsdb.collection(col).onSnapshot(snap=>{
         const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db[col]=m; scheduleRender();
@@ -770,6 +775,7 @@ const DIRECTOR_NAV = [
   {id:'kmmMakeup', label:'KMM 보강', icon:'📐'},
   {id:'schoolExams', label:'내신 성적', icon:'🏫'},
   {id:'weekendStudy', label:'주말학습', icon:'🌙'},
+  {id:'stadAdmin', label:'STAD 관리', icon:'⏰'},
   {id:'hwreview', label:'숙제 확인', icon:'📸'},
   {id:'qna', label:'질문 게시판', icon:'💬'},
   {id:'feedback', label:'학부모 학습안내', icon:'📨'},
@@ -786,6 +792,7 @@ function buildNav(){
       {id:'studentHome', label:'내 학습 페이지', icon:'🧑‍🎓'},
       {id:'studentHomework', label:'오늘의 숙제', icon:'✏️'},
       ...(weekendAvailableForStudent(session.studentId) ? [{id:'studentWeekend', label:'주말학습', icon:'🌙'}] : []),
+      {id:'stad', label:'STAD', icon:'⏰'},
       {id:'studentProgress', label:'학습현황', icon:'🚦'}
     ];
     el.innerHTML = STUDENT_NAV.map(n=>`<div class="nav-item ${currentView===n.id?'active':''}" onclick="goto('${n.id}')">${n.icon} ${n.label}</div>`).join('');
@@ -1140,6 +1147,7 @@ function renderInner(){
       case 'kmmMakeup': html+=renderKmmMakeup(); break;
       case 'schoolExams': html+=renderSchoolExams(); break;
       case 'weekendStudy': html+=renderWeekendStudyAdmin(); break;
+      case 'stadAdmin': html+=renderStadAdmin(); break;
       case 'hwreview': html+=renderHomeworkReview(); break;
       case 'qna': html+=renderQnaDirector(); break;
       case 'feedback': html+=renderFeedback(); break;
@@ -1150,6 +1158,7 @@ function renderInner(){
   }else{
     if(currentView==='studentHomework') html+=renderStudentHomeworkPage();
     else if(currentView==='studentWeekend' && weekendAvailableForStudent(session.studentId)) html+=renderStudentWeekendPage();
+    else if(currentView==='stad') html+=renderStadPage();
     else if(currentView==='studentProgress') html+=renderStudentProgressPage();
     else html+=renderStudentHome();
   }
@@ -2392,7 +2401,7 @@ async function toggleWeekendStudent(classId,stuId,checked){
 }
 function renderWeekendStudyAdmin(){
   const enabled=!!(db.weekendSettings&&db.weekendSettings.enabled);
-  const wk=currentSubState.weekendWeek || weekendWeekStart(todayISO());
+  const wk=currentSubState.weekendWeek || weekendWeekStart(academicTodayISO());
   const eligible=sortedStudents(db.students.filter(s=>s.status!=='withdrawn'&&isMiddleHighStudent(s)));
   const createOpen=!!currentSubState.weekendCreateOpen;
   return `
@@ -2526,7 +2535,7 @@ function renderStudentWeekendPage(){
   const s=studentById(stuId);
   if(!weekendAvailableForStudent(stuId)) return `<div class="empty">현재 주말학습이 운영 중이 아닙니다.</div>`;
   const cls=weekendClassForStudent(stuId);
-  const wk=weekendWeekStart(todayISO());
+  const wk=weekendWeekStart(academicTodayISO());
   const count=weekendCountForStudent(stuId,wk);
   return `
     <div class="card">
@@ -2554,6 +2563,301 @@ function renderStudentWeekendPage(){
         }).join('')}
       </div>
     </div>
+  `;
+}
+
+/* ---------------- STAD (Save Time And Do) ---------------- */
+// 2026-09-08: 원장님과 설계 후 신규 추가.
+// - 매달 신청기간에만 신청 가능 → 원장이 입금확인 후 승인해야 그 달 참여 확정
+// - 아침 6:20 줌 출석은 원장이 수동 체크 (자동판정 금지 원칙에 따라 시스템이 임의 판단하지 않음)
+// - to-do list 작성은 오전 7시까지, 저녁 정산 제출은 그날 자정까지 (학생 쪽 버튼만 잠김, 원장 화면은 언제나 가능)
+// - 엽전은 원장이 실물로 지급 → 앱은 월말 집계(아침출석+저녁정산승인 합계, 출석률)만 보여줌
+const STAD_MONTH = ()=> academicTodayISO().slice(0,7);
+const STAD_TODAY = ()=> todayISO(); // 정산 마감은 진짜 자정이라 심야보정(academicTodayISO) 없이 실제 날짜 그대로 씀
+function stadAppKey(stuId, month){ return `${stuId}_${month}`; }
+function stadDailyKey(stuId, date){ return `${stuId}_${date}`; }
+function stadApplicationFor(stuId, month){ return db.stadApplications[stadAppKey(stuId, month||STAD_MONTH())] || null; }
+function stadDailyFor(stuId, date){ return db.stadDaily[stadDailyKey(stuId, date||STAD_TODAY())] || null; }
+function isStadApplyOpen(){
+  const s = db.stadSettings||{};
+  if(!s.applyOpen || !s.applyClose) return false;
+  const today = STAD_TODAY();
+  return today >= s.applyOpen && today <= s.applyClose;
+}
+function isStadParticipant(stuId, month){
+  const app = stadApplicationFor(stuId, month);
+  return !!(app && app.status==='approved');
+}
+function stadTodoWindowOpen(){ return new Date().getHours() < 7; } // 오전 7시까지
+function countWeekdaysBetween(startISO, endISO){
+  let count=0;
+  let d = new Date(startISO+'T00:00:00');
+  const end = new Date(endISO+'T00:00:00');
+  while(d<=end){ const wd=d.getDay(); if(wd!==0 && wd!==6) count++; d.setDate(d.getDate()+1); }
+  return count;
+}
+function stadMonthStats(stuId, month){
+  month = month || STAD_MONTH();
+  const app = stadApplicationFor(stuId, month);
+  const monthStart = month+'-01';
+  const today = STAD_TODAY();
+  const rangeEnd = today.slice(0,7)===month ? today : monthStart; // 지난달 조회는 통계 목적 밖(현재는 이번달만 사용)
+  const approvedFrom = (app && app.approvedAt) ? app.approvedAt.slice(0,10) : monthStart;
+  const effectiveStart = approvedFrom > monthStart ? approvedFrom : monthStart;
+  const possibleDays = rangeEnd>=effectiveStart ? countWeekdaysBetween(effectiveStart, rangeEnd) : 0;
+  let morning=0, evening=0;
+  Object.keys(db.stadDaily).forEach(k=>{
+    if(!k.startsWith(stuId+'_')) return;
+    const d = db.stadDaily[k];
+    if(!d || !d.date || !d.date.startsWith(month)) return;
+    if(d.attended) morning++;
+    if(d.settlementApproved) evening++;
+  });
+  const rate = possibleDays>0 ? Math.round(morning/possibleDays*100) : 0;
+  return { morning, evening, total: morning+evening, possibleDays, rate };
+}
+async function applyForStad(stuId){
+  const month = STAD_MONTH();
+  if(!isStadApplyOpen()){ alert('지금은 신청 기간이 아니에요.'); return; }
+  const existing = stadApplicationFor(stuId, month);
+  if(existing && existing.status!=='rejected'){ alert('이미 신청했어요.'); return; }
+  const ok = await fsSet('stadApplications', stadAppKey(stuId, month), {
+    studentId: stuId, month, status:'pending', appliedAt: new Date().toISOString(), paymentConfirmed:false
+  });
+  if(ok) render();
+}
+async function approveStadApplication(stuId, month, paymentConfirmed){
+  await fsSet('stadApplications', stadAppKey(stuId, month), {
+    studentId: stuId, month, status:'approved', paymentConfirmed: !!paymentConfirmed, approvedAt: new Date().toISOString()
+  });
+}
+function rejectStadApplication(stuId, month){
+  openConfirm('신청을 반려할까요?', '학생에게 신청이 반려됐다고 표시되고, 다시 신청할 수 있어요.', async ()=>{
+    await fsSet('stadApplications', stadAppKey(stuId, month), {studentId:stuId, month, status:'rejected'});
+  });
+}
+function cancelStadApproval(stuId, month){
+  openConfirm('참여를 취소할까요?', '이번 달 STAD 참여가 취소되고, 신청 목록에서도 빠져요.', async ()=>{
+    await fsDelete('stadApplications', stadAppKey(stuId, month));
+  });
+}
+async function submitStadTodo(stuId){
+  if(!stadTodoWindowOpen()){ alert('오전 7시가 지나 to-do list를 작성할 수 없어요.'); return; }
+  if(!isStadParticipant(stuId)){ alert('이번 달 STAD 참여자가 아니에요.'); return; }
+  const text = (document.getElementById('stadTodoInput').value||'').trim();
+  if(!text){ alert('to-do list를 입력해주세요.'); return; }
+  const date = STAD_TODAY();
+  const key = stadDailyKey(stuId, date);
+  const existing = db.stadDaily[key] || {};
+  const ok = await fsSet('stadDaily', key, {...existing, studentId:stuId, date, todoText:text, todoSubmittedAt:new Date().toISOString()});
+  if(ok) render();
+}
+async function submitStadSettlement(stuId){
+  const date = STAD_TODAY();
+  const existing = db.stadDaily[stadDailyKey(stuId, date)];
+  if(!existing || !existing.todoText){ alert('먼저 오전에 to-do list를 작성해야 정산할 수 있어요.'); return; }
+  const text = (document.getElementById('stadSettleInput').value||'').trim();
+  if(!text){ alert('정산 내용을 입력해주세요.'); return; }
+  const ok = await fsSet('stadDaily', stadDailyKey(stuId,date), {...existing, settlementText:text, settlementSubmittedAt:new Date().toISOString(), settlementApproved:false});
+  if(ok) render();
+}
+async function toggleStadAttendance(stuId, date){
+  const key = stadDailyKey(stuId, date);
+  const existing = db.stadDaily[key] || {studentId:stuId, date};
+  await fsSet('stadDaily', key, {...existing, attended: !existing.attended, attendedAt:new Date().toISOString()});
+}
+async function toggleStadSettlementApproval(stuId, date){
+  const key = stadDailyKey(stuId, date);
+  const existing = db.stadDaily[key];
+  if(!existing) return;
+  await fsSet('stadDaily', key, {...existing, settlementApproved: !existing.settlementApproved, settlementApprovedAt:new Date().toISOString()});
+}
+async function saveStadSettings(){
+  const applyOpen = document.getElementById('stadApplyOpen').value;
+  const applyClose = document.getElementById('stadApplyClose').value;
+  const infoText = document.getElementById('stadInfoText').value;
+  const ok = await fsSet('stadSettings','main',{enabled:true, applyOpen, applyClose, infoText}, true);
+  if(ok) alert('저장됐어요.');
+}
+const STAD_INFO_DEFAULT = `⏰ STAD (Save Time And Do)란?
+시간관리 프로그램이에요.
+
+🌅 아침
+- 6:20까지 줌(Zoom) 접속
+- to-do list 작성 (오전 7시까지 앱에서 작성)
+- 30분 study 시간
+
+🌙 저녁
+- 자정(12시)까지 오늘 to-do list 정산 제출
+
+🪙 참여 보상
+- 아침 출석 + 저녁 정산 승인 시, 매달 엽전으로 보상돼요.`;
+function renderStadInfoBox(){
+  const text = (db.stadSettings && db.stadSettings.infoText) ? db.stadSettings.infoText : STAD_INFO_DEFAULT;
+  return `<div class="card" style="background:#f6f4ec;">
+    <div style="white-space:pre-line;font-size:13px;line-height:1.6;">${escapeHtml(text)}</div>
+  </div>`;
+}
+function renderStadAdmin(){
+  const s = db.stadSettings || {};
+  const month = STAD_MONTH();
+  const applyOpen = s.applyOpen || '';
+  const applyClose = s.applyClose || '';
+  const infoText = s.infoText || STAD_INFO_DEFAULT;
+
+  const allApps = Object.values(db.stadApplications||{}).filter(a=>a.month===month);
+  const pending = allApps.filter(a=>a.status==='pending').map(a=>({...a, s: studentById(a.studentId)})).filter(x=>x.s);
+  const approved = allApps.filter(a=>a.status==='approved').map(a=>({...a, s: studentById(a.studentId)})).filter(x=>x.s);
+  approved.sort((a,b)=>(a.s.name||'').localeCompare(b.s.name||''));
+
+  const today = STAD_TODAY();
+  const settlementsToReview = approved
+    .map(x=>({...x, daily: stadDailyFor(x.studentId, today)}))
+    .filter(x=>x.daily && x.daily.settlementText && !x.daily.settlementApproved);
+
+  return `
+  <h1 class="page-title">⏰ STAD 관리</h1>
+  <p class="page-sub">신청기간 설정 → 승인 → 아침 출석체크 → 저녁 정산검토 → 월말 집계 순서로 관리해요.</p>
+
+  <div class="card">
+    <h3 style="margin-top:0;">① 신청 기간 · 안내문구 설정</h3>
+    <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">
+      <label style="font-size:12px;">시작일 <input type="date" id="stadApplyOpen" value="${applyOpen}"></label>
+      <label style="font-size:12px;">종료일 <input type="date" id="stadApplyClose" value="${applyClose}"></label>
+    </div>
+    <textarea id="stadInfoText" rows="8" style="width:100%;margin-top:8px;font-size:12.5px;">${escapeHtml(infoText)}</textarea>
+    <div class="muted" style="font-size:11px;margin:4px 0 8px;">이 안내문구가 학생 STAD 페이지에 그대로 보여요.</div>
+    <button class="btn sm gold" onclick="saveStadSettings()">저장</button>
+    <div class="muted" style="font-size:11px;margin-top:8px;">${isStadApplyOpen()?`✅ 지금 신청 기간이에요 (~${applyClose})`:'⏸️ 지금은 신청 기간이 아니에요'}</div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">② 승인 대기 (${pending.length}명)</h3>
+    ${pending.length ? pending.map(x=>`
+      <div class="row between" style="padding:8px 0;border-bottom:1px solid var(--line);flex-wrap:wrap;gap:8px;">
+        <div><b>${x.s.name}</b> <span class="muted" style="font-size:11px;">신청일 ${fmtDate(x.appliedAt.slice(0,10))}</span></div>
+        <div class="row" style="gap:6px;">
+          <label style="font-size:11px;"><input type="checkbox" id="stadPay_${x.studentId}"> 입금확인</label>
+          <button class="btn sm gold" onclick="approveStadApplication('${x.studentId}','${month}', document.getElementById('stadPay_${x.studentId}').checked)">승인</button>
+          <button class="btn sm outline" onclick="rejectStadApplication('${x.studentId}','${month}')">반려</button>
+        </div>
+      </div>`).join('') : `<div class="empty">대기 중인 신청이 없어요.</div>`}
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">③ 오늘 아침 출석 체크 (${fmtDate(today)}) · 참여자 ${approved.length}명</h3>
+    ${approved.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;">
+      ${approved.map(x=>{
+        const d = stadDailyFor(x.studentId, today);
+        const attended = d && d.attended;
+        return `<button class="btn sm ${attended?'gold':'outline'}" onclick="toggleStadAttendance('${x.studentId}','${today}')">${attended?'✓ ':''}${x.s.name}</button>`;
+      }).join('')}
+    </div>` : `<div class="empty">이번 달 승인된 참여자가 없어요.</div>`}
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">④ 저녁 정산 검토 (${settlementsToReview.length}건 대기)</h3>
+    ${settlementsToReview.length ? settlementsToReview.map(x=>`
+      <div style="padding:10px 0;border-bottom:1px solid var(--line);">
+        <div class="row between"><b>${x.s.name}</b><button class="btn sm gold" onclick="toggleStadSettlementApproval('${x.studentId}','${today}')">✓ 정산 승인</button></div>
+        <div style="font-size:12px;color:#6f6958;margin-top:4px;white-space:pre-line;">${escapeHtml(x.daily.settlementText)}</div>
+      </div>`).join('') : `<div class="empty">검토할 정산이 없어요.</div>`}
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">⑤ ${month} 이번 달 집계 (엽전 지급용)</h3>
+    <div class="muted" style="font-size:11px;margin-bottom:8px;">엽전은 원장님이 실물로 지급하시면 돼요 — 아래 합계만 보고 나눠주시면 됩니다.</div>
+    ${approved.length ? `<div style="overflow-x:auto;"><table style="width:100%;">
+      <tr><th>학생</th><th>아침출석</th><th>저녁정산</th><th>합계(엽전)</th><th>출석률</th></tr>
+      ${approved.map(x=>{
+        const st = stadMonthStats(x.studentId, month);
+        return `<tr><td><b>${x.s.name}</b></td><td style="text-align:center;">${st.morning}</td><td style="text-align:center;">${st.evening}</td><td style="text-align:center;"><b>${st.total}</b></td><td style="text-align:center;">${st.rate}%</td></tr>`;
+      }).join('')}
+    </table></div>` : `<div class="empty">참여자가 없어요.</div>`}
+  </div>
+
+  ${approved.length ? `<div class="card">
+    <h3 style="margin-top:0;">참여자 관리</h3>
+    ${approved.map(x=>`<div class="row between" style="padding:5px 0;font-size:12px;">
+      <div>${x.s.name} <span class="muted">${x.paymentConfirmed?'· 입금확인됨':''}</span></div>
+      <button class="btn sm outline" style="font-size:10px;padding:2px 6px;" onclick="cancelStadApproval('${x.studentId}','${month}')">참여 취소</button>
+    </div>`).join('')}
+  </div>` : ''}
+  `;
+}
+function renderStadPage(){
+  const stuId = session.studentId;
+  const month = STAD_MONTH();
+  const app = stadApplicationFor(stuId, month);
+  const participant = isStadParticipant(stuId, month);
+
+  if(!participant){
+    let statusBox = '';
+    if(app && app.status==='pending'){
+      statusBox = `<div class="card" style="border-color:var(--gold);"><b>⏳ 신청 완료 · 원장님 승인 대기중</b><div class="muted" style="font-size:12px;margin-top:4px;">입금 확인 후 승인되면 참여가 시작돼요.</div></div>`;
+    }else if(app && app.status==='rejected'){
+      statusBox = `<div class="card" style="border-color:var(--red);"><b>❌ 신청이 반려됐어요</b><div class="muted" style="font-size:12px;margin-top:4px;">궁금한 점은 선생님께 문의해주세요. 신청 기간이면 다시 신청할 수 있어요.</div></div>`;
+    }
+    const applyOpen = isStadApplyOpen();
+    return `
+    <h1 class="page-title">⏰ STAD</h1>
+    ${renderStadInfoBox()}
+    ${statusBox}
+    <div class="card">
+      ${applyOpen
+        ? (!app || app.status==='rejected'
+            ? `<button class="btn gold" style="width:100%;padding:12px;" onclick="applyForStad('${stuId}')">STAD 신청하기</button>`
+            : `<div class="muted" style="font-size:12px;">이미 신청했어요.</div>`)
+        : `<div class="muted" style="font-size:12px;">${db.stadSettings&&db.stadSettings.applyOpen?`다음 신청 기간: ${fmtDate(db.stadSettings.applyOpen)} ~ ${fmtDate(db.stadSettings.applyClose)}`:'아직 신청 기간이 공지되지 않았어요.'}</div>`}
+    </div>`;
+  }
+
+  const today = STAD_TODAY();
+  const daily = stadDailyFor(stuId, today) || {};
+  const st = stadMonthStats(stuId, month);
+  const todoOpen = stadTodoWindowOpen();
+
+  return `
+  <h1 class="page-title">⏰ STAD</h1>
+  <div class="card">
+    <div class="row" style="gap:8px;flex-wrap:wrap;">
+      <span class="badge yellow">✅ 이번 달 참여중</span>
+      <span class="badge gray">이번 달 아침출석 ${st.morning}회 · 저녁정산 ${st.evening}회 · 합계 ${st.total}개</span>
+      <span class="badge gray">출석률 ${st.rate}%</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">🌅 오늘의 to-do list ${todoOpen?'':'<span class=\"badge red\">7시 마감됨</span>'}</h3>
+    ${daily.todoText ? `
+      <div style="white-space:pre-line;font-size:13px;background:#f6f4ec;border-radius:8px;padding:10px;">${escapeHtml(daily.todoText)}</div>
+      <div class="muted" style="font-size:11px;margin-top:4px;">작성 시각: ${new Date(daily.todoSubmittedAt).toLocaleTimeString('ko-KR')}</div>
+      ${todoOpen?`<textarea id="stadTodoInput" rows="4" style="width:100%;margin-top:8px;" placeholder="수정할 내용">${escapeHtml(daily.todoText)}</textarea>
+      <button class="btn sm outline" style="margin-top:6px;" onclick="submitStadTodo('${stuId}')">수정 저장</button>`:''}
+    ` : todoOpen ? `
+      <textarea id="stadTodoInput" rows="4" style="width:100%;" placeholder="오늘 할 일을 적어주세요"></textarea>
+      <button class="btn gold" style="width:100%;margin-top:8px;padding:10px;" onclick="submitStadTodo('${stuId}')">to-do list 제출</button>
+    ` : `<div class="empty">오늘은 7시가 지나 to-do list를 작성하지 못했어요.</div>`}
+    <div class="muted" style="font-size:11px;margin-top:8px;">아침 출석(줌 접속 확인)은 선생님이 체크해주세요: ${daily.attended?'✅ 출석 확인됨':'⏳ 미확인'}</div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">🌙 저녁 to-do 정산 (자정까지)</h3>
+    ${!daily.todoText ? `<div class="empty">오전에 to-do list를 먼저 작성해야 정산할 수 있어요.</div>`
+    : daily.settlementText ? `
+      <div style="white-space:pre-line;font-size:13px;background:#f6f4ec;border-radius:8px;padding:10px;">${escapeHtml(daily.settlementText)}</div>
+      <div class="muted" style="font-size:11px;margin-top:4px;">${daily.settlementApproved?'✅ 선생님 승인 완료':'⏳ 선생님 확인 대기중'}</div>
+      ${!daily.settlementApproved?`<textarea id="stadSettleInput" rows="4" style="width:100%;margin-top:8px;" placeholder="수정할 내용">${escapeHtml(daily.settlementText)}</textarea>
+      <button class="btn sm outline" style="margin-top:6px;" onclick="submitStadSettlement('${stuId}')">수정 제출</button>`:''}
+    ` : `
+      <textarea id="stadSettleInput" rows="4" style="width:100%;" placeholder="오늘 to-do list를 얼마나 했는지 정산해주세요"></textarea>
+      <button class="btn gold" style="width:100%;margin-top:8px;padding:10px;" onclick="submitStadSettlement('${stuId}')">정산 제출</button>
+    `}
+  </div>
+
+  <details><summary style="cursor:pointer;font-weight:700;font-size:12px;">⏰ STAD 안내 다시 보기</summary>
+  <div style="margin-top:8px;">${renderStadInfoBox()}</div>
+  </details>
   `;
 }
 
