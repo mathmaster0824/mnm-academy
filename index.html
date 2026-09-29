@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v80 (STAD 줌 링크 접속 버튼 추가)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v84 (해설 보관함 신규 추가 · 질문답변 연동)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -267,7 +267,7 @@ let db = {
   classes:[], students:[], courses:[], videos:[],
   classRecords:{}, weeklyPlans:{}, fridaySupp:{}, submissions:{}, practiceProgress:{},
   questions:[], feedbacks:[], kmm:[], schoolExams:[], schoolScores:{}, timerState:{}, weekendSettings:{enabled:false}, weekendClasses:[], weekendSubmissions:{},
-  stadSettings:{enabled:false, infoText:'', applyOpen:'', applyClose:'', zoomLink:''}, stadApplications:{}, stadDaily:{}
+  stadSettings:{enabled:false, infoText:'', applyOpen:'', applyClose:'', zoomLink:''}, stadApplications:{}, stadDaily:{}, solutionPhotos:[]
 };
 
 function uid(prefix){ return prefix+'_'+Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-4); }
@@ -500,6 +500,11 @@ function attachRoleListeners(){
       }));
     }
   });
+
+  // 해설사진 보관함: 원장 전용 기능 — 학생은 볼 일이 없으니 아예 구독하지 않음(읽기량 절약).
+  if(isDirector){
+    subs.push(fsdb.collection('solutionPhotos').onSnapshot(snap=>{ db.solutionPhotos = snap.docs.map(d=>({id:d.id, ...d.data()})); scheduleRender(); }));
+  }
 
   roleUnsubscribers = subs;
 }
@@ -771,6 +776,7 @@ const DIRECTOR_NAV = [
   {id:'classes', label:'반 관리', icon:'📚'},
   {id:'curriculum', label:'커리큘럼 설정', icon:'🧭'},
   {id:'videolib', label:'영상 보관함', icon:'🎬'},
+  {id:'solutionLib', label:'해설 보관함', icon:'🗂️'},
   {id:'students', label:'학생별 관리', icon:'🧑‍🎓'},
   {id:'kmmMakeup', label:'KMM 보강', icon:'📐'},
   {id:'schoolExams', label:'내신 성적', icon:'🏫'},
@@ -1143,6 +1149,7 @@ function renderInner(){
       case 'classes': html+=renderClasses(); break;
       case 'curriculum': html+=renderCurriculum(); break;
       case 'videolib': html+=renderVideoLib(); break;
+      case 'solutionLib': html+=renderSolutionLib(); break;
       case 'students': html+=renderStudents(); break;
       case 'kmmMakeup': html+=renderKmmMakeup(); break;
       case 'schoolExams': html+=renderSchoolExams(); break;
@@ -1759,26 +1766,25 @@ function suggestedHomeworkLevel(stuId, dayGroup, date){
   const ratio = submittedCount/totalRangeDays;
   return ratio>=0.8?'상':ratio>=0.5?'중':'하';
 }
-// 2026-09-08: 원장님 요청으로 교재 체계 전면 재정리.
-// 구조: 학년군('초'/'중'/'고') → 분류(개념/유형/심화 등) → 묶음 목록(묶음 하나 = 그 분류에서 같이 등록할 책들).
+// 2026-09-08: 원장님 요청으로 교재 체계를 실제 수업 진행 방식(회독 기반)에 맞춰 재정리.
+// 구조: 학년군('초'/'중'/'고') → 분류(1회독/2회독/3회독/심화회독/방학특강) → 묶음 목록(묶음 하나 = 그 분류에서 같이 등록할 책들).
 // 분류 안에 묶음이 2개 이상이면 "택1" (그중 하나를 선택해서 등록)이라는 뜻.
 const BOOK_PRESETS = {
   '초': {
-    '개념': [['개념책','유형책','연산책']],
-    '유형': [['개념책 2회독','유형책 2회독','쎈']],
-    '심화': [['쎈 2회독','최상위'], ['쎈 2회독','에이급']] // 택1
+    '1회독': [['개념책','유형책','연산책']],
+    '2회독': [['개념책 2회독','유형책 2회독','쎈']],
+    '3회독': [['쎈 2회독','최상위'], ['쎈 2회독','에이급']] // 택1, 심화 단계
   },
   '중': {
-    '개념': [['개념책','익힘책','연산책']],
-    '유형': [['익힘책 2회독','최상위라이트','일품']],
-    '심화': [['최상위 2회독','일품 2회독','고쟁이']]
+    '1회독': [['개념책','익힘책','연산책']],
+    '2회독': [['익힘책 2회독','최상위라이트'], ['익힘책 2회독','일품']], // 택1: 일반은 최상위라이트, 상위권은 일품 병행
+    '심화회독': [['고쟁이']] // 잘하는 학생만, 보통 방학특강으로 진행
   },
   '고': {
-    '특강': [['라쎈']],
-    '개념': [['CODI']],
-    '유형': [['라쎈 2회독','시너지']],
-    '심화': [['고쟁이']],
-    '내신': [['시너지 2회독','올림포스(고난도)']]
+    '1회독': [['CODI']],
+    '방학특강': [['라쎈']],
+    '2회독': [['라쎈 2회독','마플시너지']],
+    '3회독': [['고쟁이'], ['올림포스(고난도)']] // 택1, 심화 단계
   }
 };
 function allPresetBookNames(){
@@ -2087,10 +2093,22 @@ async function updateClassRec(clsId,date,stuId,field,val){
   const key=clsId+'_'+date;
   await fsSet('classRecords', key, {[stuId]: {[field]: val}});
 }
+function videoAssignHistoryForStudent(stuId){
+  const flat = [];
+  Object.entries(db.classRecords).forEach(([key,obj])=>{
+    const date = key.slice(-10);
+    if(obj[stuId] && obj[stuId].videoAssignments){
+      obj[stuId].videoAssignments.forEach(v=> flat.push({...v, date}));
+    }
+  });
+  flat.sort((a,b)=> a.date.localeCompare(b.date));
+  return flat;
+}
 function renderVideoAssignPicker(clsId, date, stuId){
   const rowKey = `${clsId}_${date}_${stuId}`;
   currentSubState._vidAssignDraft = currentSubState._vidAssignDraft || {};
-  const draft = currentSubState._vidAssignDraft[rowKey] = currentSubState._vidAssignDraft[rowKey] || {type:'개념', courseId:'', book:'', unit:''};
+  const draft = currentSubState._vidAssignDraft[rowKey] = currentSubState._vidAssignDraft[rowKey] || {type:'개념', courseId:'', book:'', unit:'', checked:{}};
+  draft.checked = draft.checked || {};
 
   const coursesUsed = [...new Set(db.videos.filter(v=>(v.videoType||'개념')===draft.type).map(v=>v.courseId))];
   const bookOptions = draft.type==='유형' ? [...new Set(db.videos.filter(v=>v.videoType==='유형' && v.courseId===draft.courseId).map(v=>v.book).filter(Boolean))] : [];
@@ -2109,40 +2127,55 @@ function renderVideoAssignPicker(clsId, date, stuId){
     return true;
   });
 
+  const history = videoAssignHistoryForStudent(stuId)
+    .filter(v=> (v.videoType||'개념')===draft.type)
+    .filter(v=> draft.courseId ? v.courseId===draft.courseId : false);
+  const lastVid = history[history.length-1] || null;
+  const checkedCount = Object.values(draft.checked).filter(Boolean).length;
+
   return `<div style="background:#f7f5ee;border-radius:8px;padding:5px;margin-bottom:4px;">
-    <select style="width:100%;font-size:10.5px;margin-bottom:3px;" onchange="currentSubState._vidAssignDraft['${rowKey}']={type:this.value,courseId:'',book:'',unit:''};render();">
+    ${!draft.courseId ? `<div style="font-size:10.5px;color:#aaa;margin-bottom:5px;">학년학기를 선택하면 마지막으로 부여한 영상을 볼 수 있어요.</div>`
+    : lastVid ? `<div style="font-size:10.5px;color:#6f6958;margin-bottom:5px;">📌 마지막 과제: ${fmtDate(lastVid.date)} · ${lastVid.done?'✅':'⬜'} ${escapeHtml(lastVid.title)}
+      ${history.length>1 ? `<details style="display:inline;"><summary style="display:inline;cursor:pointer;color:#8a8674;"> · 이전 기록 더보기(${history.length-1}개)</summary>
+        <div style="max-height:100px;overflow-y:auto;margin-top:4px;">
+          ${history.slice(0,-1).slice().reverse().map(v=>`<div style="font-size:10px;color:#6f6958;padding:2px 0;">${fmtDate(v.date)} · ${v.done?'✅':'⬜'} ${escapeHtml(v.title)}</div>`).join('')}
+        </div>
+      </details>` : ''}
+    </div>` : `<div style="font-size:10.5px;color:#aaa;margin-bottom:5px;">이 학기로 부여된 영상이 아직 없어요.</div>`}
+    <select style="width:100%;font-size:10.5px;margin-bottom:3px;" onchange="currentSubState._vidAssignDraft['${rowKey}']={type:this.value,courseId:'',book:'',unit:'',checked:{}};render();">
       <option value="개념" ${draft.type==='개념'?'selected':''}>개념 영상</option>
       <option value="유형" ${draft.type==='유형'?'selected':''}>유형 영상</option>
     </select>
-    <select style="width:100%;font-size:10.5px;margin-bottom:3px;" onchange="currentSubState._vidAssignDraft['${rowKey}'].courseId=this.value;currentSubState._vidAssignDraft['${rowKey}'].book='';currentSubState._vidAssignDraft['${rowKey}'].unit='';render();">
+    <select style="width:100%;font-size:10.5px;margin-bottom:3px;" onchange="currentSubState._vidAssignDraft['${rowKey}'].courseId=this.value;currentSubState._vidAssignDraft['${rowKey}'].book='';currentSubState._vidAssignDraft['${rowKey}'].unit='';currentSubState._vidAssignDraft['${rowKey}'].checked={};render();">
       <option value="">① 학년학기 선택</option>
       ${sortedCourses().filter(c=>coursesUsed.includes(c.id)).map(c=>`<option value="${c.id}" ${draft.courseId===c.id?'selected':''}>${c.name}</option>`).join('')}
     </select>
-    ${draft.type==='유형' ? `<select style="width:100%;font-size:10.5px;margin-bottom:3px;" onchange="currentSubState._vidAssignDraft['${rowKey}'].book=this.value;currentSubState._vidAssignDraft['${rowKey}'].unit='';render();" ${!draft.courseId?'disabled':''}>
+    ${draft.type==='유형' ? `<select style="width:100%;font-size:10.5px;margin-bottom:3px;" onchange="currentSubState._vidAssignDraft['${rowKey}'].book=this.value;currentSubState._vidAssignDraft['${rowKey}'].unit='';currentSubState._vidAssignDraft['${rowKey}'].checked={};render();" ${!draft.courseId?'disabled':''}>
       <option value="">② 교재 선택</option>
       ${bookOptions.map(b=>`<option value="${b}" ${draft.book===b?'selected':''}>${b}</option>`).join('')}
     </select>` : ''}
-    <select style="width:100%;font-size:10.5px;margin-bottom:3px;" onchange="currentSubState._vidAssignDraft['${rowKey}'].unit=this.value;render();" ${!draft.courseId?'disabled':''}>
+    <select style="width:100%;font-size:10.5px;margin-bottom:3px;" onchange="currentSubState._vidAssignDraft['${rowKey}'].unit=this.value;currentSubState._vidAssignDraft['${rowKey}'].checked={};render();" ${!draft.courseId?'disabled':''}>
       <option value="">${draft.type==='유형'?'③':'②'} 단원 선택</option>
       ${unitOptions.map(u=>`<option value="${u}" ${draft.unit===u?'selected':''}>${u}</option>`).join('')}
     </select>
-    <div class="row" style="gap:4px;">
-      <select style="flex:1;font-size:10.5px;" id="vidsel_${clsId}_${date}_${stuId}">
-        <option value="">${matches.length?'영상 선택':'조건에 맞는 영상 없음'}</option>
-        ${matches.map(v=>`<option value="${v.id}">${v.title}</option>`).join('')}
-      </select>
-      <button class="btn sm outline" style="padding:3px 8px;" onclick="addVideoAssign('${clsId}','${date}','${stuId}')">+</button>
+    ${matches.length ? `<div style="max-height:110px;overflow-y:auto;background:#fff;border-radius:6px;padding:4px 6px;margin-bottom:4px;">
+      ${matches.map(v=>`<label style="display:block;font-size:10.5px;padding:2px 0;"><input type="checkbox" ${draft.checked[v.id]?'checked':''} onchange="currentSubState._vidAssignDraft['${rowKey}'].checked['${v.id}']=this.checked;render();"> ${escapeHtml(v.title)}</label>`).join('')}
     </div>
+    <button class="btn sm gold" style="width:100%;" onclick="addVideoAssign('${clsId}','${date}','${stuId}')">선택한 영상 ${checkedCount?`${checkedCount}개 `:''}과제로 추가</button>` : `<div style="font-size:10.5px;color:#aaa;">조건에 맞는 영상이 없어요.</div>`}
   </div>`;
 }
 async function addVideoAssign(clsId,date,stuId){
-  const sel = document.getElementById(`vidsel_${clsId}_${date}_${stuId}`);
-  const vid = db.videos.find(v=>v.id===sel.value);
-  if(!vid) return;
+  const rowKey = `${clsId}_${date}_${stuId}`;
+  const draft = currentSubState._vidAssignDraft[rowKey];
+  if(!draft) return;
+  const ids = Object.keys(draft.checked||{}).filter(id=>draft.checked[id]);
+  if(!ids.length){ alert('과제로 낼 영상을 먼저 선택해주세요.'); return; }
+  const vids = ids.map(id=>db.videos.find(v=>v.id===id)).filter(Boolean);
   const key=clsId+'_'+date;
   const cur = (db.classRecords[key]||{})[stuId] || {videoAssignments:[]};
-  const newArr = [...(cur.videoAssignments||[]), {title:vid.title,url:vid.url,done:false}];
-  await fsSet('classRecords', key, {[stuId]: {videoAssignments:newArr}});
+  const newArr = [...(cur.videoAssignments||[]), ...vids.map(vid=>({title:vid.title,url:vid.url,done:false,courseId:vid.courseId||'',videoType:vid.videoType||'개념',unit:vid.unit||'',book:vid.book||''}))];
+  const ok = await fsSet('classRecords', key, {[stuId]: {videoAssignments:newArr}});
+  if(ok){ draft.checked = {}; render(); }
 }
 async function toggleVideoDone(clsId,date,stuId,idx){
   const key=clsId+'_'+date;
@@ -3090,7 +3123,124 @@ async function fixVideoUnitNumbers(){
   });
 }
 
-/* ---------------- STUDENTS ---------------- */
+/* ---------------- SOLUTION PHOTO LIBRARY (해설 보관함, 원장 전용) ---------------- */
+// 2026-09-08: 질문 답변할 때 미리 찍어둔 해설사진을 검색해서 바로 첨부할 수 있게.
+// 학생은 이 라이브러리를 볼 필요가 없어서 원장 전용으로만 구독(attachRoleListeners 참고).
+function solutionPhotoSearch(list, {courseId, unit, text}){
+  let out = courseId ? list.filter(p=>p.courseId===courseId) : list;
+  if(unit) out = out.filter(p=>p.unit===unit);
+  const q = (text||'').trim().toLowerCase();
+  if(q) out = out.filter(p=> [p.book,p.page,p.problemNo].filter(Boolean).join(' ').toLowerCase().includes(q));
+  return out.sort((a,b)=>(b.uploadedAt||'').localeCompare(a.uploadedAt||''));
+}
+function renderSolutionLib(){
+  const filter = currentSubState.solCourse || 'all';
+  const unitFilter = currentSubState.solUnit || 'all';
+  const search = currentSubState.solSearch || '';
+  let list = filter==='all' ? [...db.solutionPhotos] : solutionPhotoSearch(db.solutionPhotos, {courseId:filter});
+  if(filter!=='all' && unitFilter!=='all') list = list.filter(p=>p.unit===unitFilter);
+  if(search.trim()) list = solutionPhotoSearch(list, {text:search});
+  list.sort((a,b)=>(b.uploadedAt||'').localeCompare(a.uploadedAt||''));
+  const unitsInCourse = filter!=='all' ? courseUnitsList(filter) : [];
+  const allBooks = [...new Set([...Array.from(allPresetBookNames()), ...Array.from(collectAllBookNames())])];
+  return `
+  <h1 class="page-title">🗂️ 해설 보관함</h1>
+  <p class="page-sub">문제 풀이 사진을 학년학기·교재·단원·페이지·문제번호로 찍어서 등록해두면, 질문 답변할 때 검색해서 바로 첨부할 수 있어요.</p>
+  <div class="card">
+    <div class="row" style="flex-wrap:wrap;">
+      <input type="file" accept="image/*" id="spPhoto">
+      <select id="spCourse" onchange="onSolCourseChange()"><option value="">학년학기 선택</option>${sortedCourses().map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
+      <input type="text" id="spBook" list="spBookList" placeholder="교재명 (예: 쎈)" style="width:120px;">
+      <datalist id="spBookList">${allBooks.map(b=>`<option value="${b}">`).join('')}</datalist>
+      <select id="spUnit"><option value="">단원 선택 (학년학기 먼저)</option></select>
+      <input type="text" id="spPage" placeholder="페이지" style="width:80px;">
+      <input type="text" id="spProblem" placeholder="문제번호" style="width:80px;">
+      <button class="btn gold sm" onclick="addSolutionPhoto()">+ 등록</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="row">
+      <input type="text" placeholder="🔍 교재·페이지·문제번호로 검색" value="${search}" oninput="currentSubState.solSearch=this.value;render();" style="flex:1;min-width:150px;">
+      ${filter!=='all' ? `<button class="btn sm outline" onclick="currentSubState.solCourse='all';currentSubState.solUnit='all';render();">필터 초기화</button>` : ''}
+    </div>
+  </div>
+  <div class="tabs2">
+    <button class="${filter==='all'?'active':''}" onclick="currentSubState.solCourse='all';currentSubState.solUnit='all';render();">전체</button>
+    ${sortedCourses().map(c=>`<button class="${filter===c.id?'active':''}" onclick="currentSubState.solCourse='${c.id}';currentSubState.solUnit='all';render();">${c.name}</button>`).join('')}
+  </div>
+  ${filter!=='all' && unitsInCourse.length ? `<div class="tabs2" style="margin-top:-6px;">
+    <button class="${unitFilter==='all'?'active':''}" style="font-size:11px;" onclick="currentSubState.solUnit='all';render();">단원 전체</button>
+    ${unitsInCourse.map(u=>`<button class="${unitFilter===u?'active':''}" style="font-size:11px;" onclick="currentSubState.solUnit='${u}';render();">${u}</button>`).join('')}
+  </div>` : ''}
+  <div class="card">
+    ${list.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;">
+      ${list.map(p=>`<div style="text-align:center;">
+        <img src="${p.photo}" style="width:100%;border-radius:6px;cursor:pointer;" onclick="openLightbox('${p.photo}')">
+        <div style="font-size:10px;color:#6f6958;margin-top:3px;">${courseById(p.courseId)?.name||'-'}${p.book?` · ${p.book}`:''}</div>
+        <div style="font-size:10px;color:#6f6958;">${p.unit?p.unit+' · ':''}${p.page?`${p.page}p `:''}${p.problemNo?`${p.problemNo}번`:''}</div>
+        <button class="btn sm outline" style="font-size:9px;padding:1px 6px;margin-top:3px;" onclick="deleteSolutionPhoto('${p.id}')">삭제</button>
+      </div>`).join('')}
+    </div>` : `<div class="empty">조건에 맞는 해설사진이 없어요.</div>`}
+  </div>
+  `;
+}
+function onSolCourseChange(){
+  const courseId = document.getElementById('spCourse').value;
+  const units = courseId ? courseUnitsList(courseId) : [];
+  const sel = document.getElementById('spUnit');
+  sel.innerHTML = `<option value="">${courseId?'단원 선택':'단원 선택 (학년학기 먼저)'}</option>` + units.map(u=>`<option value="${u}">${u}</option>`).join('');
+}
+async function addSolutionPhoto(){
+  const fileInput = document.getElementById('spPhoto');
+  const courseId = document.getElementById('spCourse').value;
+  const book = document.getElementById('spBook').value.trim();
+  const unit = document.getElementById('spUnit').value;
+  const page = document.getElementById('spPage').value.trim();
+  const problemNo = document.getElementById('spProblem').value.trim();
+  if(!fileInput.files[0]){ alert('사진을 선택해주세요.'); return; }
+  if(!courseId){ alert('학년학기를 선택해주세요.'); return; }
+  await handleMultiPhotoInput(fileInput, async (durl)=>{
+    await fsSet('solutionPhotos', uid('sol'), {photo:durl, courseId, book, unit, page, problemNo, uploadedAt:new Date().toISOString()});
+  }, 900, 0.6);
+  fileInput.value=''; document.getElementById('spBook').value=''; document.getElementById('spPage').value=''; document.getElementById('spProblem').value='';
+  render();
+}
+async function deleteSolutionPhoto(id){
+  openConfirm('이 해설사진을 삭제할까요?', '되돌릴 수 없어요.', async ()=>{ await fsDelete('solutionPhotos', id); });
+}
+// 질문 답변 화면에서 검색해서 바로 첨부하는 패널
+function renderSolLibPickerForQuestion(qId){
+  currentSubState._solPicker = currentSubState._solPicker || {};
+  const open = !!currentSubState._solPicker[qId];
+  if(!open) return `<button class="btn sm outline" style="margin-top:6px;" onclick="currentSubState._solPicker['${qId}']=true;render();">🗂️ 보관함에서 찾기</button>`;
+  currentSubState._solSearchDraft = currentSubState._solSearchDraft || {};
+  const draft = currentSubState._solSearchDraft[qId] = currentSubState._solSearchDraft[qId] || {courseId:'', text:''};
+  const matches = solutionPhotoSearch(db.solutionPhotos, draft).slice(0,20);
+  return `<div style="background:#f7f5ee;border-radius:8px;padding:6px;margin-top:6px;">
+    <div class="row" style="gap:4px;flex-wrap:wrap;">
+      <select style="font-size:10.5px;" onchange="currentSubState._solSearchDraft['${qId}'].courseId=this.value;render();">
+        <option value="">학년학기 전체</option>
+        ${sortedCourses().map(c=>`<option value="${c.id}" ${draft.courseId===c.id?'selected':''}>${c.name}</option>`).join('')}
+      </select>
+      <input type="text" placeholder="교재·페이지·문제번호 검색" value="${escapeHtml(draft.text)}" oninput="currentSubState._solSearchDraft['${qId}'].text=this.value;render();" style="flex:1;min-width:120px;font-size:10.5px;">
+      <button class="btn sm outline" style="font-size:10px;" onclick="currentSubState._solPicker['${qId}']=false;render();">닫기</button>
+    </div>
+    ${matches.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(70px,1fr));gap:6px;margin-top:6px;max-height:220px;overflow-y:auto;">
+      ${matches.map(p=>`<div style="text-align:center;cursor:pointer;" onclick="attachSolutionPhotoToAnswer('${qId}','${p.id}')">
+        <img src="${p.photo}" style="width:100%;border-radius:5px;border:2px solid transparent;" onmouseover="this.style.borderColor='var(--gold)'" onmouseout="this.style.borderColor='transparent'">
+        <div style="font-size:9px;color:#8a8674;">${p.page?p.page+'p':''}${p.problemNo?' '+p.problemNo+'번':''}</div>
+      </div>`).join('')}
+    </div>` : `<div style="font-size:11px;color:#aaa;margin-top:6px;">일치하는 해설사진이 없어요.</div>`}
+  </div>`;
+}
+async function attachSolutionPhotoToAnswer(qId, solId){
+  const q = db.questions.find(x=>x.id===qId);
+  const sol = db.solutionPhotos.find(x=>x.id===solId);
+  if(!q || !sol) return;
+  const answerPhotos = [...(q.answerPhotos||[]), sol.photo];
+  await fsUpdate('questions', qId, {answerPhotos});
+}
+
 function renderStudents(){
   if(currentSubState.studentDetail){ return renderStudentDetail(currentSubState.studentDetail, true); }
   const filter = currentSubState.studentFilter || 'active';
@@ -4093,6 +4243,7 @@ function renderQnaDirector(){
       <div style="margin-top:10px;">
         <textarea rows="2" placeholder="답변 메모" id="ans_${q.id}">${q.answerText||''}</textarea>
         <input type="file" accept="image/*" multiple id="ansPhoto_${q.id}" style="margin-top:6px;">
+        ${renderSolLibPickerForQuestion(q.id)}
         <div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<div class="thumb-wrap"><img src="${p}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})"><button class="thumb-x" onclick="removeAnswerPhoto('${q.id}',${i})">✕</button></div>`).join('')}</div>
         <button class="btn sm gold" style="margin-top:8px;" onclick="answerQuestion('${q.id}')">답변 등록</button>
       </div>
