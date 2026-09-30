@@ -199,7 +199,7 @@
       <div class="brand-mini"><h2>M&amp;m 수학훈련소</h2><span>MATH MASTER</span></div>
       <div id="navItems"></div>
       <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">실시간 연결됨</span></div>
-      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-09-08 v84 (해설 보관함 신규 추가 · 질문답변 연동)</div>
+      <div style="font-size:10px;color:#5b6889;padding:0 20px 10px;">버전: 2026-10-01 v86 (STAD 신청 달 계산 버그 수정)</div>
       <div class="nav-bottom">
         <button onclick="logout()">로그아웃</button>
       </div>
@@ -424,6 +424,16 @@ function idRangeQuery(colName, prefix){
 // 학생은 자기 것만 구독해서 Firestore 읽기량을 크게 줄인다.
 // (예전 구조는 로그인 전부터 이 컬렉션들을 전부 구독해서, 학생이 접속할 때마다
 //  학원 전체의 몇 달치 기록을 통째로 다시 읽어와 Firestore 무료 할당량을 초과시켰음 — 2026-09-07 사건)
+// 역할별 리스너가 실패했을 때(권한 오류, 색인 누락, 네트워크 등) 조용히 묻히지 않고
+// "연결 끊김" 표시로 바로 드러나게 하는 공용 에러 핸들러. (2026-10-01: 실시간 연결됨은 떠있는데
+// 실제 숙제/질문 데이터는 하나도 안 불러와지던 사건 이후 추가 — 그땐 core 리스너 2개만 연결상태를
+// 판단해서, role 리스너가 조용히 실패해도 초록불이 계속 떠 있었음)
+function roleListenerError(colName){
+  return (err)=>{
+    console.error('[역할별 리스너 오류]', colName, err);
+    setConnStatus(false);
+  };
+}
 function attachRoleListeners(){
   roleUnsubscribers.forEach(u=>{ try{ u(); }catch(e){} });
   roleUnsubscribers = [];
@@ -440,12 +450,12 @@ function attachRoleListeners(){
     if(isDirector){
       subs.push(fsdb.collection(col).onSnapshot(snap=>{
         const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db[col]=m; scheduleRender();
-      }));
+      }, roleListenerError(col)));
     }else if(clsId){
       db[col] = {};
       subs.push(idRangeQuery(col, clsId+'_').onSnapshot(snap=>{
         const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db[col]=m; scheduleRender();
-      }));
+      }, roleListenerError(col)));
     }
   });
 
@@ -454,12 +464,12 @@ function attachRoleListeners(){
     if(isDirector){
       subs.push(fsdb.collection(col).onSnapshot(snap=>{
         const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db[col]=m; scheduleRender();
-      }));
+      }, roleListenerError(col)));
     }else if(stuId){
       db[col] = {};
       subs.push(idRangeQuery(col, stuId+'_').onSnapshot(snap=>{
         const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db[col]=m; scheduleRender();
-      }));
+      }, roleListenerError(col)));
     }
   });
 
@@ -467,43 +477,43 @@ function attachRoleListeners(){
   if(isDirector){
     subs.push(fsdb.collection('practiceProgress').onSnapshot(snap=>{
       const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.practiceProgress=m; scheduleRender();
-    }));
+    }, roleListenerError('practiceProgress')));
   }else if(stuId){
     db.practiceProgress = {};
     subs.push(fsdb.collection('practiceProgress').doc(stuId).onSnapshot(doc=>{
       db.practiceProgress = doc.exists ? {[stuId]: doc.data()} : {};
       scheduleRender();
-    }));
+    }, roleListenerError('practiceProgress')));
   }
 
   // schoolScores: studentId 필드로 필터링 (키는 examId_학생ID라 접두어 필터는 안 맞음)
   if(isDirector){
     subs.push(fsdb.collection('schoolScores').onSnapshot(snap=>{
       const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.schoolScores=m; scheduleRender();
-    }));
+    }, roleListenerError('schoolScores')));
   }else if(stuId){
     db.schoolScores = {};
     subs.push(fsdb.collection('schoolScores').where('studentId','==',stuId).onSnapshot(snap=>{
       const m={}; snap.docs.forEach(d=>{ m[d.id]=d.data(); }); db.schoolScores=m; scheduleRender();
-    }));
+    }, roleListenerError('schoolScores')));
   }
 
   // questions / feedbacks / kmm: 자동생성 ID + studentId 필드를 가진 배열형 컬렉션.
   // 원장은 전체 목록(질문함/피드백 발송이력)이 필요하니 전체, 학생은 studentId로 필터링.
   ['questions','feedbacks','kmm'].forEach(col=>{
     if(isDirector){
-      subs.push(fsdb.collection(col).onSnapshot(snap=>{ db[col] = snap.docs.map(d=>({id:d.id, ...d.data()})); scheduleRender(); }));
+      subs.push(fsdb.collection(col).onSnapshot(snap=>{ db[col] = snap.docs.map(d=>({id:d.id, ...d.data()})); scheduleRender(); }, roleListenerError(col)));
     }else if(stuId){
       db[col] = [];
       subs.push(fsdb.collection(col).where('studentId','==',stuId).onSnapshot(snap=>{
         db[col] = snap.docs.map(d=>({id:d.id, ...d.data()})); scheduleRender();
-      }));
+      }, roleListenerError(col)));
     }
   });
 
   // 해설사진 보관함: 원장 전용 기능 — 학생은 볼 일이 없으니 아예 구독하지 않음(읽기량 절약).
   if(isDirector){
-    subs.push(fsdb.collection('solutionPhotos').onSnapshot(snap=>{ db.solutionPhotos = snap.docs.map(d=>({id:d.id, ...d.data()})); scheduleRender(); }));
+    subs.push(fsdb.collection('solutionPhotos').onSnapshot(snap=>{ db.solutionPhotos = snap.docs.map(d=>({id:d.id, ...d.data()})); scheduleRender(); }, roleListenerError('solutionPhotos')));
   }
 
   roleUnsubscribers = subs;
@@ -2609,6 +2619,12 @@ const STAD_MONTH = ()=> academicTodayISO().slice(0,7);
 const STAD_TODAY = ()=> todayISO(); // 정산 마감은 진짜 자정이라 심야보정(academicTodayISO) 없이 실제 날짜 그대로 씀
 function stadAppKey(stuId, month){ return `${stuId}_${month}`; }
 function stadDailyKey(stuId, date){ return `${stuId}_${date}`; }
+// 20일~말일 신청기간에 신청하면 "다음 달" 참여로 등록되므로, 신청 저장 시엔 이 함수로 대상 달을 구한다.
+function stadTargetMonth(dateISO){
+  const d = new Date((dateISO||STAD_TODAY())+'T00:00:00');
+  d.setMonth(d.getMonth()+1);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+}
 function stadApplicationFor(stuId, month){ return db.stadApplications[stadAppKey(stuId, month||STAD_MONTH())] || null; }
 function stadDailyFor(stuId, date){ return db.stadDaily[stadDailyKey(stuId, date||STAD_TODAY())] || null; }
 // 매월 20일 ~ 말일이 기본 신청기간. 특정 달만 다르게 하고 싶을 때는
@@ -2664,7 +2680,7 @@ function stadMonthStats(stuId, month){
 }
 const STAD_BANK_INFO = '카카오뱅크 3333-29-2008780 (예금주: 백지하) 계좌로 참여비 2만원을 입금해주세요. 입금완료시 신청완료입니다.';
 async function applyForStad(stuId){
-  const month = STAD_MONTH();
+  const month = stadTargetMonth(); // 신청기간(20일~말일)에 신청 = 다음 달 참여
   if(!isStadApplyOpen()){ alert('지금은 신청 기간이 아니에요.'); return; }
   const existing = stadApplicationFor(stuId, month);
   if(existing && existing.status!=='rejected'){ alert('이미 신청했어요.'); return; }
@@ -2754,9 +2770,11 @@ function renderStadAdmin(){
   const infoText = s.infoText || STAD_INFO_DEFAULT;
   const zoomLink = s.zoomLink || '';
 
-  const allApps = Object.values(db.stadApplications||{}).filter(a=>a.month===month);
-  const pending = allApps.filter(a=>a.status==='pending').map(a=>({...a, s: studentById(a.studentId)})).filter(x=>x.s);
-  const approved = allApps.filter(a=>a.status==='approved').map(a=>({...a, s: studentById(a.studentId)})).filter(x=>x.s);
+  const allApps = Object.values(db.stadApplications||{});
+  // 승인 대기는 달과 무관하게 전부 보여준다 (신청 당시 달/참여 대상 달이 다를 수 있어서, 필터링하면 놓칠 수 있음)
+  const pending = allApps.filter(a=>a.status==='pending').map(a=>({...a, s: studentById(a.studentId)})).filter(x=>x.s)
+    .sort((a,b)=>(a.appliedAt||'').localeCompare(b.appliedAt||''));
+  const approved = allApps.filter(a=>a.status==='approved' && a.month===month).map(a=>({...a, s: studentById(a.studentId)})).filter(x=>x.s);
   approved.sort((a,b)=>(a.s.name||'').localeCompare(b.s.name||''));
 
   const today = STAD_TODAY();
@@ -2784,11 +2802,11 @@ function renderStadAdmin(){
     <h3 style="margin-top:0;">② 승인 대기 (${pending.length}명)</h3>
     ${pending.length ? pending.map(x=>`
       <div class="row between" style="padding:8px 0;border-bottom:1px solid var(--line);flex-wrap:wrap;gap:8px;">
-        <div><b>${x.s.name}</b> <span class="muted" style="font-size:11px;">신청일 ${fmtDate(x.appliedAt.slice(0,10))}</span></div>
+        <div><b>${x.s.name}</b> <span class="muted" style="font-size:11px;">${x.month} 참여 신청 · 신청일 ${fmtDate(x.appliedAt.slice(0,10))}</span></div>
         <div class="row" style="gap:6px;">
-          <label style="font-size:11px;"><input type="checkbox" id="stadPay_${x.studentId}"> 입금확인</label>
-          <button class="btn sm gold" onclick="approveStadApplication('${x.studentId}','${month}', document.getElementById('stadPay_${x.studentId}').checked)">승인</button>
-          <button class="btn sm outline" onclick="rejectStadApplication('${x.studentId}','${month}')">반려</button>
+          <label style="font-size:11px;"><input type="checkbox" id="stadPay_${x.studentId}_${x.month}"> 입금확인</label>
+          <button class="btn sm gold" onclick="approveStadApplication('${x.studentId}','${x.month}', document.getElementById('stadPay_${x.studentId}_${x.month}').checked)">승인</button>
+          <button class="btn sm outline" onclick="rejectStadApplication('${x.studentId}','${x.month}')">반려</button>
         </div>
       </div>`).join('') : `<div class="empty">대기 중인 신청이 없어요.</div>`}
   </div>
@@ -2836,7 +2854,10 @@ function renderStadAdmin(){
 }
 function renderStadPage(){
   const stuId = session.studentId;
-  const month = STAD_MONTH();
+  // 이번 달 이미 승인된 참여자면 그걸 우선 보여주고(월말에 다음달 신청기간과 겹쳐도 안 끊기게),
+  // 아니면 신청기간(20일~말일) 중엔 "다음 달" 신청 여부를, 그 외엔 "이번 달" 신청 여부를 본다.
+  const curMonth = STAD_MONTH();
+  const month = isStadParticipant(stuId, curMonth) ? curMonth : (isStadApplyOpen() ? stadTargetMonth() : curMonth);
   const app = stadApplicationFor(stuId, month);
   const participant = isStadParticipant(stuId, month);
 
