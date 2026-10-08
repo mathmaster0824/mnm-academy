@@ -1,0 +1,22 @@
+name: Read-only problem link audit tests
+on:
+  push:
+    branches:
+      - audit/problem-link-integrity-20261009
+  pull_request:
+    paths:
+      - 'tools/problem-link-audit.js'
+      - 'tests/problem-link-audit.test.js'
+      - '.github/workflows/problem-link-audit.yml'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run pure diagnostic tests
+        run: node tests/problem-link-audit.test.js
