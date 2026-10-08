@@ -8,6 +8,8 @@
  */
 async function auditProblemLinksReadOnly(fsdb, classifyLink, {pageSize=100, maxRecords=10000}={}) {
   if (!fsdb || typeof classifyLink !== 'function') throw new Error('Firestore and classifier required');
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 500) throw new Error('pageSize must be 1..500');
+  if (!Number.isSafeInteger(maxRecords) || maxRecords < 1) throw new Error('maxRecords must be a positive integer');
   const collections=['questions','solutionPhotos'];
   const records=[];
   const failures=[];
