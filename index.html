@@ -487,7 +487,7 @@ async function ensureClassDateData(clsId,date){
     if(db[col] && db[col][key]!==undefined) return;
     try{
       const doc=await fsdb.collection(col).doc(key).get();
-      if(doc.exists){ db[col][key]=doc.data(); }
+      if(doc.exists){ if(col==='classRecords') mergeClassRecordServer(key,doc.data()); else db[col][key]=doc.data(); }
     }catch(e){ console.error('[과거 수업 데이터 조회 오류]',col,key,e); }
   }));
   scheduleRender();
@@ -523,7 +523,7 @@ function attachRoleListeners(){
     fsdb.collection('classRecords')
       .where(firebase.firestore.FieldPath.documentId(),'>=',cid+'_'+recentStart)
       .where(firebase.firestore.FieldPath.documentId(),'<',cid+'_\uf8ff').get()
-      .then(snap=>snap.docs.forEach(d=>{db.classRecords[d.id]=d.data();})),
+      .then(snap=>snap.docs.forEach(d=>{mergeClassRecordServer(d.id,d.data());})),
     fsdb.collection('weeklyPlans').doc(cid+'_'+currentWeek).get()
       .then(doc=>{if(doc.exists)db.weeklyPlans[doc.id]=doc.data();}),
     fsdb.collection('fridaySupp')
@@ -2489,21 +2489,56 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames, focusRecommended=f
   </div>`;
 }
 
+// Serialize edits for each class/date/student; only write changed fields to Firestore.
+const classRecordWriteQueues=new Map();
+const classRecordPending=new Map();
+function mergeClassRecordServer(key,server){
+  const pending=classRecordPending.get(key);
+  const merged={...(server||{})};
+  if(pending) for(const [stuId,fields] of pending){
+    merged[stuId]={...(merged[stuId]||{}),...fields};
+  }
+  db.classRecords[key]=merged;
+}
 async function updateClassRec(clsId,date,stuId,field,val){
   const key=clsId+'_'+date;
+  const row={...(db.classRecords[key]?.[stuId]||{})};
+  const changes={[field]:val};
+  if(field==='stepId') changes.stepLabelSnapshot=val?(stepShortLabel(val)||stepLabel(val)||row.stepLabelSnapshot||''):'';
+  if(field==='extraSteps') changes.extraStepLabelSnapshots=(Array.isArray(val)?val:[]).map(id=>stepShortLabel(id)||stepLabel(id)||id);
   db.classRecords[key]=db.classRecords[key]||{};
-  const before={...(db.classRecords[key][stuId]||{})};
-  const next={...before,[field]:val};
-  if(field==='stepId') next.stepLabelSnapshot=val?(stepShortLabel(val)||stepLabel(val)||before.stepLabelSnapshot||''):'';
-  if(field==='extraSteps') next.extraStepLabelSnapshots=(Array.isArray(val)?val:[]).map(id=>stepShortLabel(id)||stepLabel(id)||id);
-  db.classRecords[key][stuId]=next;
-  render(); // 입력 즉시 일일 리포트에 반영
-  const ok=await fsSet('classRecords',key,{[stuId]:next});
-  if(!ok){
-    db.classRecords[key][stuId]=before;
-    render();
-  }
-  return ok;
+  db.classRecords[key][stuId]={...row,...changes};
+  let pending=classRecordPending.get(key);
+  if(!pending){pending=new Map();classRecordPending.set(key,pending);}
+  pending.set(stuId,{...(pending.get(stuId)||{}),...changes});
+  render();
+  const queueKey=key+'|'+stuId;
+  const prior=classRecordWriteQueues.get(queueKey)||Promise.resolve();
+  const job=prior.catch(()=>{}).then(async()=>{
+    try{
+      await fsdb.collection('classRecords').doc(key).set({[stuId]:changes},{merge:true});
+      return true;
+    }catch(e){
+      console.error('[반별기록 저장 실패]',key,stuId,field,e);
+      alert('반별기록 저장에 실패했어요. 연결을 확인하고 다시 입력해주세요.');
+      return false;
+    }finally{
+      const current=classRecordPending.get(key);
+      if(current){
+        const fields=current.get(stuId);
+        if(fields){
+          for(const [name,value] of Object.entries(changes)){
+            if(Object.is(fields[name],value)) delete fields[name];
+          }
+          if(!Object.keys(fields).length) current.delete(stuId);
+        }
+        if(!current.size) classRecordPending.delete(key);
+      }
+    }
+  });
+  classRecordWriteQueues.set(queueKey,job);
+  job.finally(()=>{if(classRecordWriteQueues.get(queueKey)===job) classRecordWriteQueues.delete(queueKey);});
+  return job;
 }
 function videoAssignHistoryForStudent(stuId){
   const flat = [];
