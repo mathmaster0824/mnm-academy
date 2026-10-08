@@ -7,6 +7,8 @@ on:
     paths:
       - 'tools/problem-link-audit.js'
       - 'tests/problem-link-audit.test.js'
+      - 'tests/problem-link-firestore-readonly.test.js'
+      - 'tools/problem-link-firestore-readonly.js'
       - '.github/workflows/problem-link-audit.yml'
 jobs:
   test:
@@ -19,4 +21,6 @@ jobs:
         with:
           node-version: '22'
       - name: Run pure diagnostic tests
-        run: node tests/problem-link-audit.test.js
+        run: |
+          node tests/problem-link-audit.test.js
+          node tests/problem-link-firestore-readonly.test.js
