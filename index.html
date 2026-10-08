@@ -517,7 +517,9 @@ function attachRoleListeners(){
   // 수업기록/주간계획/금요보강:
   // 로그인 때 전체 역사를 실시간 구독하지 않는다.
   // 최근 7일만 1회 읽고, 특정 과거 날짜는 화면에서 선택할 때 exact doc 1건을 읽는다.
-  ['classRecords','weeklyPlans','fridaySupp'].forEach(col=>{ db[col]={}; });
+  // Keep class records already loaded (including pending edits) while subscriptions refresh.
+  ['weeklyPlans','fridaySupp'].forEach(col=>{ db[col]={}; });
+  db.classRecords=db.classRecords||{};
   const classIds=isDirector?(db.classes||[]).map(c=>c.id):(clsId?[clsId]:[]);
   Promise.all(classIds.flatMap(cid=>[
     fsdb.collection('classRecords')
