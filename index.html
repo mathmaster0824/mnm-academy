@@ -1841,10 +1841,8 @@ async function seedDefaultAttendance(clsId, date, students){
   for(const s of students){
     const cur=db.classRecords[key][s.id]||{};
     if(cur.attendance===undefined){
-      const next={...cur,attendance:'출석'};
-      db.classRecords[key][s.id]=next;
       changed=true;
-      await fsSet('classRecords',key,{[s.id]:next});
+      await updateClassRec(clsId,date,s.id,'attendance','출석');
     }
   }
   if(changed) render();
@@ -2363,7 +2361,7 @@ async function confirmAddExtraPractice(clsId,date,stuId){
   const key = clsId+'_'+date;
   const cur = (db.classRecords[key]||{})[stuId] || {};
   const extra = [...(cur.extraPractice||[]), {book:draft.book, range:draft.range||''}];
-  await fsSet('classRecords', key, {[stuId]: {extraPractice: extra}});
+  await updateClassRec(clsId,date,stuId,'extraPractice',extra);
   currentSubState._addingExtraPractice[rowKey] = false;
   delete currentSubState._extraPracticeDraft[rowKey];
   render();
@@ -2372,7 +2370,7 @@ async function removeExtraPractice(clsId,date,stuId,idx){
   const key = clsId+'_'+date;
   const cur = (db.classRecords[key]||{})[stuId] || {};
   const extra = (cur.extraPractice||[]).filter((_,i)=>i!==idx);
-  await fsSet('classRecords', key, {[stuId]: {extraPractice: extra}});
+  await updateClassRec(clsId,date,stuId,'extraPractice',extra);
 }
 function focusKey(clsId,date,stuId){ return `${clsId}_${date}_${stuId}`; }
 function focusRecord(clsId,date,stuId){ return db.focusHistory?.[focusKey(clsId,date,stuId)] || null; }
