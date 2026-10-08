@@ -2619,7 +2619,7 @@ async function addVideoAssign(clsId,date,stuId){
   const key=clsId+'_'+date;
   const cur = (db.classRecords[key]||{})[stuId] || {videoAssignments:[]};
   const newArr = [...(cur.videoAssignments||[]), ...vids.map(vid=>({title:vid.title,url:vid.url,done:false,courseId:vid.courseId||'',videoType:vid.videoType||'개념',unit:vid.unit||'',book:vid.book||''}))];
-  const ok = await fsSet('classRecords', key, {[stuId]: {videoAssignments:newArr}});
+  const ok = await updateClassRec(clsId,date,stuId,'videoAssignments',newArr);
   if(ok){ draft.checked = {}; render(); }
 }
 async function toggleVideoDone(clsId,date,stuId,idx){
@@ -2627,7 +2627,7 @@ async function toggleVideoDone(clsId,date,stuId,idx){
   const cur = (db.classRecords[key]||{})[stuId];
   if(!cur) return;
   const newArr = [...cur.videoAssignments]; newArr[idx] = {...newArr[idx], done: !newArr[idx].done};
-  await fsSet('classRecords', key, {[stuId]: {videoAssignments:newArr}});
+  await updateClassRec(clsId,date,stuId,'videoAssignments',newArr);
 }
 async function assignStudent(clsId){
   const sel=document.getElementById('addStuSel'); if(!sel.value) return;
@@ -2723,7 +2723,7 @@ async function applyBulk(clsId,date){
     if(study) patch.studyCompletionLevel=study;
     upd[stuId]=patch;
   });
-  await fsSet('classRecords', key, upd);
+  await Promise.all(Object.entries(upd).flatMap(([stuId,patch])=>Object.entries(patch).map(([field,value])=>updateClassRec(clsId,date,stuId,field,value))));
 }
 
 function renderWeeklyPlan(cls, date){
@@ -4195,7 +4195,7 @@ async function updateKmmScore(stuId, date, val){
 async function toggleVideoDoneByKey(key,stuId,idx){
   const cur = db.classRecords[key][stuId];
   const newArr = [...cur.videoAssignments]; newArr[idx] = {...newArr[idx], done: !newArr[idx].done};
-  await fsSet('classRecords', key, {[stuId]: {videoAssignments:newArr}});
+  await updateClassRec(key.slice(0,-11),key.slice(-10),stuId,'videoAssignments',newArr);
 }
 
 function renderDonut(agg){
