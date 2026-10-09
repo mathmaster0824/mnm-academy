@@ -3759,7 +3759,7 @@ async function deleteSolutionPhoto(id){
 }
 // 질문 답변 화면에서 검색해서 바로 첨부하는 패널
 function autoSolutionMatchesForQuestion(q){
-  if(!q || q.sourceType!=='TEXTBOOK') return [];
+  if(!q || q.sourceType!=='TEXTBOOK' || q.problemNumberMode==='MANUAL') return [];
   const qKey=q.sourceKey||textbookSourceKey(q.sourceCourseId,q.sourceBook,q.sourcePage,q.sourceProblemNo);
   if(!qKey) return [];
   return (db.solutionPhotos||[]).filter(p=>{
@@ -5148,7 +5148,7 @@ function renderQnaStudentSection(stuId, directorView){
 
           ${src.sourceType==='TEXTBOOK'?`
           <div style="margin-top:7px;padding:9px 10px;border:1px solid #e4dfd3;border-radius:9px;background:#faf9f5;">
-            <div style="font-size:11px;color:#6f6958;margin-bottom:6px;"><b>문제 출처를 정확히 선택해주세요.</b> 같은 출처가 학습보관함에 있으면 자동으로 연결됩니다.</div>
+            <div style="font-size:11px;color:#6f6958;margin-bottom:6px;"><b>교재와 페이지를 선택하면 등록된 해설 문제번호가 표시돼요.</b> 없는 번호는 직접 입력해 선생님께 질문할 수 있어요.</div>
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:6px;">
               <select id="newQCourse" onchange="setNewQSourceField('${stuId}','sourceCourseId',this.value,true)">
                 <option value="">학년·학기 선택</option>
