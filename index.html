@@ -3678,7 +3678,7 @@ function renderSolutionLib(){
     <div class="row" style="flex-wrap:wrap;">
       <input type="file" accept="image/*" id="spPhoto">
       <select id="spCourse" onchange="onSolCourseChange()"><option value="">학년학기 선택</option>${sortedCourses().map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
-      <select id="spBook" style="width:150px;" disabled><option value="">교재 선택 (학년학기 먼저)</option></select>
+      <select id="spBook" style="width:150px;" disabled onchange="onSolBookChange()"><option value="">교재 선택 (학년학기 먼저)</option></select><input type="text" id="spBookManual" placeholder="교재명 직접 입력" style="width:150px;display:none;">
       <select id="spUnit"><option value="">단원 선택 (학년학기 먼저)</option></select>
       <input type="text" id="spPage" placeholder="페이지" style="width:80px;">
       <input type="text" id="spProblem" placeholder="문제번호" style="width:80px;">
@@ -3718,15 +3718,23 @@ function onSolCourseChange(){
   sel.innerHTML=`<option value="">${courseId?'단원 선택':'단원 선택 (학년학기 먼저)'}</option>`+units.map(u=>`<option value="${escapeHtml(u)}">${escapeHtml(u)}</option>`).join('');
   const bookSel=document.getElementById('spBook');
   if(bookSel){
-    const books=courseId?courseBookCatalog(courseId):[];
+    const books=courseId?[...new Set([...courseBookCatalog(courseId),...allPresetBookNames()])].sort((a,b)=>a.localeCompare(b,'ko')):[];
     bookSel.disabled=!courseId;
-    bookSel.innerHTML=`<option value="">${courseId?'교재 선택':'교재 선택 (학년학기 먼저)'}</option>`+books.map(b=>`<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('');
+    bookSel.innerHTML=`<option value="">${courseId?'교재 선택':'교재 선택 (학년학기 먼저)'}</option>`+books.map(b=>`<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('')+(courseId?'<option value="__manual__">+ 교재명 직접 입력</option>':'');
+    onSolBookChange();
   }
+}
+function onSolBookChange(){
+  const select=document.getElementById('spBook');
+  const manual=document.getElementById('spBookManual');
+  if(!select||!manual) return;
+  manual.style.display=select.value==='__manual__'?'':'none';
 }
 async function addSolutionPhoto(){
   const fileInput = document.getElementById('spPhoto');
   const courseId = document.getElementById('spCourse').value;
-  const book = document.getElementById('spBook').value.trim();
+  const selectedBook = document.getElementById('spBook').value.trim();
+  const book = selectedBook==='__manual__' ? document.getElementById('spBookManual').value.trim() : selectedBook;
   const unit = document.getElementById('spUnit').value;
   const page = document.getElementById('spPage').value.trim();
   const problemNo = document.getElementById('spProblem').value.trim();
