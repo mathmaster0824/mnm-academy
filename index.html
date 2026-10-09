@@ -3705,6 +3705,7 @@ function renderSolutionLib(){
         <img src="${photoSrc(p.photo,true)}" style="width:100%;border-radius:6px;cursor:pointer;" onclick="openLightbox(photoSrc(p.photo))">
         <div style="font-size:10px;color:#6f6958;margin-top:3px;">${courseById(p.courseId)?.name||'-'}${p.book?` · ${p.book}`:''}</div>
         <div style="font-size:10px;color:#6f6958;">${p.unit?p.unit+' · ':''}${p.page?`${p.page}p `:''}${p.problemNo?`${p.problemNo}번`:''}</div>
+        <button class="btn sm outline" style="font-size:9px;padding:1px 6px;margin-top:3px;" onclick="editSolutionPhoto('${p.id}')">수정</button>
         <button class="btn sm outline" style="font-size:9px;padding:1px 6px;margin-top:3px;" onclick="deleteSolutionPhoto('${p.id}')">삭제</button>
       </div>`).join('')}
     </div>` : `<div class="empty">조건에 맞는 해설사진이 없어요.</div>`}
@@ -3752,6 +3753,27 @@ async function addSolutionPhoto(){
   fileInput.value=''; document.getElementById('spBook').value=''; document.getElementById('spPage').value=''; document.getElementById('spProblem').value='';
   render();
 }
+async function editSolutionPhoto(id){
+  const p=(db.solutionPhotos||[]).find(x=>x.id===id);
+  if(!p){alert('해설을 찾을 수 없어요.');return;}
+  const page=prompt('페이지 번호 수정',p.page||'');
+  if(page===null)return;
+  const nextPage=String(page).trim();
+  if(!nextPage){alert('페이지를 입력해주세요.');return;}
+  const problemNo=prompt('인쇄된 문제번호 수정',p.problemNo||'');
+  if(problemNo===null)return;
+  const nextNo=String(problemNo).trim();
+  if(!nextNo){alert('문제번호를 입력해주세요.');return;}
+  const sourceKey=textbookSourceKey(p.courseId,p.book,nextPage,nextNo);
+  if(!sourceKey){alert('문제 출처를 확인해주세요.');return;}
+  const patch={page:nextPage,pageKey:sourcePageNorm(nextPage),problemNo:nextNo,problemNoKey:sourceProblemNorm(nextNo),sourceKey,updatedAt:new Date().toISOString()};
+  const ok=await fsUpdate('solutionPhotos',id,patch);
+  if(ok){
+    Object.assign(p,patch);
+    render();
+    // 원본 문제저장소 연결은 기존 출처 이력을 보존하면서 별도 검증한다.
+  }
+}
 async function deleteSolutionPhoto(id){
   // 해설사진은 질문 답변 등에 같은 R2 참조가 재사용될 수 있다.
   // 라이브러리 항목 삭제는 참조만 제거하고 R2 원본은 즉시 지우지 않는다.
@@ -3759,7 +3781,7 @@ async function deleteSolutionPhoto(id){
 }
 // 질문 답변 화면에서 검색해서 바로 첨부하는 패널
 function autoSolutionMatchesForQuestion(q){
-  if(!q || q.sourceType!=='TEXTBOOK') return [];
+  if(!q || q.sourceType!=='TEXTBOOK' || q.problemNumberMode==='MANUAL') return [];
   const qKey=q.sourceKey||textbookSourceKey(q.sourceCourseId,q.sourceBook,q.sourcePage,q.sourceProblemNo);
   if(!qKey) return [];
   return (db.solutionPhotos||[]).filter(p=>{
@@ -5041,6 +5063,18 @@ function newQuestionSourceDraft(stuId){
   }
   return d;
 }
+function registeredSolutionNumbers(courseId,book,page){
+  const key=sourceBookKey(courseId,book);
+  const pageKey=sourcePageNorm(page);
+  if(!key || !pageKey) return [];
+  const names=new Map();
+  (db.solutionPhotos||[]).forEach(p=>{
+    if(sourceBookKey(p.courseId,p.book)!==key || sourcePageNorm(p.page)!==pageKey) return;
+    const no=String(p.problemNo||'').trim(), normalized=sourceProblemNorm(no);
+    if(normalized && !names.has(normalized)) names.set(normalized,no);
+  });
+  return [...names.values()].sort((a,b)=>a.localeCompare(b,'ko',{numeric:true}));
+}
 function rememberNewQuestionText(){
   const ta=document.getElementById('newQText');
   if(ta) currentSubState._newQDraftText=ta.value;
@@ -5050,12 +5084,18 @@ function setNewQSourceField(stuId,field,value,rerender=false){
   const d=newQuestionSourceDraft(stuId);
   d[field]=value;
   if(field==='sourceType'){
-    d.sourceCourseId=''; d.sourceBook=''; d.sourcePage=''; d.sourceProblemNo='';
+    d.sourceCourseId=''; d.sourceBook=''; d.sourcePage=''; d.sourceProblemNo=''; d.problemNumberMode='';
   }
   if(field==='sourceCourseId'){
-    d.sourceBook=''; d.sourcePage=''; d.sourceProblemNo='';
+    d.sourceBook=''; d.sourcePage=''; d.sourceProblemNo=''; d.problemNumberMode='';
     const books=officialBooksForCourse(value);
     if(books.length===1) d.sourceBook=books[0];
+  }
+  if(field==='sourceBook' || field==='sourcePage'){
+    d.sourceProblemNo=''; d.problemNumberMode='';
+  }
+  if(field==='problemNumberMode'){
+    d.sourceProblemNo=value==='MANUAL'?'':value;
   }
   if(rerender) render();
 }
@@ -5063,7 +5103,7 @@ function toggleOtherQuestionCourses(stuId){
   rememberNewQuestionText();
   const d=newQuestionSourceDraft(stuId);
   d.showAllCourses=!d.showAllCourses;
-  d.sourceCourseId=''; d.sourceBook=''; d.sourcePage=''; d.sourceProblemNo='';
+  d.sourceCourseId=''; d.sourceBook=''; d.sourcePage=''; d.sourceProblemNo=''; d.problemNumberMode='';
   render();
 }
 function questionSourceLabel(q){
@@ -5091,6 +5131,7 @@ function readNewQuestionSource(stuId){
     const sourceProblemNo=String(d.sourceProblemNo||'').trim();
     return {
       sourceType,sourceCourseId,sourceBook,
+      problemNumberMode:d.problemNumberMode==='MANUAL'?'MANUAL':'REGISTERED',
       sourceBookKey:sourceBookKey(sourceCourseId,sourceBook),
       sourcePage,sourcePageKey:sourcePageNorm(sourcePage),
       sourceProblemNo,sourceProblemNoKey:sourceProblemNorm(sourceProblemNo),
@@ -5116,6 +5157,8 @@ function renderQnaStudentSection(stuId, directorView){
         const currentIds=studentCurrentCourseIds(stuId);
         const courseList=src.showAllCourses?sortedCourses():sortedCourses().filter(c=>currentIds.includes(c.id));
         const books=src.sourceCourseId?officialBooksForCourse(src.sourceCourseId):[];
+        const registeredNumbers=registeredSolutionNumbers(src.sourceCourseId,src.sourceBook,src.sourcePage);
+        const numberMode=src.problemNumberMode==='MANUAL'?'MANUAL':registeredNumbers.includes(src.sourceProblemNo)?src.sourceProblemNo:'';
         return `<div style="margin-bottom:8px;">
           <label style="font-size:11px;color:#8a8674;display:block;margin-bottom:4px;">어디에서 나온 문제인가요?</label>
           <select id="newQSourceType" onchange="setNewQSourceField('${stuId}','sourceType',this.value,true)" style="width:100%;max-width:280px;">
@@ -5127,7 +5170,7 @@ function renderQnaStudentSection(stuId, directorView){
 
           ${src.sourceType==='TEXTBOOK'?`
           <div style="margin-top:7px;padding:9px 10px;border:1px solid #e4dfd3;border-radius:9px;background:#faf9f5;">
-            <div style="font-size:11px;color:#6f6958;margin-bottom:6px;"><b>문제 출처를 정확히 선택해주세요.</b> 같은 출처가 학습보관함에 있으면 자동으로 연결됩니다.</div>
+            <div style="font-size:11px;color:#6f6958;margin-bottom:6px;"><b>교재와 페이지를 선택하면 등록된 해설 문제번호가 표시돼요.</b> 없는 번호는 직접 입력해 선생님께 질문할 수 있어요.</div>
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:6px;">
               <select id="newQCourse" onchange="setNewQSourceField('${stuId}','sourceCourseId',this.value,true)">
                 <option value="">학년·학기 선택</option>
@@ -5137,8 +5180,13 @@ function renderQnaStudentSection(stuId, directorView){
                 <option value="">교재 선택</option>
                 ${books.map(b=>`<option value="${escapeHtml(b)}" ${src.sourceBook===b?'selected':''}>${escapeHtml(b)}</option>`).join('')}
               </select>
-              <input id="newQPage" inputmode="numeric" value="${escapeHtml(src.sourcePage||'')}" placeholder="페이지" oninput="setNewQSourceField('${stuId}','sourcePage',this.value,false)">
-              <input id="newQProblemNo" value="${escapeHtml(src.sourceProblemNo||'')}" placeholder="문제번호" oninput="setNewQSourceField('${stuId}','sourceProblemNo',this.value,false)">
+              <input id="newQPage" inputmode="numeric" value="${escapeHtml(src.sourcePage||'')}" placeholder="페이지" oninput="setNewQSourceField('${stuId}','sourcePage',this.value,true)">
+              <select id="newQProblemSelect" ${src.sourceCourseId&&src.sourceBook&&src.sourcePage?'':'disabled'} onchange="setNewQSourceField('${stuId}','problemNumberMode',this.value,true)">
+                <option value="">문제번호 선택</option>
+                ${registeredNumbers.map(no=>`<option value="${escapeHtml(no)}" ${numberMode===no?'selected':''}>${escapeHtml(no)}</option>`).join('')}
+                <option value="MANUAL" ${numberMode==='MANUAL'?'selected':''}>목록에 없는 문제 직접 입력</option>
+              </select>
+              ${numberMode==='MANUAL'? `<input id="newQProblemNo" value="${escapeHtml(src.sourceProblemNo||'')}" placeholder="인쇄된 문제번호 (예: 1-1)" oninput="setNewQSourceField('${stuId}','sourceProblemNo',this.value,false)">`:''}
             </div>
             <button class="btn sm outline" style="font-size:10px;margin-top:7px;" onclick="toggleOtherQuestionCourses('${stuId}')">${src.showAllCourses?'현재 학습과정만 보기':'다른 과정 질문'}</button>
             ${!courseList.length?`<div style="font-size:10.5px;color:#a26b28;margin-top:6px;">현재 학습과정이 자동으로 잡히지 않았어요. ‘다른 과정 질문’을 눌러 선택해주세요.</div>`:''}
@@ -5222,6 +5270,12 @@ async function submitQuestion(stuId){
   if(!text && !photos.length){ alert('질문 내용이나 사진을 등록해주세요.'); return; }
   const source = readNewQuestionSource(stuId);
   if(source.sourceType==='TEXTBOOK'){
+    if(source.problemNumberMode==='REGISTERED'){
+      const registered=registeredSolutionNumbers(source.sourceCourseId,source.sourceBook,source.sourcePage);
+      if(!registered.includes(source.sourceProblemNo)){
+        alert('등록된 해설 문제번호를 다시 선택하거나 직접 입력을 선택해주세요.'); return;
+      }
+    }
     if(!source.sourceCourseId){ alert('학년·학기를 선택해주세요.'); return; }
     if(!source.sourceBook){ alert('교재를 선택해주세요.'); return; }
     if(!source.sourcePage){ alert('페이지를 입력해주세요.'); return; }
@@ -5230,7 +5284,7 @@ async function submitQuestion(stuId){
   }else if(source.sourceType==='MNM' && !source.problemId){
     alert('M&m 문제 ID를 입력해주세요.'); return;
   }
-  const payload = {studentId:stuId,date:todayISO(),text,photos,...source,answerText:'',answerPhotos:[],status:'대기'};
+  const payload = {studentId:stuId,date:todayISO(),text,photos,...source,answerText:'',answerPhotos:[],status:'대기',learningAnalysis:{version:1,classificationStatus:'unreviewed',unit:'',problemType:'',errorCause:'',stuckAt:'',resolutionStatus:'unverified',reviewedAt:null},followUp:{status:'not_assigned',assignedProblemIds:[],attempts:[]}};
   if(embeddedPhotoLimitExceeded(payload, 900)){ alert('사진 용량이 너무 커요. ✕ 버튼으로 사진을 몇 장 지워주세요.'); return; }
   const ok = await fsAdd('questions', payload);
   if(ok){
