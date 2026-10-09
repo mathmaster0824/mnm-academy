@@ -5041,6 +5041,18 @@ function newQuestionSourceDraft(stuId){
   }
   return d;
 }
+function registeredSolutionNumbers(courseId,book,page){
+  const key=sourceBookKey(courseId,book);
+  const pageKey=sourcePageNorm(page);
+  if(!key || !pageKey) return [];
+  const names=new Map();
+  (db.solutionPhotos||[]).forEach(p=>{
+    if(sourceBookKey(p.courseId,p.book)!==key || sourcePageNorm(p.page)!==pageKey) return;
+    const no=String(p.problemNo||'').trim(), normalized=sourceProblemNorm(no);
+    if(normalized && !names.has(normalized)) names.set(normalized,no);
+  });
+  return [...names.values()].sort((a,b)=>a.localeCompare(b,'ko',{numeric:true}));
+}
 function rememberNewQuestionText(){
   const ta=document.getElementById('newQText');
   if(ta) currentSubState._newQDraftText=ta.value;
@@ -5053,9 +5065,15 @@ function setNewQSourceField(stuId,field,value,rerender=false){
     d.sourceCourseId=''; d.sourceBook=''; d.sourcePage=''; d.sourceProblemNo='';
   }
   if(field==='sourceCourseId'){
-    d.sourceBook=''; d.sourcePage=''; d.sourceProblemNo='';
+    d.sourceBook=''; d.sourcePage=''; d.sourceProblemNo=''; d.problemNumberMode='';
     const books=officialBooksForCourse(value);
     if(books.length===1) d.sourceBook=books[0];
+  }
+  if(field==='sourceBook' || field==='sourcePage'){
+    d.sourceProblemNo=''; d.problemNumberMode='';
+  }
+  if(field==='problemNumberMode'){
+    d.sourceProblemNo=value==='MANUAL'?'':value;
   }
   if(rerender) render();
 }
@@ -5063,7 +5081,7 @@ function toggleOtherQuestionCourses(stuId){
   rememberNewQuestionText();
   const d=newQuestionSourceDraft(stuId);
   d.showAllCourses=!d.showAllCourses;
-  d.sourceCourseId=''; d.sourceBook=''; d.sourcePage=''; d.sourceProblemNo='';
+  d.sourceCourseId=''; d.sourceBook=''; d.sourcePage=''; d.sourceProblemNo=''; d.problemNumberMode='';
   render();
 }
 function questionSourceLabel(q){
@@ -5091,6 +5109,7 @@ function readNewQuestionSource(stuId){
     const sourceProblemNo=String(d.sourceProblemNo||'').trim();
     return {
       sourceType,sourceCourseId,sourceBook,
+      problemNumberMode:d.problemNumberMode==='MANUAL'?'MANUAL':'REGISTERED',
       sourceBookKey:sourceBookKey(sourceCourseId,sourceBook),
       sourcePage,sourcePageKey:sourcePageNorm(sourcePage),
       sourceProblemNo,sourceProblemNoKey:sourceProblemNorm(sourceProblemNo),
@@ -5116,6 +5135,8 @@ function renderQnaStudentSection(stuId, directorView){
         const currentIds=studentCurrentCourseIds(stuId);
         const courseList=src.showAllCourses?sortedCourses():sortedCourses().filter(c=>currentIds.includes(c.id));
         const books=src.sourceCourseId?officialBooksForCourse(src.sourceCourseId):[];
+        const registeredNumbers=registeredSolutionNumbers(src.sourceCourseId,src.sourceBook,src.sourcePage);
+        const numberMode=src.problemNumberMode==='MANUAL'?'MANUAL':registeredNumbers.includes(src.sourceProblemNo)?src.sourceProblemNo:'';
         return `<div style="margin-bottom:8px;">
           <label style="font-size:11px;color:#8a8674;display:block;margin-bottom:4px;">어디에서 나온 문제인가요?</label>
           <select id="newQSourceType" onchange="setNewQSourceField('${stuId}','sourceType',this.value,true)" style="width:100%;max-width:280px;">
@@ -5137,8 +5158,13 @@ function renderQnaStudentSection(stuId, directorView){
                 <option value="">교재 선택</option>
                 ${books.map(b=>`<option value="${escapeHtml(b)}" ${src.sourceBook===b?'selected':''}>${escapeHtml(b)}</option>`).join('')}
               </select>
-              <input id="newQPage" inputmode="numeric" value="${escapeHtml(src.sourcePage||'')}" placeholder="페이지" oninput="setNewQSourceField('${stuId}','sourcePage',this.value,false)">
-              <input id="newQProblemNo" value="${escapeHtml(src.sourceProblemNo||'')}" placeholder="문제번호" oninput="setNewQSourceField('${stuId}','sourceProblemNo',this.value,false)">
+              <input id="newQPage" inputmode="numeric" value="${escapeHtml(src.sourcePage||'')}" placeholder="페이지" oninput="setNewQSourceField('${stuId}','sourcePage',this.value,true)">
+              <select id="newQProblemSelect" ${src.sourceCourseId&&src.sourceBook&&src.sourcePage?'':'disabled'} onchange="setNewQSourceField('${stuId}','problemNumberMode',this.value,true)">
+                <option value="">문제번호 선택</option>
+                ${registeredNumbers.map(no=>`<option value="${escapeHtml(no)}" ${numberMode===no?'selected':''}>${escapeHtml(no)}</option>`).join('')}
+                <option value="MANUAL" ${numberMode==='MANUAL'?'selected':''}>목록에 없는 문제 직접 입력</option>
+              </select>
+              ${numberMode==='MANUAL'? `<input id="newQProblemNo" value="${escapeHtml(src.sourceProblemNo||'')}" placeholder="인쇄된 문제번호 (예: 1-1)" oninput="setNewQSourceField('${stuId}','sourceProblemNo',this.value,false)">`:''}
             </div>
             <button class="btn sm outline" style="font-size:10px;margin-top:7px;" onclick="toggleOtherQuestionCourses('${stuId}')">${src.showAllCourses?'현재 학습과정만 보기':'다른 과정 질문'}</button>
             ${!courseList.length?`<div style="font-size:10.5px;color:#a26b28;margin-top:6px;">현재 학습과정이 자동으로 잡히지 않았어요. ‘다른 과정 질문’을 눌러 선택해주세요.</div>`:''}
