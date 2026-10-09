@@ -5253,7 +5253,7 @@ async function submitQuestion(stuId){
   }else if(source.sourceType==='MNM' && !source.problemId){
     alert('M&m 문제 ID를 입력해주세요.'); return;
   }
-  const payload = {studentId:stuId,date:todayISO(),text,photos,...source,answerText:'',answerPhotos:[],status:'대기'};
+  const payload = {studentId:stuId,date:todayISO(),text,photos,...source,answerText:'',answerPhotos:[],status:'대기',learningAnalysis:{schemaVersion:1,classificationStatus:'unreviewed',unit:'',problemType:'',errorCause:'',stuckAt:'',reviewedAt:null},followUp:{status:'not_assigned',assignedProblemIds:[],attempts:[]}};
   if(embeddedPhotoLimitExceeded(payload, 900)){ alert('사진 용량이 너무 커요. ✕ 버튼으로 사진을 몇 장 지워주세요.'); return; }
   const ok = await fsAdd('questions', payload);
   if(ok){
