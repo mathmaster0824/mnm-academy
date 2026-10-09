@@ -3718,7 +3718,7 @@ function onSolCourseChange(){
   sel.innerHTML=`<option value="">${courseId?'단원 선택':'단원 선택 (학년학기 먼저)'}</option>`+units.map(u=>`<option value="${escapeHtml(u)}">${escapeHtml(u)}</option>`).join('');
   const bookSel=document.getElementById('spBook');
   if(bookSel){
-    const books=courseId?[...new Set([...courseBookCatalog(courseId),...allPresetBookNames()])].sort((a,b)=>a.localeCompare(b,'ko')):[];
+    const books=courseId?officialBooksForCourse(courseId):[];
     bookSel.disabled=!courseId;
     bookSel.innerHTML=`<option value="">${courseId?'교재 선택':'교재 선택 (학년학기 먼저)'}</option>`+books.map(b=>`<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('');
   }
@@ -4996,6 +4996,16 @@ function studentCurrentCourseIds(stuId){
     (r.extraSteps||[]).forEach(stepId=>{ const cid=courseIdForStep(stepId); if(cid) ids.add(cid); });
   });
   return [...ids];
+}
+const OFFICIAL_BOOKS_BY_LEVEL = Object.freeze({
+  '초': ['개념책','복습책','쎈','최상위','에이급'],
+  '중': ['개념책','익힘책','최상위라이트','일품','고쟁이'],
+  '고': ['라쎈','마플시너지','고쟁이','올림포스고난도']
+});
+function officialBooksForCourse(courseId){
+  const name=courseById(courseId)?.name||'';
+  const level=name.includes('초등')?'초':name.includes('중등')?'중':name.includes('고등')?'고':'';
+  return OFFICIAL_BOOKS_BY_LEVEL[level]||[];
 }
 function courseBookCatalog(courseId){
   const names=new Set();
