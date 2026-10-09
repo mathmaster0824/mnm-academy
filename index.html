@@ -5298,12 +5298,45 @@ async function saveEditQuestion(qId){
 }
 
 /* ---------------- QNA DIRECTOR ---------------- */
+function renderQuestionLearningSummary(){
+  const questions=db.questions||[];
+  const reviewed=questions.filter(q=>q.learningAnalysis?.classificationStatus==='reviewed');
+  const pending=questions.length-reviewed.length;
+  const byStudent=new Map();
+  for(const q of questions){
+    const id=q.studentId||'';
+    if(!id)continue;
+    const row=byStudent.get(id)||{id,total:0,reviewed:0,causes:new Map(),types:new Map(),needsPractice:0};
+    row.total++;
+    if(q.learningAnalysis?.classificationStatus==='reviewed'){
+      row.reviewed++;
+      const cause=q.learningAnalysis.errorCause||'';
+      const type=String(q.learningAnalysis.problemType||'').trim();
+      if(cause)row.causes.set(cause,(row.causes.get(cause)||0)+1);
+      if(type)row.types.set(type,(row.types.get(type)||0)+1);
+    }
+    if(['needs_practice','practicing'].includes(q.followUp?.status))row.needsPractice++;
+    byStudent.set(id,row);
+  }
+  const causeNames={concept:'개념 부족',interpretation:'조건 해석',strategy:'풀이 전략',calculation:'계산 실수',other:'기타'};
+  const top=map=>[...map.entries()].sort((a,b)=>b[1]-a[1])[0];
+  const rows=[...byStudent.values()].sort((a,b)=>b.needsPractice-a.needsPractice||b.total-a.total);
+  return `<div class="card" style="margin-bottom:12px;">
+    <h3 style="margin:0 0 7px;">📊 학생별 질문 학습이력</h3>
+    <div style="font-size:12px;color:#777;margin-bottom:8px;">전체 질문 ${questions.length}건 · 검토완료 ${reviewed.length}건 · 미분류 ${pending}건 (미분류 질문은 취약 유형 집계에서 제외)</div>
+    ${rows.length?`<div style="overflow-x:auto;"><table style="width:100%;font-size:12px;border-collapse:collapse;"><thead><tr><th>학생</th><th>질문</th><th>분석완료</th><th>대표 오류 원인</th><th>대표 문제유형</th><th>재학습 필요</th></tr></thead><tbody>${rows.map(r=>{
+      const cause=top(r.causes),type=top(r.types);
+      return `<tr><td>${escapeHtml(studentById(r.id)?.name||'(삭제된 학생)')}</td><td>${r.total}</td><td>${r.reviewed}</td><td>${cause?escapeHtml(causeNames[cause[0]]||cause[0])+' ('+cause[1]+')':'—'}</td><td>${type?escapeHtml(type[0])+' ('+type[1]+')':'—'}</td><td>${r.needsPractice}</td></tr>`;
+    }).join('')}</tbody></table></div>`:'아직 질문 기록이 없습니다.'}
+  </div>`;
+}
 function renderQnaDirector(){
   const filter = currentSubState.qnaFilter || 'pending';
   const list = db.questions.filter(q=> filter==='all' ? true : q.status==='대기').sort((a,b)=>b.date.localeCompare(a.date));
   return `
   <h1 class="page-title">질문 게시판</h1>
   <p class="page-sub">모든 학생의 질문을 한 화면에서 확인하고 답변해주세요.</p>
+  ${renderQuestionLearningSummary()}
   <div class="tabs2">
     <button class="${filter==='pending'?'active':''}" onclick="currentSubState.qnaFilter='pending';render();">답변대기</button>
     <button class="${filter==='all'?'active':''}" onclick="currentSubState.qnaFilter='all';render();">전체</button>
