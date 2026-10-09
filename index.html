@@ -5253,7 +5253,7 @@ async function submitQuestion(stuId){
   }else if(source.sourceType==='MNM' && !source.problemId){
     alert('M&m 문제 ID를 입력해주세요.'); return;
   }
-  const payload = {studentId:stuId,date:todayISO(),text,photos,...source,answerText:'',answerPhotos:[],status:'대기'};
+  const payload = {studentId:stuId,date:todayISO(),text,photos,...source,answerText:'',answerPhotos:[],status:'대기',learningAnalysis:{schemaVersion:1,classificationStatus:'unreviewed',unit:'',problemType:'',errorCause:'',stuckAt:'',reviewedAt:null},followUp:{status:'not_assigned',assignedProblemIds:[],attempts:[]}};
   if(embeddedPhotoLimitExceeded(payload, 900)){ alert('사진 용량이 너무 커요. ✕ 버튼으로 사진을 몇 장 지워주세요.'); return; }
   const ok = await fsAdd('questions', payload);
   if(ok){
@@ -5298,12 +5298,46 @@ async function saveEditQuestion(qId){
 }
 
 /* ---------------- QNA DIRECTOR ---------------- */
+function renderQuestionLearningSummary(){
+  const questions=db.questions||[];
+  const reviewed=questions.filter(q=>q.learningAnalysis?.classificationStatus==='reviewed');
+  const pending=questions.length-reviewed.length;
+  const byStudent=new Map();
+  for(const q of questions){
+    const id=q.studentId||'';
+    if(!id)continue;
+    const row=byStudent.get(id)||{id,total:0,reviewed:0,causes:new Map(),types:new Map(),needsPractice:0};
+    row.total++;
+    if(q.learningAnalysis?.classificationStatus==='reviewed'){
+      row.reviewed++;
+      const cause=q.learningAnalysis.errorCause||'';
+      const type=String(q.learningAnalysis.problemType||'').trim();
+      if(cause)row.causes.set(cause,(row.causes.get(cause)||0)+1);
+      if(type)row.types.set(type,(row.types.get(type)||0)+1);
+    }
+    if(['needs_practice','practicing'].includes(q.followUp?.status))row.needsPractice++;
+    byStudent.set(id,row);
+  }
+  const causeNames={concept:'개념 부족',interpretation:'조건 해석',strategy:'풀이 전략',calculation:'계산 실수',other:'기타'};
+  const top=map=>[...map.entries()].sort((a,b)=>b[1]-a[1])[0];
+  const rows=[...byStudent.values()].sort((a,b)=>b.needsPractice-a.needsPractice||b.total-a.total);
+  return `<div class="card" style="margin-bottom:12px;">
+    <h3 style="margin:0 0 7px;">📊 학생별 질문 학습이력</h3>
+    <div style="font-size:12px;color:#777;margin-bottom:8px;">전체 질문 ${questions.length}건 · 검토완료 ${reviewed.length}건 · 미분류 ${pending}건 (미분류 질문은 취약 유형 집계에서 제외)</div>
+    ${rows.length?`<div style="overflow-x:auto;"><table style="width:100%;font-size:12px;border-collapse:collapse;"><thead><tr><th>학생</th><th>질문</th><th>분석완료</th><th>대표 오류 원인</th><th>대표 문제유형</th><th>재학습 필요</th></tr></thead><tbody>${rows.map(r=>{
+      const cause=top(r.causes),type=top(r.types);
+      return `<tr><td><button class="btn sm outline" onclick="currentSubState.qnaStudentFilter='${escapeHtml(r.id)}';currentSubState.qnaFilter='all';render();">${escapeHtml(studentById(r.id)?.name||'(삭제된 학생)')} · 질문보기</button></td><td>${r.total}</td><td>${r.reviewed}</td><td>${cause?escapeHtml(causeNames[cause[0]]||cause[0])+' ('+cause[1]+')':'—'}</td><td>${type?escapeHtml(type[0])+' ('+type[1]+')':'—'}</td><td>${r.needsPractice}</td></tr>`;
+    }).join('')}</tbody></table></div>`:'아직 질문 기록이 없습니다.'}
+  </div>`;
+}
 function renderQnaDirector(){
   const filter = currentSubState.qnaFilter || 'pending';
-  const list = db.questions.filter(q=> filter==='all' ? true : q.status==='대기').sort((a,b)=>b.date.localeCompare(a.date));
+  const list = db.questions.filter(q=>(filter==='all'||q.status==='대기')&&(!currentSubState.qnaStudentFilter||q.studentId===currentSubState.qnaStudentFilter)).sort((a,b)=>b.date.localeCompare(a.date));
   return `
   <h1 class="page-title">질문 게시판</h1>
   <p class="page-sub">모든 학생의 질문을 한 화면에서 확인하고 답변해주세요.</p>
+  ${currentSubState.qnaStudentFilter?`<div style="margin-bottom:9px;">학생별 질문 필터 적용 중 <button class="btn sm outline" onclick="currentSubState.qnaStudentFilter='';render();">전체 학생 보기</button></div>`:''}
+  ${renderQuestionLearningSummary()}
   <div class="tabs2">
     <button class="${filter==='pending'?'active':''}" onclick="currentSubState.qnaFilter='pending';render();">답변대기</button>
     <button class="${filter==='all'?'active':''}" onclick="currentSubState.qnaFilter='all';render();">전체</button>
@@ -5320,6 +5354,7 @@ function renderQnaDirector(){
       <div style="margin-top:10px;">
         <textarea rows="2" placeholder="답변 메모" id="ans_${q.id}">${q.answerText||''}</textarea>
         <input type="file" accept="image/*" multiple id="ansPhoto_${q.id}" style="margin-top:6px;">
+        ${renderQuestionLearningAnalysis(q)}
         ${renderAutoSolutionMatches(q.id)}
         ${renderSolLibPickerForQuestion(q.id)}
         <div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<div class="thumb-wrap"><img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})"><button class="thumb-x" onclick="removeAnswerPhoto('${q.id}',${i})">✕</button></div>`).join('')}</div>
@@ -5335,6 +5370,36 @@ async function removeAnswerPhoto(qId, idx){
   // 답변 사진은 해설 보관함 등과 R2 원본을 공유할 수 있으므로 참조만 제거한다.
   const answerPhotos = (q.answerPhotos||[]).filter((_,i)=>i!==idx);
   await fsUpdate('questions', qId, {answerPhotos});
+}
+function renderQuestionLearningAnalysis(q){
+  const a=q.learningAnalysis||{};
+  const options=(values,selected)=>values.map(([value,label])=>`<option value="${value}" ${selected===value?'selected':''}>${label}</option>`).join('');
+  const status=options([['unreviewed','미분류'],['reviewed','검토완료']],a.classificationStatus||'unreviewed');
+  const cause=options([['','미확인'],['concept','개념 부족'],['interpretation','조건 해석'],['strategy','풀이 전략'],['calculation','계산 실수'],['other','기타']],a.errorCause||'');
+  const resolution=options([['unverified','미확인'],['needs_practice','재학습 필요'],['practicing','재학습 중'],['resolved','해결 확인']],q.followUp?.status==='resolved'?'resolved':(q.followUp?.status||'unverified'));
+  return `<div style="margin-top:9px;padding:9px;border:1px solid var(--line);border-radius:8px;">
+    <div style="font-size:12px;font-weight:800;margin-bottom:7px;">📊 질문 학습분석 · 원장 기록</div>
+    <div class="row" style="flex-wrap:wrap;gap:5px;">
+      <input id="qaUnit_${q.id}" placeholder="단원" value="${escapeHtml(a.unit||'')}" style="width:110px;">
+      <input id="qaType_${q.id}" placeholder="문제유형" value="${escapeHtml(a.problemType||'')}" style="width:140px;">
+      <select id="qaCause_${q.id}">${cause}</select>
+      <select id="qaStatus_${q.id}">${status}</select>
+      <select id="qaFollow_${q.id}">${resolution}</select>
+    </div>
+    <input id="qaStuck_${q.id}" placeholder="어느 단계에서 막혔는지 (선택)" value="${escapeHtml(a.stuckAt||'')}" style="width:100%;margin-top:6px;">
+    <button class="btn sm outline" style="margin-top:6px;" onclick="saveQuestionLearningAnalysis('${q.id}')">학습분석 저장</button>
+  </div>`;
+}
+async function saveQuestionLearningAnalysis(qId){
+  const q=(db.questions||[]).find(x=>x.id===qId);
+  if(!q)return;
+  const v=id=>document.getElementById(id+'_'+qId)?.value||'';
+  const learningAnalysis={...(q.learningAnalysis||{}),schemaVersion:1,unit:v('qaUnit').trim(),problemType:v('qaType').trim(),errorCause:v('qaCause'),stuckAt:v('qaStuck').trim(),classificationStatus:v('qaStatus'),reviewedAt:v('qaStatus')==='reviewed'?new Date().toISOString():null};
+  const followUp={...(q.followUp||{}),status:v('qaFollow'),assignedProblemIds:q.followUp?.assignedProblemIds||[],attempts:q.followUp?.attempts||[]};
+  if(await fsUpdate('questions',qId,{learningAnalysis,followUp})){
+    q.learningAnalysis=learningAnalysis;q.followUp=followUp;
+    render();
+  }
 }
 async function answerQuestion(qId){
   const q = db.questions.find(x=>x.id===qId);
