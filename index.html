@@ -3705,6 +3705,7 @@ function renderSolutionLib(){
         <img src="${photoSrc(p.photo,true)}" style="width:100%;border-radius:6px;cursor:pointer;" onclick="openLightbox(photoSrc(p.photo))">
         <div style="font-size:10px;color:#6f6958;margin-top:3px;">${courseById(p.courseId)?.name||'-'}${p.book?` · ${p.book}`:''}</div>
         <div style="font-size:10px;color:#6f6958;">${p.unit?p.unit+' · ':''}${p.page?`${p.page}p `:''}${p.problemNo?`${p.problemNo}번`:''}</div>
+        <button class="btn sm outline" style="font-size:9px;padding:1px 6px;margin-top:3px;" onclick="editSolutionPhoto('${p.id}')">수정</button>
         <button class="btn sm outline" style="font-size:9px;padding:1px 6px;margin-top:3px;" onclick="deleteSolutionPhoto('${p.id}')">삭제</button>
       </div>`).join('')}
     </div>` : `<div class="empty">조건에 맞는 해설사진이 없어요.</div>`}
@@ -3751,6 +3752,28 @@ async function addSolutionPhoto(){
   }, 900, 0.6);
   fileInput.value=''; document.getElementById('spBook').value=''; document.getElementById('spPage').value=''; document.getElementById('spProblem').value='';
   render();
+}
+async function editSolutionPhoto(id){
+  const p=(db.solutionPhotos||[]).find(x=>x.id===id);
+  if(!p){alert('해설을 찾을 수 없어요.');return;}
+  const page=prompt('페이지 번호 수정',p.page||'');
+  if(page===null)return;
+  const nextPage=String(page).trim();
+  if(!nextPage){alert('페이지를 입력해주세요.');return;}
+  const problemNo=prompt('인쇄된 문제번호 수정',p.problemNo||'');
+  if(problemNo===null)return;
+  const nextNo=String(problemNo).trim();
+  if(!nextNo){alert('문제번호를 입력해주세요.');return;}
+  const sourceKey=textbookSourceKey(p.courseId,p.book,nextPage,nextNo);
+  if(!sourceKey){alert('문제 출처를 확인해주세요.');return;}
+  if(nextPage===String(p.page||'').trim()&&nextNo===String(p.problemNo||'').trim())return;
+  const patch={page:nextPage,pageKey:sourcePageNorm(nextPage),problemNo:nextNo,problemNoKey:sourceProblemNorm(nextNo),sourceKey,updatedAt:new Date().toISOString()};
+  const ok=await fsUpdate('solutionPhotos',id,patch);
+  if(ok){
+    Object.assign(p,patch);
+    render();
+    alert('해설 출처를 수정했어요. 기존 문제저장소 연결은 별도 검증이 필요합니다.');
+  }
 }
 async function deleteSolutionPhoto(id){
   // 해설사진은 질문 답변 등에 같은 R2 참조가 재사용될 수 있다.
