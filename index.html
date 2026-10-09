@@ -5320,6 +5320,7 @@ function renderQnaDirector(){
       <div style="margin-top:10px;">
         <textarea rows="2" placeholder="답변 메모" id="ans_${q.id}">${q.answerText||''}</textarea>
         <input type="file" accept="image/*" multiple id="ansPhoto_${q.id}" style="margin-top:6px;">
+        ${renderQuestionLearningAnalysis(q)}
         ${renderAutoSolutionMatches(q.id)}
         ${renderSolLibPickerForQuestion(q.id)}
         <div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<div class="thumb-wrap"><img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})"><button class="thumb-x" onclick="removeAnswerPhoto('${q.id}',${i})">✕</button></div>`).join('')}</div>
@@ -5335,6 +5336,36 @@ async function removeAnswerPhoto(qId, idx){
   // 답변 사진은 해설 보관함 등과 R2 원본을 공유할 수 있으므로 참조만 제거한다.
   const answerPhotos = (q.answerPhotos||[]).filter((_,i)=>i!==idx);
   await fsUpdate('questions', qId, {answerPhotos});
+}
+function renderQuestionLearningAnalysis(q){
+  const a=q.learningAnalysis||{};
+  const options=(values,selected)=>values.map(([value,label])=>`<option value="${value}" ${selected===value?'selected':''}>${label}</option>`).join('');
+  const status=options([['unreviewed','미분류'],['reviewed','검토완료']],a.classificationStatus||'unreviewed');
+  const cause=options([['','미확인'],['concept','개념 부족'],['interpretation','조건 해석'],['strategy','풀이 전략'],['calculation','계산 실수'],['other','기타']],a.errorCause||'');
+  const resolution=options([['unverified','미확인'],['needs_practice','재학습 필요'],['practicing','재학습 중'],['resolved','해결 확인']],q.followUp?.status==='resolved'?'resolved':(q.followUp?.status||'unverified'));
+  return `<div style="margin-top:9px;padding:9px;border:1px solid var(--line);border-radius:8px;">
+    <div style="font-size:12px;font-weight:800;margin-bottom:7px;">📊 질문 학습분석 · 원장 기록</div>
+    <div class="row" style="flex-wrap:wrap;gap:5px;">
+      <input id="qaUnit_${q.id}" placeholder="단원" value="${escapeHtml(a.unit||'')}" style="width:110px;">
+      <input id="qaType_${q.id}" placeholder="문제유형" value="${escapeHtml(a.problemType||'')}" style="width:140px;">
+      <select id="qaCause_${q.id}">${cause}</select>
+      <select id="qaStatus_${q.id}">${status}</select>
+      <select id="qaFollow_${q.id}">${resolution}</select>
+    </div>
+    <input id="qaStuck_${q.id}" placeholder="어느 단계에서 막혔는지 (선택)" value="${escapeHtml(a.stuckAt||'')}" style="width:100%;margin-top:6px;">
+    <button class="btn sm outline" style="margin-top:6px;" onclick="saveQuestionLearningAnalysis('${q.id}')">학습분석 저장</button>
+  </div>`;
+}
+async function saveQuestionLearningAnalysis(qId){
+  const q=(db.questions||[]).find(x=>x.id===qId);
+  if(!q)return;
+  const v=id=>document.getElementById(id+'_'+qId)?.value||'';
+  const learningAnalysis={...(q.learningAnalysis||{}),schemaVersion:1,unit:v('qaUnit').trim(),problemType:v('qaType').trim(),errorCause:v('qaCause'),stuckAt:v('qaStuck').trim(),classificationStatus:v('qaStatus'),reviewedAt:v('qaStatus')==='reviewed'?new Date().toISOString():null};
+  const followUp={...(q.followUp||{}),status:v('qaFollow'),assignedProblemIds:q.followUp?.assignedProblemIds||[],attempts:q.followUp?.attempts||[]};
+  if(await fsUpdate('questions',qId,{learningAnalysis,followUp})){
+    q.learningAnalysis=learningAnalysis;q.followUp=followUp;
+    render();
+  }
 }
 async function answerQuestion(qId){
   const q = db.questions.find(x=>x.id===qId);
