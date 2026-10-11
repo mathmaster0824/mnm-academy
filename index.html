@@ -3003,6 +3003,28 @@ async function removeWeekendPhoto(stuId, wk, slot, idx){
   });
   if(!saved) return;
 }
+async function restoreWeekendPhoto(stuId,wk,slot,idx){
+  const key=weekendSubmissionKey(stuId,wk,slot);
+  const existing=db.weekendSubmissions[key];
+  if(!existing || !Array.isArray(existing.removedPhotos)) return;
+  const history=[...existing.removedPhotos];
+  if(!Number.isInteger(idx) || idx<0 || idx>=history.length) return;
+  const entry=history[idx];
+  if(!entry?.photo) return;
+  const photos=[...(existing.photos || (existing.photo ? [existing.photo] : []))];
+  if(!photos.some(p=>photoStorageKey(p) && photoStorageKey(p)===photoStorageKey(entry.photo))){
+    photos.push(entry.photo);
+  }
+  history.splice(idx,1);
+  if(embeddedPhotoLimitExceeded(photos,850)){
+    alert('복원할 사진의 저장 용량이 너무 큽니다. 선생님께 알려주세요.'); return;
+  }
+  const ok=await fsSet('weekendSubmissions',key,{
+    studentId:stuId,weekStart:wk,slot,photos,removedPhotos:history,
+    submittedAt:existing.submittedAt||new Date().toISOString()
+  });
+  if(!ok) alert('사진 복원 저장에 실패했습니다. 다시 시도해주세요.');
+}
 function renderStudentWeekendPage(){
   const stuId=session.studentId;
   const s=studentById(stuId);
