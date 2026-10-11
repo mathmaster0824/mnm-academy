@@ -5387,8 +5387,37 @@ function renderQuestionLearningAnalysis(q){
       <select id="qaFollow_${q.id}">${resolution}</select>
     </div>
     <input id="qaStuck_${q.id}" placeholder="어느 단계에서 막혔는지 (선택)" value="${escapeHtml(a.stuckAt||'')}" style="width:100%;margin-top:6px;">
+    <div style="font-size:12px;margin-top:7px;">🔗 문제저장소 문항 연결 · 원장 확인</div>
+    <div class="row" style="gap:5px;flex-wrap:wrap;">
+      <input id="qaProblemId_${q.id}" placeholder="문제저장소 문항 ID" value="${escapeHtml(q.verifiedProblemLink?.problemId||'')}" style="flex:1;min-width:150px;">
+      <button class="btn sm outline" onclick="verifyQuestionProblemLink('${q.id}')">동일 문항 확인·연결</button>
+    </div>
+    <div style="font-size:11px;color:#777;">문항 ID가 실제 저장소에 존재하는지 검사합니다. 동일 유형·유사 문항은 동일 문항으로 연결하지 않습니다.</div>
+    ${q.verifiedProblemLink?.problemId?'<div style="font-size:11px;color:#356b45;">✓ 원장 확인 연결됨 · '+escapeHtml(q.verifiedProblemLink.problemId)+'</div>':''}
     <button class="btn sm outline" style="margin-top:6px;" onclick="saveQuestionLearningAnalysis('${q.id}')">학습분석 저장</button>
   </div>`;
+}
+async function verifyQuestionProblemLink(qId){
+  const q=(db.questions||[]).find(x=>x.id===qId);
+  if(!q)return;
+  const problemId=(document.getElementById('qaProblemId_'+qId)?.value||'').trim();
+  if(!problemId || problemId.includes('/') || problemId.length>200){
+    alert('유효한 문제저장소 문항 ID를 입력해주세요.');return;
+  }
+  try{
+    const snap=await fsdb.collection('problems').doc(problemId).get();
+    if(!snap.exists){alert('문제저장소에 해당 문항이 없습니다. 연결하지 않았습니다.');return;}
+    if(q.verifiedProblemLink?.problemId===problemId){alert('이미 원장이 확인한 문항입니다.');return;}
+    if(!confirm('질문 사진·교재 출처와 저장소 문항을 직접 대조했나요? 동일 문항인 경우에만 확인을 눌러주세요.'))return;
+    const verifiedProblemLink={problemId,relation:'identical',verifiedBy:'director-manual',verifiedAt:new Date().toISOString(),schemaVersion:1};
+    if(await fsUpdate('questions',qId,{verifiedProblemLink})){
+      q.verifiedProblemLink=verifiedProblemLink;
+      render();
+    }
+  }catch(e){
+    console.error('[질문 문항 연결 확인 실패]',e);
+    alert('문항 조회 또는 연결 저장에 실패했습니다. 기존 연결은 유지됩니다.');
+  }
 }
 async function saveQuestionLearningAnalysis(qId){
   const q=(db.questions||[]).find(x=>x.id===qId);
