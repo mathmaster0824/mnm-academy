@@ -75,3 +75,11 @@
 - `removeWeekendPhoto()`는 마지막 사진 삭제 시 `fsDelete('weekendSubmissions', key)` 실행. 삭제 이력·복구 절차 미확인.
 - `submitHomework()`는 Firestore 저장 성공 시 로컬 초안을 지우고 timerState 문서를 삭제. 재접속·장애 주입 검증 미완료.
 - 보안/보존 위험 발견이지 실제 사고의 증거가 아님. 운영 변경 없음. 대응은 격리 테스트 환경에서 선검증.
+
+## 2026-10-12 주말학습 사진 삭제/복원 함수 단위 실행 테스트
+- GitHub feature 브랜치 `index.html`에서 실제 `removeWeekendPhoto`, `restoreWeekendPhoto` 함수 본문을 추출해 격리된 JS mock `fsSet`과 메모리 상태로 실행.
+- PASS: 마지막 사진 제거 시 문서와 `removedPhotos` 이력 유지.
+- PASS: mock Firestore 저장 실패 시 기존 제거 이력 유지.
+- PASS: 복원 성공 시 사진 참조 및 최초 `submittedAt` 유지.
+- PASS: 잘못된 삭제 인덱스 요청 무시.
+- 제한: 브라우저 UI, 실제 Firestore, R2, 재접속/동시성, 보안 규칙, 백업 복구 검증은 미완료. Phase 1 게이트 미통과.
