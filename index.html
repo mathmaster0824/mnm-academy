@@ -5331,7 +5331,10 @@ async function suggestReviewedPractice(studentId){
   const snap=await fsdb.collection('problems').limit(400).get();
   const norm=v=>String(v||'').normalize('NFKC').replace(/\s+/g,'').toLowerCase();
   const used=new Set((db.questions||[]).filter(q=>q.studentId===studentId).flatMap(q=>[q.verifiedProblemLink?.verifiedBy==='director-manual'&&q.verifiedProblemLink?.relation==='identical'?q.verifiedProblemLink.problemId:null,...(q.followUp?.assignedProblemIds||[])]).filter(Boolean));
-  const candidates=snap.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.status==='active'&&!used.has(p.id)).map(p=>{
+  const student=studentById(studentId);
+  const grade=String(student?.grade||'').trim();
+  const difficulty=document.getElementById('practiceDifficulty')?.value||'any';
+  const candidates=snap.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.status==='active'&&!used.has(p.id)&&( !grade || String(p.grade||'').trim()===grade )&&(difficulty==='any'||String(p.predictedDifficulty||'')===difficulty)).map(p=>{
    const unitNames=[p.majorUnit,p.middleUnit].filter(Boolean).map(norm);
    const typeNames=[p.mainConceptId,p.askType,...(Array.isArray(p.conceptTags)?p.conceptTags:[]),...(Array.isArray(p.solutionSkills)?p.solutionSkills:[])].filter(Boolean).map(norm);
    const score=weaknesses.reduce((sum,w)=>sum+(unitNames.includes(norm(w.unit))&&typeNames.includes(norm(w.type))?w.count:0),0);
@@ -5380,7 +5383,7 @@ function renderQnaDirector(){
   <p class="page-sub">모든 학생의 질문을 한 화면에서 확인하고 답변해주세요.</p>
   ${currentSubState.qnaStudentFilter?`<div style="margin-bottom:9px;">학생별 질문 필터 적용 중 <button class="btn sm outline" onclick="currentSubState.qnaStudentFilter='';render();">전체 학생 보기</button></div>`:''}
   ${renderQuestionLearningSummary()}
-  <div class="card"><b>재학습 후보 검색</b><select id="practiceStudent">${(db.students||[]).map(st=>'<option value="'+escapeHtml(st.id)+'">'+escapeHtml(st.name||st.id)+'</option>').join('')}</select><button class="btn sm outline" onclick="suggestReviewedPractice(document.getElementById('practiceStudent').value)">후보 검색</button><div id="practiceSuggestions"></div></div>
+  <div class="card"><b>재학습 후보 검색</b><select id="practiceStudent">${(db.students||[]).map(st=>'<option value="'+escapeHtml(st.id)+'">'+escapeHtml(st.name||st.id)+'</option>').join('')}</select><button class="btn sm outline" onclick="suggestReviewedPractice(document.getElementById('practiceStudent').value)">후보 검색</button><label style="font-size:12px;">난이도 <select id="practiceDifficulty"><option value="any">전체</option><option value="easy">쉬움</option><option value="medium">보통</option><option value="hard">어려움</option></select></label><div id="practiceSuggestions"></div></div>
   <div class="tabs2">
     <button class="${filter==='pending'?'active':''}" onclick="currentSubState.qnaFilter='pending';render();">답변대기</button>
     <button class="${filter==='all'?'active':''}" onclick="currentSubState.qnaFilter='all';render();">전체</button>
