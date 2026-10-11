@@ -5363,6 +5363,7 @@ function renderPracticeAttempts(q){
  return '<div style="margin-top:8px"><b>재학습 이력 · '+(verified?'원장 해결 확인':'해결 미확인')+'</b>'+rows+'</div>';
 }
 async function recordPracticeAttempt(qId,problemId){
+ if(session?.mode!=='director'){alert('원장 전용 기능입니다.');return;}
  const q=(db.questions||[]).find(x=>x.id===qId);
  if(!q||!(q.followUp?.assignedProblemIds||[]).includes(problemId)){alert('배정 문항을 확인할 수 없습니다.');return;}
  const raw=prompt('재학습 결과: O(정답) / X(오답) / P(부분정답)');if(raw===null)return;
@@ -5374,7 +5375,7 @@ async function recordPracticeAttempt(qId,problemId){
   await fsdb.runTransaction(async tx=>{
    const snap=await tx.get(ref);if(!snap.exists)throw new Error('질문 기록이 없습니다.');
    const data=snap.data(),follow=data.followUp||{};
-   if(!(follow.assignedProblemIds||[]).includes(problemId)||follow.status==='resolved')throw new Error('기록 가능한 배정이 아닙니다.');
+   if(data.studentId!==q.studentId||!(follow.assignedProblemIds||[]).includes(problemId)||follow.status==='resolved')throw new Error('기록 가능한 배정이 아닙니다.');
    const attempts=Array.isArray(follow.attempts)?follow.attempts:[];
    tx.update(ref,{followUp:{...follow,status:'practicing',attempts:[...attempts,{problemId,result,note:note.trim().slice(0,500),recordedAt:new Date().toISOString(),recordedBy:'director-manual',attemptNo:attempts.filter(x=>x.problemId===problemId).length+1}]}});
   });
@@ -5382,6 +5383,7 @@ async function recordPracticeAttempt(qId,problemId){
  }catch(e){console.error(e);alert('저장 실패: '+String(e.message||e));}
 }
 async function assignReviewedPractice(studentId,problemId){
+ if(session?.mode!=='director'){alert('원장 전용 기능입니다.');return;}
  const norm=v=>String(v||'').normalize('NFKC').replace(/\s+/g,'').toLowerCase();
  const questions=(db.questions||[]).filter(q=>q.studentId===studentId&&q.learningAnalysis?.classificationStatus==='reviewed'&&q.followUp?.status!=='resolved');
  const matches=questions.filter(q=>{const a=q.learningAnalysis||{};return verifiedStudentWeaknesses(studentId).some(w=>norm(w.unit)===norm(a.unit)&&norm(w.type)===norm(a.problemType));});
@@ -5417,6 +5419,7 @@ async function assignReviewedPractice(studentId,problemId){
  }catch(e){console.error('[재학습 배정 실패]',e);alert('배정 실패: '+String(e.message||e));}
 }
 async function suggestReviewedPractice(studentId){
+ if(session?.mode!=='director'){alert('원장 전용 기능입니다.');return;}
  const box=document.getElementById('practiceSuggestions');if(!box)return;
  const weaknesses=verifiedStudentWeaknesses(studentId);
  if(!weaknesses.length){box.textContent='검토 완료된 취약 유형이 없습니다.';return;}
@@ -5603,6 +5606,7 @@ async function verifyQuestionProblemLink(qId){
   }
 }
 async function saveQuestionLearningAnalysis(qId){
+ if(session?.mode!=='director'){alert('원장 전용 기능입니다.');return;}
  const q=(db.questions||[]).find(x=>x.id===qId);if(!q)return;
  const v=id=>document.getElementById(id+'_'+qId)?.value||'';
  const fields={unit:v('qaUnit').trim(),problemType:v('qaType').trim(),errorCause:v('qaCause'),stuckAt:v('qaStuck').trim(),classificationStatus:v('qaStatus')};
