@@ -5323,8 +5323,16 @@ function renderVerifiedWeaknesses(studentId){
     '</div></div>';
 }
 function renderPracticeAttempts(q){
- const ids=q.followUp?.assignedProblemIds||[];
- return ids.length?'<div><b>재학습 결과</b>'+ids.map(pid=>'<div>'+escapeHtml(pid)+' · 시도 '+(q.followUp?.attempts||[]).filter(a=>a.problemId===pid).length+'회 <button class="btn sm outline" onclick="recordPracticeAttempt(\''+escapeHtml(q.id)+'\',\''+escapeHtml(pid)+'\')">정오답 기록</button></div>').join('')+'</div>':'';
+ const follow=q.followUp||{},ids=follow.assignedProblemIds||[],attempts=follow.attempts||[];
+ if(!ids.length)return '';
+ const labels={correct:'정답',incorrect:'오답',partial:'부분정답'};
+ const rows=ids.map(pid=>{
+  const history=attempts.filter(a=>a.problemId===pid);
+  const log=history.map((a,i)=>'<div style="font-size:11px;color:#666">'+(i+1)+'차 · '+escapeHtml(labels[a.result]||'미확인')+' · '+escapeHtml(a.recordedAt||'')+(a.note?' · '+escapeHtml(a.note):'')+'</div>').join('');
+  return '<div style="padding:6px;border-bottom:1px solid #eee"><b>'+escapeHtml(pid)+'</b> · '+history.length+'회 <button class="btn sm outline" onclick="recordPracticeAttempt(\''+escapeHtml(q.id)+'\',\''+escapeHtml(pid)+'\')">정오답 기록</button>'+log+'</div>';
+ }).join('');
+ const verified=follow.status==='resolved'&&follow.resolutionVerificationMethod==='director-manual';
+ return '<div style="margin-top:8px"><b>재학습 이력 · '+(verified?'원장 해결 확인':'해결 미확인')+'</b>'+rows+'</div>';
 }
 async function recordPracticeAttempt(qId,problemId){
  const q=(db.questions||[]).find(x=>x.id===qId);
@@ -5535,7 +5543,8 @@ async function saveQuestionLearningAnalysis(qId){
   const previousFollowUp=q.followUp||{};
   const followUp={...previousFollowUp,status:v('qaFollow'),assignedProblemIds:previousFollowUp.assignedProblemIds||[],attempts:previousFollowUp.attempts||[]};
   if(followUp.status==='resolved' && previousFollowUp.status!=='resolved'){
-    if(!confirm('재학습 결과를 직접 확인했나요? 확인하지 않았다면 재학습 중으로 남겨주세요.'))return;
+    if(!(previousFollowUp.assignedProblemIds||[]).length || !(previousFollowUp.attempts||[]).length){alert('해결 확인 전에는 배정 문항과 재학습 결과가 필요합니다.');return;}
+    if(!confirm('재학습 이력을 직접 검토했고 취약점 해결을 확인했나요?'))return;
     followUp.resolutionVerifiedAt=new Date().toISOString();
     followUp.resolutionVerificationMethod='director-manual';
   }else if(followUp.status!=='resolved'){
