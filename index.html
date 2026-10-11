@@ -4773,6 +4773,23 @@ async function removeDraftPhoto(field, idx){
   if(swActiveStuId && swActiveDate) saveDraftLocal(swActiveStuId, swActiveDate);
   render();
 }
+async function compactSubmissionLegacyPhotos(payload){
+  const copy={...payload};
+  for(const field of ['hwPhotos','practicePhotos']){
+    copy[field]=await Promise.all((payload[field]||[]).map(async photo=>{
+      if(!photoIsLegacyDataURL(photo)) return photo;
+      try{
+        const blob=await (await fetch(photo)).blob();
+        const file=new File([blob],'homework.jpg',{type:blob.type||'image/jpeg'});
+        return await fileToCompressedDataURL(file,260,0.24);
+      }catch(e){
+        console.warn('[숙제 제출용 사진 재압축 실패]',e);
+        return photo;
+      }
+    }));
+  }
+  return copy;
+}
 async function submitHomework(stuId,date){
   const draft = currentSubState._draftSub;
   const existingSubmission = db.submissions[stuId+'_'+date] || null;
