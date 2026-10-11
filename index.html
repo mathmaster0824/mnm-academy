@@ -5368,6 +5368,7 @@ async function assignReviewedPractice(studentId,problemId){
  try{
   const ref=fsdb.collection('questions').doc(q.id);
   const allRefs=(db.questions||[]).filter(x=>x.studentId===studentId).map(x=>fsdb.collection('questions').doc(x.id));
+  if(allRefs.length>400)throw new Error('학생 질문이 많아 안전한 배정 검사가 불가능합니다. 관리자 확인이 필요합니다.');
   await fsdb.runTransaction(async tx=>{
    const reads=await Promise.all([tx.get(fsdb.collection('problems').doc(problemId)),...allRefs.map(ref=>tx.get(ref))]);
    const problem=reads[0];if(!problem.exists||problem.data()?.status!=='active')throw new Error('확정 문항을 확인할 수 없습니다.');
@@ -5417,7 +5418,7 @@ function practiceProgressForStudent(studentId){
   if(unique.has(identity))continue;unique.add(identity);
   const attempts=Array.isArray(f.attempts)?f.attempts:[];
   if((f.assignedProblemIds||[]).length)stats.assigned++;
-  if(attempts.length){stats.attempted++;for(const a of attempts){if(Object.hasOwn(stats,a.result))stats[a.result]++;}}
+  if(attempts.length){stats.attempted++;for(const a of attempts){if(['correct','incorrect','partial'].includes(a.result))stats[a.result]++;}}
   if(f.status==='resolved'&&f.resolutionVerificationMethod==='director-manual')stats.resolved++;else stats.unresolved++;
  }
  return stats;
