@@ -2987,8 +2987,9 @@ async function removeWeekendPhoto(stuId, wk, slot, idx){
   const key = weekendSubmissionKey(stuId, wk, slot);
   const existing = db.weekendSubmissions[key];
   if(!existing) return;
-  let photos = existing.photos || (existing.photo ? [existing.photo] : []);
-  photos = photos.slice(0,idx).concat(photos.slice(idx+1));
+  const originalPhotos = existing.photos || (existing.photo ? [existing.photo] : []);
+  if(!Number.isInteger(idx) || idx<0 || idx>=originalPhotos.length) return;
+  let photos = originalPhotos.slice(0,idx).concat(originalPhotos.slice(idx+1));
   // 사진을 모두 지워도 인증 문서와 최초 제출 시각은 보존한다.
   // 인증 여부는 사진이 실제로 남아 있는지로 판단한다.
   const removedPhoto = (existing.photos || (existing.photo ? [existing.photo] : []))[idx];
