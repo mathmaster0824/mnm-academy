@@ -2994,14 +2994,20 @@ async function removeWeekendPhoto(stuId, wk, slot, idx){
   // 인증 여부는 사진이 실제로 남아 있는지로 판단한다.
   const removedPhoto = (existing.photos || (existing.photo ? [existing.photo] : []))[idx];
   const removalHistory = Array.isArray(existing.removedPhotos) ? existing.removedPhotos : [];
-  const saved = await fsSet('weekendSubmissions', key, {
+  const updatedHistory = removedPhoto === undefined ? removalHistory : [...removalHistory, {
+    photo: photoRefForFirestore(removedPhoto), removedAt: new Date().toISOString()
+  }];
+  const updatedSubmission = {
     studentId:stuId, weekStart:wk, slot, photos,
-    removedPhotos: removedPhoto === undefined ? removalHistory : [...removalHistory, {
-      photo: photoRefForFirestore(removedPhoto), removedAt: new Date().toISOString()
-    }],
+    removedPhotos:updatedHistory,
     submittedAt:existing.submittedAt||new Date().toISOString(),
     lastPhotoRemovedAt:new Date().toISOString()
-  });
+  };
+  if(firestorePayloadSizeKB(updatedSubmission)>900){
+    alert('사진 삭제 이력의 저장 용량이 너무 큽니다. 선생님께 알려주세요.');
+    return;
+  }
+  const saved = await fsSet('weekendSubmissions', key, updatedSubmission);
   if(!saved) return;
 }
 async function restoreWeekendPhoto(stuId,wk,slot,idx){
