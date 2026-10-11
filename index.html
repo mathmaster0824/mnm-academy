@@ -2988,8 +2988,13 @@ async function removeWeekendPhoto(stuId, wk, slot, idx){
   photos = photos.slice(0,idx).concat(photos.slice(idx+1));
   // 사진을 모두 지워도 인증 문서와 최초 제출 시각은 보존한다.
   // 인증 여부는 사진이 실제로 남아 있는지로 판단한다.
+  const removedPhoto = (existing.photos || (existing.photo ? [existing.photo] : []))[idx];
+  const removalHistory = Array.isArray(existing.removedPhotos) ? existing.removedPhotos : [];
   const saved = await fsSet('weekendSubmissions', key, {
     studentId:stuId, weekStart:wk, slot, photos,
+    removedPhotos: removedPhoto === undefined ? removalHistory : [...removalHistory, {
+      photo: photoRefForFirestore(removedPhoto), removedAt: new Date().toISOString()
+    }],
     submittedAt:existing.submittedAt||new Date().toISOString(),
     lastPhotoRemovedAt:new Date().toISOString()
   });
