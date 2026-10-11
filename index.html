@@ -1404,7 +1404,25 @@ function weekDates(weekStart){
 /* ---------------- FIRESTORE WRITE HELPERS ---------------- */
 async function fsSet(col, id, data, merge=true){
   try{ await fsdb.collection(col).doc(id).set(data, {merge}); return true; }
-  catch(e){ alert('저장에 실패했어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.'); return false; }
+  catch(e){
+    console.error('[Firestore 저장 실패]', {collection:col, code:e?.code||'', message:e?.message||'', payloadKB:firestorePayloadSizeKB(data)});
+    if(col==='submissions'){
+      const code=String(e?.code||'');
+      const msg=String(e?.message||'');
+      const tooLarge=firestorePayloadSizeKB(data)>950 || /resource.exhausted|maximum size|too large|exceeds.*size/i.test(code+' '+msg);
+      const detail=tooLarge
+        ? '제출 데이터 용량이 너무 큽니다. 사진은 삭제하지 말고 선생님께 알려주세요.'
+        : /permission.denied|unauthenticated/i.test(code)
+          ? '저장 권한 또는 로그인 인증을 확인해야 합니다. 사진은 삭제하지 말고 선생님께 알려주세요.'
+          : /unavailable|deadline.exceeded|network/i.test(code+' '+msg)
+            ? '서버 연결이 원활하지 않습니다. 사진을 유지한 채 잠시 후 다시 시도해주세요.'
+            : '서버 저장 오류가 발생했습니다. 사진은 삭제하지 말고 선생님께 알려주세요.';
+      alert('숙제 제출이 완료되지 않았어요.\\n'+detail+'\\n오류 코드: '+(code||'unknown'));
+    }else{
+      alert('저장에 실패했어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.');
+    }
+    return false;
+  }
 }
 async function fsAdd(col, data){
   try{ const ref = await fsdb.collection(col).add(data); return ref.id; }
@@ -4773,6 +4791,25 @@ async function removeDraftPhoto(field, idx){
   if(swActiveStuId && swActiveDate) saveDraftLocal(swActiveStuId, swActiveDate);
   render();
 }
+// Firestore 문서 크기 제한에 걸리는 기존 dataURL 사진만 제출용으로 재압축한다.
+// 학생의 원본 임시 초안과 이미 업로드된 R2 사진 참조는 변경하지 않는다.
+async function compactSubmissionLegacyPhotos(payload){
+  const copy={...payload};
+  for(const field of ['hwPhotos','practicePhotos']){
+    copy[field]=await Promise.all((payload[field]||[]).map(async photo=>{
+      if(!photoIsLegacyDataURL(photo)) return photo;
+      try{
+        const blob=await (await fetch(photo)).blob();
+        const file=new File([blob],'homework.jpg',{type:blob.type||'image/jpeg'});
+        return await fileToCompressedDataURL(file,260,0.24);
+      }catch(e){
+        console.warn('[숙제 제출용 사진 재압축 실패]',e);
+        return photo;
+      }
+    }));
+  }
+  return copy;
+}
 async function submitHomework(stuId,date){
   const draft = currentSubState._draftSub;
   const existingSubmission = db.submissions[stuId+'_'+date] || null;
@@ -4801,14 +4838,25 @@ async function submitHomework(stuId,date){
     // 재제출해도 최초 제출시각은 절대 덮어쓰지 않는다.
     firstSubmittedAt:preservedFirstSubmittedAt || nowIso
   };
-  const sizeKB = new Blob([JSON.stringify(payload)]).size/1024;
-  if(embeddedPhotoLimitExceeded(payload, 850)){
-    alert('사진 용량이 너무 커요. 사진 개수를 줄이거나 다시 찍어서 올려주세요.');
+  if(homeworkUploadState.active){
+    alert('사진 업로드가 끝난 뒤 숙제를 제출해주세요.');
     return;
   }
-  const ok = await fsSet('submissions', key, payload, false);
+  // 서버 저장에는 불필요한 사진 메타데이터를 제거한다.
+  let savedPayload={...payload,
+    hwPhotos:(payload.hwPhotos||[]).map(photoRefForFirestore),
+    practicePhotos:(payload.practicePhotos||[]).map(photoRefForFirestore)
+  };
+  if(embeddedPhotoLimitExceeded(savedPayload, 750)){
+    savedPayload=await compactSubmissionLegacyPhotos(savedPayload);
+  }
+  if(firestorePayloadSizeKB(savedPayload)>900){
+    alert('사진 11장 등 제출 데이터가 서버 허용 용량을 초과했어요. 사진은 보존되어 있습니다. 선생님께 알려주세요.');
+    return;
+  }
+  const ok = await fsSet('submissions', key, savedPayload, false);
   if(ok){
-    db.submissions[key] = payload; // 즉시 화면에 확인 표시가 뜨도록 로컬에도 바로 반영
+    db.submissions[key] = savedPayload; // 즉시 화면에 확인 표시가 뜨도록 로컬에도 바로 반영
     clearDraftLocal(stuId, date);
     fsDelete('timerState', key).catch(()=>{});
     if(swDisplayInterval){ clearInterval(swDisplayInterval); swDisplayInterval=null; }
