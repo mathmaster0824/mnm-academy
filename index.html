@@ -5298,6 +5298,30 @@ async function saveEditQuestion(qId){
 }
 
 /* ---------------- QNA DIRECTOR ---------------- */
+/* Verified weakness aggregation: read-only; no inferred identity links. */
+function verifiedStudentWeaknesses(studentId){
+  const groups=new Map(), seen=new Set();
+  for(const q of (db.questions||[])){
+    const a=q.learningAnalysis||{};
+    if(q.studentId!==studentId || a.classificationStatus!=='reviewed' || !a.unit || !a.problemType || !a.errorCause)continue;
+    const linked=q.verifiedProblemLink;
+    const canonical=linked?.relation==='identical' && linked?.verifiedBy==='director-manual' && linked?.problemId ? linked.problemId : '';
+    const dedupe=canonical?'problem:'+canonical:'question:'+q.id;
+    if(seen.has(dedupe))continue;
+    seen.add(dedupe);
+    const key=[a.unit.trim(),a.problemType.trim(),a.errorCause].join('::');
+    const row=groups.get(key)||{unit:a.unit.trim(),type:a.problemType.trim(),cause:a.errorCause,count:0,questionIds:[]};
+    row.count++;row.questionIds.push(q.id);groups.set(key,row);
+  }
+  return [...groups.values()].sort((a,b)=>b.count-a.count||a.unit.localeCompare(b.unit));
+}
+function renderVerifiedWeaknesses(studentId){
+  const rows=verifiedStudentWeaknesses(studentId);
+  const labels={concept:'개념 부족',interpretation:'조건 해석',strategy:'풀이 전략',calculation:'계산 실수',other:'기타'};
+  return '<div style="margin-top:8px;font-size:12px;"><b>검토된 취약 유형 (동일 문항 중복 제외)</b><div>'+
+    (rows.length?rows.slice(0,8).map(r=>'<div>'+escapeHtml(r.unit)+' / '+escapeHtml(r.type)+' / '+escapeHtml(labels[r.cause]||r.cause)+' · '+r.count+'건</div>').join(''):'검토 완료된 분석 없음')+
+    '</div></div>';
+}
 function renderQuestionLearningSummary(){
   const questions=db.questions||[];
   const reviewed=questions.filter(q=>q.learningAnalysis?.classificationStatus==='reviewed');
@@ -5324,9 +5348,9 @@ function renderQuestionLearningSummary(){
   return `<div class="card" style="margin-bottom:12px;">
     <h3 style="margin:0 0 7px;">📊 학생별 질문 학습이력</h3>
     <div style="font-size:12px;color:#777;margin-bottom:8px;">전체 질문 ${questions.length}건 · 검토완료 ${reviewed.length}건 · 미분류 ${pending}건 (미분류 질문은 취약 유형 집계에서 제외)</div>
-    ${rows.length?`<div style="overflow-x:auto;"><table style="width:100%;font-size:12px;border-collapse:collapse;"><thead><tr><th>학생</th><th>질문</th><th>분석완료</th><th>대표 오류 원인</th><th>대표 문제유형</th><th>재학습 필요</th></tr></thead><tbody>${rows.map(r=>{
+    ${rows.length?`<div style="overflow-x:auto;"><table style="width:100%;font-size:12px;border-collapse:collapse;"><thead><tr><th>학생</th><th>질문</th><th>분석완료</th><th>대표 오류 원인</th><th>대표 문제유형</th><th>재학습 필요</th><th>검증된 취약 유형</th></tr></thead><tbody>${rows.map(r=>{
       const cause=top(r.causes),type=top(r.types);
-      return `<tr><td><button class="btn sm outline" onclick="currentSubState.qnaStudentFilter='${escapeHtml(r.id)}';currentSubState.qnaFilter='all';render();">${escapeHtml(studentById(r.id)?.name||'(삭제된 학생)')} · 질문보기</button></td><td>${r.total}</td><td>${r.reviewed}</td><td>${cause?escapeHtml(causeNames[cause[0]]||cause[0])+' ('+cause[1]+')':'—'}</td><td>${type?escapeHtml(type[0])+' ('+type[1]+')':'—'}</td><td>${r.needsPractice}</td></tr>`;
+      return `<tr><td><button class="btn sm outline" onclick="currentSubState.qnaStudentFilter='${escapeHtml(r.id)}';currentSubState.qnaFilter='all';render();">${escapeHtml(studentById(r.id)?.name||'(삭제된 학생)')} · 질문보기</button></td><td>${r.total}</td><td>${r.reviewed}</td><td>${cause?escapeHtml(causeNames[cause[0]]||cause[0])+' ('+cause[1]+')':'—'}</td><td>${type?escapeHtml(type[0])+' ('+type[1]+')':'—'}</td><td>${r.needsPractice}</td><td>${renderVerifiedWeaknesses(r.id)}</td></tr>`;
     }).join('')}</tbody></table></div>`:'아직 질문 기록이 없습니다.'}
   </div>`;
 }
