@@ -3026,10 +3026,15 @@ async function restoreWeekendPhoto(stuId,wk,slot,idx){
   if(embeddedPhotoLimitExceeded(photos,850)){
     alert('복원할 사진의 저장 용량이 너무 큽니다. 선생님께 알려주세요.'); return;
   }
-  const ok=await fsSet('weekendSubmissions',key,{
+  const restoredSubmission={
     studentId:stuId,weekStart:wk,slot,photos,removedPhotos:history,
     submittedAt:existing.submittedAt||new Date().toISOString()
-  });
+  };
+  if(firestorePayloadSizeKB(restoredSubmission)>900){
+    alert('복원할 사진 기록의 저장 용량이 너무 큽니다. 선생님께 알려주세요.');
+    return;
+  }
+  const ok=await fsSet('weekendSubmissions',key,restoredSubmission);
   if(!ok) return; // fsSet이 이미 실패 메시지를 표시함
 }
 function renderStudentWeekendPage(){
