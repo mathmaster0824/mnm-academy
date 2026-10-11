@@ -2978,7 +2978,7 @@ async function uploadWeekendPhoto(input,stuId,wk,slot){
       return;
     }
   }catch(e){ alert('사진 인증을 저장하지 못했습니다. 다시 시도해주세요.'); }
-  input.disabled=false;
+  finally { input.disabled=false; }
 }
 async function removeWeekendPhoto(stuId, wk, slot, idx){
   const key = weekendSubmissionKey(stuId, wk, slot);
