@@ -2958,7 +2958,7 @@ async function uploadWeekendPhoto(input,stuId,wk,slot){
   try{
     const key=weekendSubmissionKey(stuId,wk,slot);
     const existing = db.weekendSubmissions[key];
-    let photos = existing ? (existing.photos || (existing.photo ? [existing.photo] : [])) : [];
+    let photos = existing ? [...(existing.photos || (existing.photo ? [existing.photo] : []))] : [];
     for(const file of files){
       const params = photos.length>=6 ? {maxW:340, quality:0.3} : photos.length>=3 ? {maxW:420, quality:0.35} : {maxW:480, quality:0.4};
       const photo = await storePhotoFile(file, params);
