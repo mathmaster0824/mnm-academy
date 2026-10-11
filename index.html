@@ -5410,6 +5410,7 @@ async function assignReviewedPractice(studentId,problemId){
    if(!qs?.exists)throw new Error('연결 질문을 찾을 수 없습니다.');
    const data=qs.data(),follow=data.followUp||{};
    if(data.studentId!==studentId||data.learningAnalysis?.classificationStatus!=='reviewed'||follow.status==='resolved')throw new Error('배정 가능한 질문이 아닙니다.');
+   if(!(data.learningAnalysis?.unit||'').trim()||!(data.learningAnalysis?.problemType||'').trim()||!data.learningAnalysis?.errorCause)throw new Error('검토된 취약점 정보가 불완전합니다.');
    const la=data.learningAnalysis||{};
    const validUnit=norm(la.unit)===norm(q.learningAnalysis?.unit),validType=norm(la.problemType)===norm(q.learningAnalysis?.problemType);
    if(!validUnit||!validType)throw new Error('질문 분류가 변경되었습니다. 후보를 다시 검색해주세요.');
