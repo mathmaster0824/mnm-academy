@@ -83,3 +83,10 @@
 - PASS: 복원 성공 시 사진 참조 및 최초 `submittedAt` 유지.
 - PASS: 잘못된 삭제 인덱스 요청 무시.
 - 제한: 브라우저 UI, 실제 Firestore, R2, 재접속/동시성, 보안 규칙, 백업 복구 검증은 미완료. Phase 1 게이트 미통과.
+
+## 2026-10-12 사진 API 서버 권한 점검 (미완료)
+- GitHub 연결 계정의 저장소 목록: `mnm-academy`, `baekjiha-everything`. Worker 서버 소스 저장소는 목록에서 확인되지 않음. Cloudflare에 별도로 배포된 Worker 소스 존재 여부는 미확인.
+- `index.html`의 `storePhotoFile`에서 Firebase ID 토큰과 클라이언트 설정 `X-MNM-Role`을 `/upload`로 전송하는 구조 확인.
+- Worker 업로드 오류 시 압축 dataURL을 Firestore에 저장하는 대체 경로 확인. 이 경로는 Firestore 규칙에 의존하므로 서버 측 역할 검증과 별개로 안전하지 않을 수 있음.
+- Worker의 토큰 검증, 학생별 접근 제한, DELETE 권한 검증은 서버 소스 미확보로 확인 불가. 안전하다고 판정하지 않음.
+- 운영 Worker, Firestore 규칙, 운영 데이터에는 변경 없음. Phase 1 게이트 미통과.
