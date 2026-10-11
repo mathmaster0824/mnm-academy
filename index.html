@@ -5372,13 +5372,15 @@ async function recordPracticeAttempt(qId,problemId){
  const note=prompt('풀이 관찰 메모 (선택)','');if(note===null)return;
  try{
   const ref=fsdb.collection('questions').doc(qId);
-  await fsdb.runTransaction(async tx=>{
+  const savedFollowUp=await fsdb.runTransaction(async tx=>{
    const snap=await tx.get(ref);if(!snap.exists)throw new Error('질문 기록이 없습니다.');
    const data=snap.data(),follow=data.followUp||{};
    if(data.studentId!==q.studentId||!(follow.assignedProblemIds||[]).includes(problemId)||follow.status==='resolved')throw new Error('기록 가능한 배정이 아닙니다.');
    const attempts=Array.isArray(follow.attempts)?follow.attempts:[];
-   tx.update(ref,{followUp:{...follow,status:'practicing',attempts:[...attempts,{problemId,result,note:note.trim().slice(0,500),recordedAt:new Date().toISOString(),recordedBy:'director-manual',attemptNo:attempts.filter(x=>x.problemId===problemId).length+1}]}});
+   const updated={...follow,status:'practicing',attempts:[...attempts,{problemId,result,note:note.trim().slice(0,500),recordedAt:new Date().toISOString(),recordedBy:'director-manual',attemptNo:attempts.filter(x=>x.problemId===problemId).length+1}]};
+   tx.update(ref,{followUp:updated});return updated;
   });
+  q.followUp=savedFollowUp;
   alert('결과 저장 완료. 해결 처리는 원장 확인 후 별도로 진행합니다.');render();
  }catch(e){console.error(e);alert('저장 실패: '+String(e.message||e));}
 }
