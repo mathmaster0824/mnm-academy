@@ -66,3 +66,12 @@
 - 버킷 잠금 규칙은 정의되지 않음. 실수/악의적 삭제 방지 또는 복구 보장 없음.
 - CORS 정책 없음. 이 사실만으로 Worker/API 보안을 평가할 수 없음.
 - R2 별도 백업 및 복원 실증 미완료. 설정 변경 없음.
+
+
+## 추가 정적 감사: 사진 업로드·삭제의 보존 위험
+- `photoApiToken()`은 Firebase ID 토큰을 취득하고, R2 Worker API에는 `X-MNM-Role` 클라이언트 헤더를 보냄. 서버가 이 헤더를 신뢰하는지 Worker 원본 확인 필요.
+- `storePhotoFile()`은 R2 업로드 실패 시 압축 dataURL을 반환. R2 업로드 성공 후 Firestore 저장 실패 시 고아 객체가 남을 수 있으며 정리·재연결 프로토콜 미확인.
+- `uploadWeekendPhoto()`는 R2 업로드 후 `fsSet('weekendSubmissions',...)` 호출. 실패 시 파일-문서 참조 원자성 보장 없음.
+- `removeWeekendPhoto()`는 마지막 사진 삭제 시 `fsDelete('weekendSubmissions', key)` 실행. 삭제 이력·복구 절차 미확인.
+- `submitHomework()`는 Firestore 저장 성공 시 로컬 초안을 지우고 timerState 문서를 삭제. 재접속·장애 주입 검증 미완료.
+- 보안/보존 위험 발견이지 실제 사고의 증거가 아님. 운영 변경 없음. 대응은 격리 테스트 환경에서 선검증.
