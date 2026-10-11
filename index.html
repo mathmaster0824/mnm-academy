@@ -5376,7 +5376,7 @@ function renderQuestionLearningAnalysis(q){
   const options=(values,selected)=>values.map(([value,label])=>`<option value="${value}" ${selected===value?'selected':''}>${label}</option>`).join('');
   const status=options([['unreviewed','미분류'],['reviewed','검토완료']],a.classificationStatus||'unreviewed');
   const cause=options([['','미확인'],['concept','개념 부족'],['interpretation','조건 해석'],['strategy','풀이 전략'],['calculation','계산 실수'],['other','기타']],a.errorCause||'');
-  const resolution=options([['unverified','미확인'],['needs_practice','재학습 필요'],['practicing','재학습 중'],['resolved','해결 확인']],q.followUp?.status==='resolved'?'resolved':(q.followUp?.status||'unverified'));
+  const resolution=options([['not_assigned','미배정'],['unverified','미확인'],['needs_practice','재학습 필요'],['practicing','재학습 중'],['resolved','원장 확인으로 해결']],q.followUp?.status||'not_assigned');
   return `<div style="margin-top:9px;padding:9px;border:1px solid var(--line);border-radius:8px;">
     <div style="font-size:12px;font-weight:800;margin-bottom:7px;">📊 질문 학습분석 · 원장 기록</div>
     <div class="row" style="flex-wrap:wrap;gap:5px;">
@@ -5395,7 +5395,20 @@ async function saveQuestionLearningAnalysis(qId){
   if(!q)return;
   const v=id=>document.getElementById(id+'_'+qId)?.value||'';
   const learningAnalysis={...(q.learningAnalysis||{}),schemaVersion:1,unit:v('qaUnit').trim(),problemType:v('qaType').trim(),errorCause:v('qaCause'),stuckAt:v('qaStuck').trim(),classificationStatus:v('qaStatus'),reviewedAt:v('qaStatus')==='reviewed'?new Date().toISOString():null};
-  const followUp={...(q.followUp||{}),status:v('qaFollow'),assignedProblemIds:q.followUp?.assignedProblemIds||[],attempts:q.followUp?.attempts||[]};
+  if(learningAnalysis.classificationStatus==='reviewed' && (!learningAnalysis.unit || !learningAnalysis.problemType || !learningAnalysis.errorCause)){
+    alert('검토완료로 저장하려면 단원·문제유형·오류 원인을 모두 입력해주세요.');
+    return;
+  }
+  const previousFollowUp=q.followUp||{};
+  const followUp={...previousFollowUp,status:v('qaFollow'),assignedProblemIds:previousFollowUp.assignedProblemIds||[],attempts:previousFollowUp.attempts||[]};
+  if(followUp.status==='resolved' && previousFollowUp.status!=='resolved'){
+    if(!confirm('재학습 결과를 직접 확인했나요? 확인하지 않았다면 재학습 중으로 남겨주세요.'))return;
+    followUp.resolutionVerifiedAt=new Date().toISOString();
+    followUp.resolutionVerificationMethod='director-manual';
+  }else if(followUp.status!=='resolved'){
+    followUp.resolutionVerifiedAt=null;
+    followUp.resolutionVerificationMethod=null;
+  }
   if(await fsUpdate('questions',qId,{learningAnalysis,followUp})){
     q.learningAnalysis=learningAnalysis;q.followUp=followUp;
     render();
