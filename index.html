@@ -5322,6 +5322,25 @@ function renderVerifiedWeaknesses(studentId){
     (rows.length?rows.slice(0,8).map(r=>'<div>'+escapeHtml(r.unit)+' / '+escapeHtml(r.type)+' / '+escapeHtml(labels[r.cause]||r.cause)+' · '+r.count+'건</div>').join(''):'검토 완료된 분석 없음')+
     '</div></div>';
 }
+async function assignReviewedPractice(studentId,problemId){
+ const questions=(db.questions||[]).filter(q=>q.studentId===studentId&&q.learningAnalysis?.classificationStatus==='reviewed'&&q.followUp?.status!=='resolved');
+ if(!questions.length){alert('배정 가능한 검토완료 질문이 없습니다.');return;}
+ const q=questions.find(q=>['needs_practice','practicing'].includes(q.followUp?.status))||questions[0];
+ if(!confirm('학생 '+(studentById(studentId)?.name||studentId)+'에게 문항 '+problemId+'을 재학습으로 배정할까요? 연결 질문: '+q.id))return;
+ try{
+  const ref=fsdb.collection('questions').doc(q.id);
+  await fsdb.runTransaction(async tx=>{
+   const [qs,ps]=await Promise.all([tx.get(ref),tx.get(fsdb.collection('problems').doc(problemId))]);
+   if(!qs.exists||!ps.exists||ps.data()?.status!=='active')throw new Error('질문 또는 확정 문항을 확인할 수 없습니다.');
+   const data=qs.data(),follow=data.followUp||{};
+   if(data.studentId!==studentId||data.learningAnalysis?.classificationStatus!=='reviewed'||follow.status==='resolved')throw new Error('배정 가능한 질문이 아닙니다.');
+   const assigned=Array.isArray(follow.assignedProblemIds)?follow.assignedProblemIds:[];
+   if(assigned.includes(problemId))throw new Error('이미 배정된 문항입니다.');
+   tx.update(ref,{followUp:{...follow,status:'practicing',assignedProblemIds:[...assigned,problemId],assignments:[...(follow.assignments||[]),{problemId,assignedAt:new Date().toISOString(),assignedBy:'director-manual',questionId:q.id,schemaVersion:1}]}});
+  });
+  alert('배정 기록을 저장했습니다.');render();
+ }catch(e){console.error('[재학습 배정 실패]',e);alert('배정 실패: '+String(e.message||e));}
+}
 async function suggestReviewedPractice(studentId){
  const box=document.getElementById('practiceSuggestions');if(!box)return;
  const weaknesses=verifiedStudentWeaknesses(studentId);
@@ -5343,7 +5362,7 @@ async function suggestReviewedPractice(studentId){
    const score=weaknesses.reduce((sum,w)=>sum+(unitNames.includes(norm(w.unit))&&typeNames.includes(norm(w.type))?w.count:0),0);
    return {p,score};
   }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,15);
-  box.innerHTML='<b>원장 검토용 후보 · 자동 배정 없음</b><div style="font-size:11px;color:#777">최대 400문항 조회 · 단원과 개념/풀이태그 정확 일치 · 난이도 필터 적용 · 전체 검색 아님</div>'+(candidates.length?candidates.map(x=>'<div style="padding:5px;border-bottom:1px solid #eee">'+escapeHtml(x.p.id)+' · '+escapeHtml(x.p.majorUnit||'')+' / '+escapeHtml(x.p.middleUnit||'')+' · 난이도 '+escapeHtml(x.p.predictedDifficulty||'미분류')+'</div>').join(''):'현재 조회 범위에 일치하는 후보가 없습니다.');
+  box.innerHTML='<b>원장 검토용 후보 · 자동 배정 없음</b><div style="font-size:11px;color:#777">최대 400문항 조회 · 단원과 개념/풀이태그 정확 일치 · 난이도 필터 적용 · 전체 검색 아님</div>'+(candidates.length?candidates.map(x=>'<div style="padding:5px;border-bottom:1px solid #eee">'+escapeHtml(x.p.id)+' · '+escapeHtml(x.p.majorUnit||'')+' / '+escapeHtml(x.p.middleUnit||'')+' · 난이도 '+escapeHtml(x.p.predictedDifficulty||'미분류')+' <button class="btn sm outline" onclick="assignReviewedPractice(document.getElementById(\'practiceStudent\').value,\''+escapeHtml(x.p.id)+'\')">원장 확인 후 배정</button></div>').join(''):'현재 조회 범위에 일치하는 후보가 없습니다.');
  }catch(e){console.error('[재학습 검색 실패]',e);box.textContent='검색 실패 · 기존 데이터 변경 없음';}
 }
 function renderQuestionLearningSummary(){
