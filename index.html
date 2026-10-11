@@ -5422,9 +5422,30 @@ function practiceProgressForStudent(studentId){
  }
  return stats;
 }
+function practiceRepeatComparison(studentId){
+ const byProblem=new Map();
+ for(const q of (db.questions||[])){
+  if(q.studentId!==studentId)continue;
+  for(const a of (q.followUp?.attempts||[])){
+   if(!a.problemId||!['correct','incorrect','partial'].includes(a.result))continue;
+   const key=a.problemId,rows=byProblem.get(key)||[];
+   rows.push({result:a.result,at:String(a.recordedAt||''),questionId:q.id});byProblem.set(key,rows);
+  }
+ }
+ const score={incorrect:0,partial:1,correct:2};
+ const out={repeated:0,improved:0,unchanged:0,declined:0};
+ for(const rows of byProblem.values()){
+  rows.sort((a,b)=>a.at.localeCompare(b.at));
+  if(rows.length<2)continue;
+  out.repeated++;const diff=score[rows[rows.length-1].result]-score[rows[0].result];
+  if(diff>0)out.improved++;else if(diff<0)out.declined++;else out.unchanged++;
+ }
+ return out;
+}
 function renderPracticeProgress(studentId){
  const p=practiceProgressForStudent(studentId);
- return '<div style="font-size:11px">배정 '+p.assigned+'건 · 시도 '+p.attempted+'건 · 정답 '+p.correct+'회 / 오답 '+p.incorrect+'회 / 부분 '+p.partial+'회 · 원장 해결 '+p.resolved+'건 · 미해결 '+p.unresolved+'건</div>';
+ const c=practiceRepeatComparison(studentId);
+ return '<div style="font-size:11px">배정 '+p.assigned+'건 · 시도 '+p.attempted+'건 · 정답 '+p.correct+'회 / 오답 '+p.incorrect+'회 / 부분 '+p.partial+'회 · 원장 해결 '+p.resolved+'건 · 미해결 '+p.unresolved+'건<br>동일 문항 재시도 '+c.repeated+'개 · 결과 개선 '+c.improved+' / 동일 '+c.unchanged+' / 하락 '+c.declined+'<br><span style="color:#777">첫 시도와 마지막 시도의 정오답 비교이며, 별도 평가의 성취도 향상률은 아닙니다.</span></div>';
 }
 function renderQuestionLearningSummary(){
   const questions=db.questions||[];
