@@ -5322,6 +5322,29 @@ function renderVerifiedWeaknesses(studentId){
     (rows.length?rows.slice(0,8).map(r=>'<div>'+escapeHtml(r.unit)+' / '+escapeHtml(r.type)+' / '+escapeHtml(labels[r.cause]||r.cause)+' · '+r.count+'건</div>').join(''):'검토 완료된 분석 없음')+
     '</div></div>';
 }
+function renderPracticeAttempts(q){
+ const ids=q.followUp?.assignedProblemIds||[];
+ return ids.length?'<div><b>재학습 결과</b>'+ids.map(pid=>'<div>'+escapeHtml(pid)+' · 시도 '+(q.followUp?.attempts||[]).filter(a=>a.problemId===pid).length+'회 <button class="btn sm outline" onclick="recordPracticeAttempt(\''+escapeHtml(q.id)+'\',\''+escapeHtml(pid)+'\')">정오답 기록</button></div>').join('')+'</div>':'';
+}
+async function recordPracticeAttempt(qId,problemId){
+ const q=(db.questions||[]).find(x=>x.id===qId);
+ if(!q||!(q.followUp?.assignedProblemIds||[]).includes(problemId)){alert('배정 문항을 확인할 수 없습니다.');return;}
+ const raw=prompt('재학습 결과: O(정답) / X(오답) / P(부분정답)');if(raw===null)return;
+ const result=({o:'correct',x:'incorrect',p:'partial'})[raw.trim().toLowerCase()];
+ if(!result){alert('O, X, P 중 하나를 입력해주세요.');return;}
+ const note=prompt('풀이 관찰 메모 (선택)','');if(note===null)return;
+ try{
+  const ref=fsdb.collection('questions').doc(qId);
+  await fsdb.runTransaction(async tx=>{
+   const snap=await tx.get(ref);if(!snap.exists)throw new Error('질문 기록이 없습니다.');
+   const data=snap.data(),follow=data.followUp||{};
+   if(!(follow.assignedProblemIds||[]).includes(problemId)||follow.status==='resolved')throw new Error('기록 가능한 배정이 아닙니다.');
+   const attempts=Array.isArray(follow.attempts)?follow.attempts:[];
+   tx.update(ref,{followUp:{...follow,status:'practicing',attempts:[...attempts,{problemId,result,note:note.trim().slice(0,500),recordedAt:new Date().toISOString(),recordedBy:'director-manual',attemptNo:attempts.filter(x=>x.problemId===problemId).length+1}]}});
+  });
+  alert('결과 저장 완료. 해결 처리는 원장 확인 후 별도로 진행합니다.');render();
+ }catch(e){console.error(e);alert('저장 실패: '+String(e.message||e));}
+}
 async function assignReviewedPractice(studentId,problemId){
  const norm=v=>String(v||'').normalize('NFKC').replace(/\s+/g,'').toLowerCase();
  const questions=(db.questions||[]).filter(q=>q.studentId===studentId&&q.learningAnalysis?.classificationStatus==='reviewed'&&q.followUp?.status!=='resolved');
@@ -5474,6 +5497,7 @@ function renderQuestionLearningAnalysis(q){
     </div>
     <div style="font-size:11px;color:#777;">문항 ID가 실제 저장소에 존재하는지 검사합니다. 동일 유형·유사 문항은 동일 문항으로 연결하지 않습니다.</div>
     ${q.verifiedProblemLink?.problemId?'<div style="font-size:11px;color:#356b45;">✓ 원장 확인 연결됨 · '+escapeHtml(q.verifiedProblemLink.problemId)+'</div>':''}
+    ${renderPracticeAttempts(q)}
     <button class="btn sm outline" style="margin-top:6px;" onclick="saveQuestionLearningAnalysis('${q.id}')">학습분석 저장</button>
   </div>`;
 }
