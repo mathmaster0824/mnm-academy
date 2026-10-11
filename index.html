@@ -2970,9 +2970,13 @@ async function uploadWeekendPhoto(input,stuId,wk,slot){
       input.disabled=false;
       return;
     }
-    await fsSet('weekendSubmissions',key,{
+    const saved = await fsSet('weekendSubmissions',key,{
       studentId:stuId, weekStart:wk, slot, photos, submittedAt:new Date().toISOString()
     });
+    if(!saved){
+      alert('주말학습 사진 저장이 완료되지 않았어요. 다시 시도해주세요.');
+      return;
+    }
   }catch(e){ alert('사진 인증을 저장하지 못했습니다. 다시 시도해주세요.'); }
   input.disabled=false;
 }
