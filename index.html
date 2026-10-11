@@ -2971,7 +2971,10 @@ async function uploadWeekendPhoto(input,stuId,wk,slot){
       return;
     }
     const saved = await fsSet('weekendSubmissions',key,{
-      studentId:stuId, weekStart:wk, slot, photos, submittedAt:new Date().toISOString()
+      studentId:stuId, weekStart:wk, slot, photos,
+      submittedAt:existing?.submittedAt || new Date().toISOString(),
+      ...(existing?.removedPhotos ? {removedPhotos:existing.removedPhotos} : {}),
+      ...(existing?.lastPhotoRemovedAt ? {lastPhotoRemovedAt:existing.lastPhotoRemovedAt} : {})
     });
     if(!saved){
       input.disabled=false; // 저장 실패 후에도 학생이 사진을 다시 제출할 수 있어야 한다.
