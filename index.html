@@ -2825,7 +2825,7 @@ async function toggleWeekendManualApprove(stuId, wk, slot){
 function weekendSubmissionKey(stuId,wk,slot){ return `${stuId}_${wk}_${slot}`; }
 function weekendSubmission(stuId,wk,slot){ return db.weekendSubmissions[weekendSubmissionKey(stuId,wk,slot)] || null; }
 function weekendCountForStudent(stuId,wk){
-  return WEEKEND_SLOTS.filter(x=>!!weekendSubmission(stuId,wk,x.id)).length;
+  return WEEKEND_SLOTS.filter(x=>{ const sub=weekendSubmission(stuId,wk,x.id); return !!sub && (Array.isArray(sub.photos) ? sub.photos.length>0 : !!sub.photo); }).length;
 }
 async function setWeekendEnabled(enabled){
   await fsSet('weekendSettings','main',{enabled:!!enabled,updatedAt:new Date().toISOString()});
@@ -2986,11 +2986,14 @@ async function removeWeekendPhoto(stuId, wk, slot, idx){
   if(!existing) return;
   let photos = existing.photos || (existing.photo ? [existing.photo] : []);
   photos = photos.slice(0,idx).concat(photos.slice(idx+1));
-  if(photos.length===0){
-    await fsDelete('weekendSubmissions', key);
-  }else{
-    await fsSet('weekendSubmissions', key, {studentId:stuId, weekStart:wk, slot, photos, submittedAt:existing.submittedAt||new Date().toISOString()});
-  }
+  // 사진을 모두 지워도 인증 문서와 최초 제출 시각은 보존한다.
+  // 인증 여부는 사진이 실제로 남아 있는지로 판단한다.
+  const saved = await fsSet('weekendSubmissions', key, {
+    studentId:stuId, weekStart:wk, slot, photos,
+    submittedAt:existing.submittedAt||new Date().toISOString(),
+    lastPhotoRemovedAt:new Date().toISOString()
+  });
+  if(!saved) return;
 }
 function renderStudentWeekendPage(){
   const stuId=session.studentId;
