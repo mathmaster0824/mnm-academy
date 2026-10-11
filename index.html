@@ -1404,7 +1404,25 @@ function weekDates(weekStart){
 /* ---------------- FIRESTORE WRITE HELPERS ---------------- */
 async function fsSet(col, id, data, merge=true){
   try{ await fsdb.collection(col).doc(id).set(data, {merge}); return true; }
-  catch(e){ alert('저장에 실패했어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.'); return false; }
+  catch(e){
+    console.error('[Firestore 저장 실패]', {collection:col, code:e?.code||'', message:e?.message||'', payloadKB:firestorePayloadSizeKB(data)});
+    if(col==='submissions'){
+      const code=String(e?.code||'');
+      const msg=String(e?.message||'');
+      const tooLarge=firestorePayloadSizeKB(data)>950 || /resource.exhausted|maximum size|too large|exceeds.*size/i.test(code+' '+msg);
+      const detail=tooLarge
+        ? '제출 데이터 용량이 너무 큽니다. 사진은 삭제하지 말고 선생님께 알려주세요.'
+        : /permission.denied|unauthenticated/i.test(code)
+          ? '저장 권한 또는 로그인 인증을 확인해야 합니다. 사진은 삭제하지 말고 선생님께 알려주세요.'
+          : /unavailable|deadline.exceeded|network/i.test(code+' '+msg)
+            ? '서버 연결이 원활하지 않습니다. 사진을 유지한 채 잠시 후 다시 시도해주세요.'
+            : '서버 저장 오류가 발생했습니다. 사진은 삭제하지 말고 선생님께 알려주세요.';
+      alert('숙제 제출이 완료되지 않았어요.\\n'+detail+'\\n오류 코드: '+(code||'unknown'));
+    }else{
+      alert('저장에 실패했어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.');
+    }
+    return false;
+  }
 }
 async function fsAdd(col, data){
   try{ const ref = await fsdb.collection(col).add(data); return ref.id; }
