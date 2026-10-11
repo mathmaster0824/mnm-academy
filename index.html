@@ -5600,29 +5600,26 @@ async function verifyQuestionProblemLink(qId){
   }
 }
 async function saveQuestionLearningAnalysis(qId){
-  const q=(db.questions||[]).find(x=>x.id===qId);
-  if(!q)return;
-  const v=id=>document.getElementById(id+'_'+qId)?.value||'';
-  const learningAnalysis={...(q.learningAnalysis||{}),schemaVersion:1,unit:v('qaUnit').trim(),problemType:v('qaType').trim(),errorCause:v('qaCause'),stuckAt:v('qaStuck').trim(),classificationStatus:v('qaStatus'),reviewedAt:v('qaStatus')==='reviewed'?new Date().toISOString():null};
-  if(learningAnalysis.classificationStatus==='reviewed' && (!learningAnalysis.unit || !learningAnalysis.problemType || !learningAnalysis.errorCause)){
-    alert('검토완료로 저장하려면 단원·문제유형·오류 원인을 모두 입력해주세요.');
-    return;
-  }
-  const previousFollowUp=q.followUp||{};
-  const followUp={...previousFollowUp,status:v('qaFollow'),assignedProblemIds:previousFollowUp.assignedProblemIds||[],attempts:previousFollowUp.attempts||[]};
-  if(followUp.status==='resolved' && previousFollowUp.status!=='resolved'){
-    if(!(previousFollowUp.assignedProblemIds||[]).length || !(previousFollowUp.attempts||[]).length){alert('해결 확인 전에는 배정 문항과 재학습 결과가 필요합니다.');return;}
-    if(!confirm('재학습 이력을 직접 검토했고 취약점 해결을 확인했나요?'))return;
-    followUp.resolutionVerifiedAt=new Date().toISOString();
-    followUp.resolutionVerificationMethod='director-manual';
-  }else if(followUp.status!=='resolved'){
-    followUp.resolutionVerifiedAt=null;
-    followUp.resolutionVerificationMethod=null;
-  }
-  if(await fsUpdate('questions',qId,{learningAnalysis,followUp})){
-    q.learningAnalysis=learningAnalysis;q.followUp=followUp;
-    render();
-  }
+ const q=(db.questions||[]).find(x=>x.id===qId);if(!q)return;
+ const v=id=>document.getElementById(id+'_'+qId)?.value||'';
+ const fields={unit:v('qaUnit').trim(),problemType:v('qaType').trim(),errorCause:v('qaCause'),stuckAt:v('qaStuck').trim(),classificationStatus:v('qaStatus')};
+ if(fields.classificationStatus==='reviewed'&&(!fields.unit||!fields.problemType||!fields.errorCause)){alert('검토완료에는 단원·유형·오류 원인이 필요합니다.');return;}
+ const desiredStatus=v('qaFollow');
+ if(desiredStatus==='resolved'&&!confirm('재학습 이력을 직접 검토했고 취약점 해결을 확인했나요?'))return;
+ try{
+  const ref=fsdb.collection('questions').doc(qId);
+  const updated=await fsdb.runTransaction(async tx=>{
+   const snap=await tx.get(ref);if(!snap.exists)throw new Error('질문이 존재하지 않습니다.');
+   const data=snap.data(),previous=data.followUp||{},now=new Date().toISOString();
+   const learningAnalysis={...(data.learningAnalysis||{}),...fields,schemaVersion:1,reviewedAt:fields.classificationStatus==='reviewed'?now:null};
+   if(desiredStatus==='resolved'&&(!(previous.assignedProblemIds||[]).length||!(previous.attempts||[]).length))throw new Error('해결 처리에는 배정과 재학습 기록이 필요합니다.');
+   const followUp={...previous,status:desiredStatus};
+   if(desiredStatus==='resolved'){followUp.resolutionVerifiedAt=previous.status==='resolved'?previous.resolutionVerifiedAt||now:now;followUp.resolutionVerificationMethod='director-manual';}
+   else{followUp.resolutionVerifiedAt=null;followUp.resolutionVerificationMethod=null;}
+   tx.update(ref,{learningAnalysis,followUp});return {learningAnalysis,followUp};
+  });
+  q.learningAnalysis=updated.learningAnalysis;q.followUp=updated.followUp;render();
+ }catch(e){console.error('[질문 분석 저장 실패]',e);alert('저장 실패: '+String(e.message||e));}
 }
 async function answerQuestion(qId){
   const q = db.questions.find(x=>x.id===qId);
