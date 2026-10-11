@@ -5408,6 +5408,24 @@ async function suggestReviewedPractice(studentId){
   box.innerHTML='<b>원장 검토용 후보 · 자동 배정 없음</b><div style="font-size:11px;color:#777">최대 400문항 조회 · 단원과 개념/풀이태그 정확 일치 · 난이도 필터 적용 · 전체 검색 아님</div>'+(candidates.length?candidates.map(x=>'<div style="padding:5px;border-bottom:1px solid #eee">'+escapeHtml(x.p.id)+' · '+escapeHtml(x.p.majorUnit||'')+' / '+escapeHtml(x.p.middleUnit||'')+' · 난이도 '+escapeHtml(x.p.predictedDifficulty||'미분류')+' <button class="btn sm outline" onclick="assignReviewedPractice(document.getElementById(\'practiceStudent\').value,\''+escapeHtml(x.p.id)+'\')">원장 확인 후 배정</button></div>').join(''):'현재 조회 범위에 일치하는 후보가 없습니다.');
  }catch(e){console.error('[재학습 검색 실패]',e);box.textContent='검색 실패 · 기존 데이터 변경 없음';}
 }
+function practiceProgressForStudent(studentId){
+ const rows=(db.questions||[]).filter(q=>q.studentId===studentId&&q.learningAnalysis?.classificationStatus==='reviewed');
+ const unique=new Set(),stats={assigned:0,attempted:0,correct:0,incorrect:0,partial:0,resolved:0,unresolved:0};
+ for(const q of rows){
+  const f=q.followUp||{},link=q.verifiedProblemLink;
+  const identity=link?.verifiedBy==='director-manual'&&link?.relation==='identical'&&link.problemId?'p:'+link.problemId:'q:'+q.id;
+  if(unique.has(identity))continue;unique.add(identity);
+  const attempts=Array.isArray(f.attempts)?f.attempts:[];
+  if((f.assignedProblemIds||[]).length)stats.assigned++;
+  if(attempts.length){stats.attempted++;for(const a of attempts){if(Object.hasOwn(stats,a.result))stats[a.result]++;}}
+  if(f.status==='resolved'&&f.resolutionVerificationMethod==='director-manual')stats.resolved++;else stats.unresolved++;
+ }
+ return stats;
+}
+function renderPracticeProgress(studentId){
+ const p=practiceProgressForStudent(studentId);
+ return '<div style="font-size:11px">배정 '+p.assigned+'건 · 시도 '+p.attempted+'건 · 정답 '+p.correct+'회 / 오답 '+p.incorrect+'회 / 부분 '+p.partial+'회 · 원장 해결 '+p.resolved+'건 · 미해결 '+p.unresolved+'건</div>';
+}
 function renderQuestionLearningSummary(){
   const questions=db.questions||[];
   const reviewed=questions.filter(q=>q.learningAnalysis?.classificationStatus==='reviewed');
@@ -5434,9 +5452,9 @@ function renderQuestionLearningSummary(){
   return `<div class="card" style="margin-bottom:12px;">
     <h3 style="margin:0 0 7px;">📊 학생별 질문 학습이력</h3>
     <div style="font-size:12px;color:#777;margin-bottom:8px;">전체 질문 ${questions.length}건 · 검토완료 ${reviewed.length}건 · 미분류 ${pending}건 (미분류 질문은 취약 유형 집계에서 제외)</div>
-    ${rows.length?`<div style="overflow-x:auto;"><table style="width:100%;font-size:12px;border-collapse:collapse;"><thead><tr><th>학생</th><th>질문</th><th>분석완료</th><th>대표 오류 원인</th><th>대표 문제유형</th><th>재학습 필요</th><th>검증된 취약 유형</th></tr></thead><tbody>${rows.map(r=>{
+    ${rows.length?`<div style="overflow-x:auto;"><table style="width:100%;font-size:12px;border-collapse:collapse;"><thead><tr><th>학생</th><th>질문</th><th>분석완료</th><th>대표 오류 원인</th><th>대표 문제유형</th><th>재학습 필요</th><th>검증된 취약 유형</th><th>재학습 변화</th></tr></thead><tbody>${rows.map(r=>{
       const cause=top(r.causes),type=top(r.types);
-      return `<tr><td><button class="btn sm outline" onclick="currentSubState.qnaStudentFilter='${escapeHtml(r.id)}';currentSubState.qnaFilter='all';render();">${escapeHtml(studentById(r.id)?.name||'(삭제된 학생)')} · 질문보기</button></td><td>${r.total}</td><td>${r.reviewed}</td><td>${cause?escapeHtml(causeNames[cause[0]]||cause[0])+' ('+cause[1]+')':'—'}</td><td>${type?escapeHtml(type[0])+' ('+type[1]+')':'—'}</td><td>${r.needsPractice}</td><td>${renderVerifiedWeaknesses(r.id)}</td></tr>`;
+      return `<tr><td><button class="btn sm outline" onclick="currentSubState.qnaStudentFilter='${escapeHtml(r.id)}';currentSubState.qnaFilter='all';render();">${escapeHtml(studentById(r.id)?.name||'(삭제된 학생)')} · 질문보기</button></td><td>${r.total}</td><td>${r.reviewed}</td><td>${cause?escapeHtml(causeNames[cause[0]]||cause[0])+' ('+cause[1]+')':'—'}</td><td>${type?escapeHtml(type[0])+' ('+type[1]+')':'—'}</td><td>${r.needsPractice}</td><td>${renderVerifiedWeaknesses(r.id)}</td><td>${renderPracticeProgress(r.id)}</td></tr>`;
     }).join('')}</tbody></table></div>`:'아직 질문 기록이 없습니다.'}
   </div>`;
 }
