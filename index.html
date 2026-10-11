@@ -4801,14 +4801,25 @@ async function submitHomework(stuId,date){
     // 재제출해도 최초 제출시각은 절대 덮어쓰지 않는다.
     firstSubmittedAt:preservedFirstSubmittedAt || nowIso
   };
-  const sizeKB = new Blob([JSON.stringify(payload)]).size/1024;
-  if(embeddedPhotoLimitExceeded(payload, 850)){
-    alert('사진 용량이 너무 커요. 사진 개수를 줄이거나 다시 찍어서 올려주세요.');
+  if(homeworkUploadState.active){
+    alert('사진 업로드가 끝난 뒤 숙제를 제출해주세요.');
     return;
   }
-  const ok = await fsSet('submissions', key, payload, false);
+  // 서버 저장에는 불필요한 사진 메타데이터를 제거한다.
+  let savedPayload={...payload,
+    hwPhotos:(payload.hwPhotos||[]).map(photoRefForFirestore),
+    practicePhotos:(payload.practicePhotos||[]).map(photoRefForFirestore)
+  };
+  if(embeddedPhotoLimitExceeded(savedPayload, 750)){
+    savedPayload=await compactSubmissionLegacyPhotos(savedPayload);
+  }
+  if(firestorePayloadSizeKB(savedPayload)>900){
+    alert('사진 11장 등 제출 데이터가 서버 허용 용량을 초과했어요. 사진은 보존되어 있습니다. 선생님께 알려주세요.');
+    return;
+  }
+  const ok = await fsSet('submissions', key, savedPayload, false);
   if(ok){
-    db.submissions[key] = payload; // 즉시 화면에 확인 표시가 뜨도록 로컬에도 바로 반영
+    db.submissions[key] = savedPayload; // 즉시 화면에 확인 표시가 뜨도록 로컬에도 바로 반영
     clearDraftLocal(stuId, date);
     fsDelete('timerState', key).catch(()=>{});
     if(swDisplayInterval){ clearInterval(swDisplayInterval); swDisplayInterval=null; }
