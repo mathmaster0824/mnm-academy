@@ -5322,6 +5322,19 @@ function renderVerifiedWeaknesses(studentId){
     (rows.length?rows.slice(0,8).map(r=>'<div>'+escapeHtml(r.unit)+' / '+escapeHtml(r.type)+' / '+escapeHtml(labels[r.cause]||r.cause)+' · '+r.count+'건</div>').join(''):'검토 완료된 분석 없음')+
     '</div></div>';
 }
+async function suggestReviewedPractice(studentId){
+ const box=document.getElementById('practiceSuggestions');if(!box)return;
+ const weaknesses=verifiedStudentWeaknesses(studentId);
+ if(!weaknesses.length){box.textContent='검토 완료된 취약 유형이 없습니다.';return;}
+ box.textContent='검색 중…';
+ try{
+ const snap=await fsdb.collection('problems').limit(400).get();
+ const norm=v=>String(v||'').normalize('NFKC').trim().toLowerCase();
+ const used=new Set((db.questions||[]).filter(q=>q.studentId===studentId).flatMap(q=>[q.verifiedProblemLink?.verifiedBy==='director-manual'&&q.verifiedProblemLink?.relation==='identical'?q.verifiedProblemLink.problemId:null,...(q.followUp?.assignedProblemIds||[])]).filter(Boolean));
+ const matches=snap.docs.map(d=>({id:d.id,...d.data()})).filter(p=>!used.has(p.id)&&weaknesses.some(w=>norm(p.unit)===norm(w.unit)&&norm(p.problemType||p.type)===norm(w.type))).slice(0,15);
+ box.innerHTML='<b>원장 검토용 후보 (자동 배정 없음)</b><div>최대 400개 문항만 조회합니다.</div>'+(matches.length?matches.map(p=>'<div>'+escapeHtml(p.id)+' · '+escapeHtml(p.unit||'')+' / '+escapeHtml(p.problemType||p.type||'')+'</div>').join(''):'일치하는 후보가 없습니다.');
+ }catch(e){console.error(e);box.textContent='검색 실패 · 데이터 변경 없음';}
+}
 function renderQuestionLearningSummary(){
   const questions=db.questions||[];
   const reviewed=questions.filter(q=>q.learningAnalysis?.classificationStatus==='reviewed');
@@ -5362,6 +5375,7 @@ function renderQnaDirector(){
   <p class="page-sub">모든 학생의 질문을 한 화면에서 확인하고 답변해주세요.</p>
   ${currentSubState.qnaStudentFilter?`<div style="margin-bottom:9px;">학생별 질문 필터 적용 중 <button class="btn sm outline" onclick="currentSubState.qnaStudentFilter='';render();">전체 학생 보기</button></div>`:''}
   ${renderQuestionLearningSummary()}
+  <div class="card"><b>재학습 후보 검색</b><select id="practiceStudent">${(db.students||[]).map(st=>'<option value="'+escapeHtml(st.id)+'">'+escapeHtml(st.name||st.id)+'</option>').join('')}</select><button class="btn sm outline" onclick="suggestReviewedPractice(document.getElementById('practiceStudent').value)">후보 검색</button><div id="practiceSuggestions"></div></div>
   <div class="tabs2">
     <button class="${filter==='pending'?'active':''}" onclick="currentSubState.qnaFilter='pending';render();">답변대기</button>
     <button class="${filter==='all'?'active':''}" onclick="currentSubState.qnaFilter='all';render();">전체</button>
