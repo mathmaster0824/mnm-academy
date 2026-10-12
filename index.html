@@ -4267,6 +4267,36 @@ function renderDonut(agg){
 }
 
 /* ---------------- 숙제 확인 게시판 (원장용, 전체 학생 한 화면) ---------------- */
+// 읽기 전용 긴급 점검: 학생별 문서 ID 기준 조회로 date 필드 누락도 탐지한다.
+async function auditRecentHomeworkByStudentIds(){
+  if(!session || session.mode!=='director') return;
+  const start=recentRecordStartISO();
+  const students=(db.students||[]).filter(x=>x && x.id && x.status!=='withdrawn');
+  currentSubState.hwAuditState='loading';
+  currentSubState.hwAuditResults=[];
+  render();
+  const results=[];
+  for(const student of students){
+    try{
+      const snap=await idRecentRangeQuery('submissions',student.id+'_',start).get();
+      let count=0,missingDate=0;
+      snap.docs.forEach(doc=>{
+        const data=doc.data();
+        const dateFromId=doc.id.slice(-10);
+        if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(dateFromId)) return;
+        count++;
+        if(!data.date || data.date!==dateFromId) missingDate++;
+        db.submissions[doc.id]=data;
+      });
+      results.push({name:student.name,id:student.id,count,missingDate});
+    }catch(e){
+      results.push({name:student.name,id:student.id,error:String(e?.message||e)});
+    }
+  }
+  currentSubState.hwAuditResults=results;
+  currentSubState.hwAuditState='done';
+  scheduleRender();
+}
 function renderHomeworkReview(){
   const filter = currentSubState.hwFilter || 'pending';
   const historyDate=currentSubState.hwHistoryDate||'';
@@ -4287,6 +4317,12 @@ function renderHomeworkReview(){
 
   return `
   <h1 class="page-title">숙제 확인</h1>
+  <div class="card" style="border:1px solid #e5dcc5;background:#fffaf0;">
+    <b>숙제 기록 긴급 점검 (읽기 전용)</b>
+    <p style="font-size:12px;">전체 학생의 최근 7일 문서를 학생 ID로 직접 조회합니다. 저장된 숙제는 수정하거나 삭제하지 않습니다.</p>
+    <button class="btn sm outline" ${currentSubState.hwAuditState==='loading'?'disabled':''} onclick="auditRecentHomeworkByStudentIds()">${currentSubState.hwAuditState==='loading'?'점검 중…':'전체 학생 기록 재조회'}</button>
+    ${currentSubState.hwAuditState==='done'?'<div style="font-size:12px;margin-top:8px;">'+(currentSubState.hwAuditResults||[]).map(r=>escapeHtml(r.name)+': '+(r.error?'조회 오류 '+escapeHtml(r.error):r.count+'건'+(r.missingDate?' · 날짜 필드 불일치 '+r.missingDate+'건':''))).join(' / ')+'</div>':''}
+  </div>
   ${homeworkRecentLoadState!=='ready' ? `<div class="card" style="border:2px solid #d8a245;background:#fff9e8;color:#674c16;">⚠ 숙제 데이터 ${homeworkRecentLoadState==='error'?'조회 실패':'불러오는 중'} · 현재 목록은 전체 기록이 아닐 수 있습니다. 미제출 판정을 보류하세요.</div>` : ''}
   <p class="page-sub">기본은 최근 7일 기록만 불러옵니다. 더 오래된 숙제는 필요한 날짜만 선택해서 조회하세요.</p>
   <div class="card" style="padding:12px 16px;">
