@@ -4909,6 +4909,9 @@ async function submitHomework(stuId,date){
   const {errorTypes: _legacyErrorTypes, ...submissionDraft} = draft || {};
   const payload = {
     ...submissionDraft,
+    // 문서 ID와 조회 인덱스가 항상 동일해야 원장 화면에서 누락되지 않는다.
+    studentId:stuId,
+    date:date,
     status:'대기',
     reviewCount:homeworkReviewCount(existing),
     reviewReason:'',
