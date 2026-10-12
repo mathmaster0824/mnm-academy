@@ -500,12 +500,16 @@ async function setClassDate(clsId,date){
   render();
 }
 
+let homeworkRecentLoadState='idle';
 function attachRoleListeners(){
   roleUnsubscribers.forEach(u=>{ try{ u(); }catch(e){} });
   roleUnsubscribers=[];
   if(!session) return;
 
   const isDirector=session.mode==='director';
+  const homeworkGeneration=(currentSubState._homeworkGeneration||0)+1;
+  currentSubState._homeworkGeneration=homeworkGeneration;
+  homeworkRecentLoadState=isDirector?'loading':'idle';
   const stuId=session.studentId||null;
   const stu=stuId?studentById(stuId):null;
   const resolvedClass=stuId?classForStudent(stuId):null;
@@ -540,11 +544,40 @@ function attachRoleListeners(){
       const recent={};
       snap.docs.forEach(d=>recent[d.id]=d.data());
       // 사용자가 직접 불러온 과거 날짜 데이터는 유지하고 최근 7일 부분만 교체.
-      Object.keys(db.submissions).forEach(k=>{
-        const d=db.submissions[k];
-        if(d?.date>=recentStart) delete db.submissions[k];
-      });
       Object.assign(db.submissions,recent);
+      // 기존 숙제에는 date 필드가 없을 수 있다. 학생 ID+날짜 문서로 보완 조회.
+      // 실시간 스냅샷 반복 갱신 시 같은 보완 작업을 중복 시작하지 않는다.
+      if(currentSubState._homeworkFallbackDate!==recentStart && currentSubState._homeworkFallbackLoading!==recentStart){
+        currentSubState._homeworkFallbackLoading=recentStart;
+        homeworkRecentLoadState='loading';
+        const ids=(db.students||[]).filter(x=>x && x.id && x.status!=='withdrawn')
+          .flatMap(x=>Array.from({length:RECENT_RECORD_DAYS},(_,i)=>x.id+'_'+dateDaysAgoISO(i)));
+        (async()=>{
+          try{
+            const fp=firebase.firestore.FieldPath.documentId();
+            for(let i=0;i<ids.length;i+=10){
+              const docs=await fsdb.collection('submissions').where(fp,'in',ids.slice(i,i+10)).get();
+              if(currentSubState._homeworkGeneration!==homeworkGeneration) return;
+              docs.docs.forEach(d=>{if(!db.submissions[d.id]) db.submissions[d.id]=d.data();});
+            }
+            if(currentSubState._homeworkGeneration!==homeworkGeneration) return;
+            currentSubState._homeworkFallbackDate=recentStart;
+            homeworkRecentLoadState='ready';
+          }catch(e){
+            if(currentSubState._homeworkGeneration!==homeworkGeneration) return;
+            console.error('[숙제 보완 조회 실패]',e);
+            homeworkRecentLoadState='error';
+            setConnStatus(false);
+          }finally{
+            if(currentSubState._homeworkGeneration===homeworkGeneration){
+              currentSubState._homeworkFallbackLoading=null;
+              scheduleRender();
+            }
+          }
+        })();
+      }else if(currentSubState._homeworkFallbackDate===recentStart){
+        homeworkRecentLoadState='ready';
+      }
       scheduleRender();
     },roleListenerError('submissions-recent')));
     // 오래된 건이라도 아직 검토대기라면 놓치지 않는다.
@@ -1613,7 +1646,7 @@ function renderDashboard(){
       });
     });
   });
-  const missingHwToday = homeworkRowsToday.filter(x=>x.submitted < x.total);
+  const missingHwToday = homeworkRecentLoadState==='ready' ? homeworkRowsToday.filter(x=>x.submitted < x.total) : [];
 
   // HOME 개입 필요 학생 = '원장이 실제 행동해야 하는 학생'만 노출한다.
   // SLOW/STOP은 학생 상세의 학습상태로 유지하되, 그것만으로 HOME 명단에 올리지는 않는다.
@@ -4053,8 +4086,12 @@ async function loadHomeworkReviewDate(date){
   if(!/^\d{4}-\d{2}-\d{2}$/.test(date||'')){ alert('날짜를 선택해주세요.'); return; }
   currentSubState.hwHistoryLoading=true; currentSubState.hwHistoryDate=date; render();
   try{
-    const snap=await fsdb.collection('submissions').where('date','==',date).get();
-    snap.docs.forEach(d=>{db.submissions[d.id]=d.data();});
+    const ids=(db.students||[]).filter(x=>x && x.id).map(x=>x.id+'_'+date);
+    const fp=firebase.firestore.FieldPath.documentId();
+    for(let i=0;i<ids.length;i+=10){
+      const snap=await fsdb.collection('submissions').where(fp,'in',ids.slice(i,i+10)).get();
+      snap.docs.forEach(d=>{db.submissions[d.id]=d.data();});
+    }
   }catch(e){
     console.error('[과거 숙제 조회]',e);
     alert('해당 날짜 숙제 기록을 불러오지 못했어요.');
@@ -4830,6 +4867,8 @@ async function submitHomework(stuId,date){
   const {errorTypes: _legacyErrorTypes, ...submissionDraft} = draft || {};
   const payload = {
     ...submissionDraft,
+    studentId:stuId,
+    date:date,
     status:'대기',
     reviewCount:homeworkReviewCount(existing),
     reviewReason:'',
@@ -4952,6 +4991,7 @@ function operationStartDateForStudent(stuId){
   return studentById(stuId)?.operationStartDate || '';
 }
 function currentMissedStreakForStudent(stuId){
+  if(session?.mode==='director' && homeworkRecentLoadState!=='ready') return 0;
   const start = operationStartDateForStudent(stuId);
   const rows = homeworkGlanceRowsForStudent(stuId, 30).filter(r=>!start || r.date>=start);
   let streak=0;
