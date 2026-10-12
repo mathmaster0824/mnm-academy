@@ -4097,8 +4097,15 @@ async function loadHomeworkReviewDate(date){
   if(!/^\d{4}-\d{2}-\d{2}$/.test(date||'')){ alert('날짜를 선택해주세요.'); return; }
   currentSubState.hwHistoryLoading=true; currentSubState.hwHistoryDate=date; render();
   try{
-    const snap=await fsdb.collection('submissions').where('date','==',date).get();
-    snap.docs.forEach(d=>{db.submissions[d.id]=d.data();});
+    // 과거 기록에는 date 필드가 없을 수 있으므로 문서 ID로 조회한다.
+    // 학생별 정확한 문서만 읽으며 기존 기록은 수정하지 않는다.
+    const students=(db.students||[]).filter(x=>x && x.id);
+    const ids=students.map(x=>x.id+'_'+date);
+    const fp=firebase.firestore.FieldPath.documentId();
+    for(let i=0;i<ids.length;i+=10){
+      const snap=await fsdb.collection('submissions').where(fp,'in',ids.slice(i,i+10)).get();
+      snap.docs.forEach(d=>{db.submissions[d.id]=d.data();});
+    }
   }catch(e){
     console.error('[과거 숙제 조회]',e);
     alert('해당 날짜 숙제 기록을 불러오지 못했어요.');
