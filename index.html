@@ -4283,7 +4283,7 @@ async function auditRecentHomeworkByStudentIds(){
       snap.docs.forEach(doc=>{
         const data=doc.data();
         const dateFromId=doc.id.slice(-10);
-        if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(dateFromId)) return;
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(dateFromId)) return;
         count++;
         if(!data.date || data.date!==dateFromId) missingDate++;
         db.submissions[doc.id]=data;
