@@ -550,8 +550,11 @@ function attachRoleListeners(){
       Object.assign(db.submissions,recent);
       // 최근 조회가 성공했어도 레거시 문서의 date 필드 누락 가능성이 있다.
       // 자동 보완 조회 완료 전에는 미제출 판정을 보류한다.
-      if(!currentSubState._legacyHwCheckedFor || currentSubState._legacyHwCheckedFor!==recentStart){
+      if(currentSubState._legacyHwCheckingFor===recentStart){
         homeworkRecentLoadState='loading';
+      }else if(currentSubState._legacyHwCheckedFor!==recentStart){
+        homeworkRecentLoadState='loading';
+        currentSubState._legacyHwCheckingFor=recentStart;
         const ids=(db.students||[]).filter(x=>x && x.id && x.status!=='withdrawn')
           .flatMap(x=>Array.from({length:RECENT_RECORD_DAYS},(_,i)=>x.id+'_'+dateDaysAgoISO(i)));
         const fp=firebase.firestore.FieldPath.documentId();
@@ -571,6 +574,7 @@ function attachRoleListeners(){
             homeworkRecentLoadState='error';
             setConnStatus(false);
           }
+          currentSubState._legacyHwCheckingFor=null;
           scheduleRender();
         })();
       }else{
