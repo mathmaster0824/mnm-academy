@@ -500,12 +500,31 @@ async function setClassDate(clsId,date){
   render();
 }
 
+// 2026-10-12 숙제 조회 상태: 원장 화면에서 "조회 누락"과 "실제 미제출"을 구분하기 위한 상태.
+// currentSubState는 화면 이동(goto)마다 초기화되므로 여기에 두면 안 된다 → 모듈 변수로 관리.
+let homeworkLoadGen=0;                 // 로그인/계정전환마다 증가. 이전 세션의 비동기 결과 폐기용
+let homeworkRecentLoadState='idle';    // 원장: loading | ready | error
+let homeworkRecentStart='';
+const homeworkKnownDates=new Set();    // 원장이 "이 날짜 불러오기"로 전체 학생을 조회한 날짜
+const homeworkKnownStudents=new Set(); // 원장이 학생 상세에서 전체 기록을 조회한 학생
+// 해당 날짜(·학생)의 숙제 기록을 서버에서 확실히 조회했는지. 모르면 미제출로 판정하지 않는다.
+function homeworkRecordKnown(date, stuId){
+  if(!session || session.mode!=='director') return true;
+  if(!date || isLegacyHomeworkDate(date)) return true;
+  if(stuId && homeworkKnownStudents.has(stuId)) return true;
+  if(homeworkKnownDates.has(date)) return true;
+  return homeworkRecentLoadState==='ready' && !!homeworkRecentStart && date>=homeworkRecentStart;
+}
+function submissionDocKeyDate(key){ const i=String(key||'').lastIndexOf('_'); return i>=0?String(key).slice(i+1):''; }
 function attachRoleListeners(){
   roleUnsubscribers.forEach(u=>{ try{ u(); }catch(e){} });
   roleUnsubscribers=[];
   if(!session) return;
 
   const isDirector=session.mode==='director';
+  const hwGen=++homeworkLoadGen;
+  homeworkRecentLoadState=isDirector?'loading':'idle';
+  homeworkKnownDates.clear(); homeworkKnownStudents.clear();
   const stuId=session.studentId||null;
   const stu=stuId?studentById(stuId):null;
   const resolvedClass=stuId?classForStudent(stuId):null;
@@ -535,26 +554,65 @@ function attachRoleListeners(){
   // 숙제: 원장은 학생별 N개 리스너 대신 최근 7일 전체를 단일 쿼리로 구독한다.
   db.submissions={};
   if(isDirector){
+    homeworkRecentStart=recentStart;
+    let dateQueryReady=false, idQueryReady=false;
+    const markHomeworkReady=()=>{
+      if(hwGen!==homeworkLoadGen) return;
+      if(dateQueryReady && idQueryReady && homeworkRecentLoadState!=='error') homeworkRecentLoadState='ready';
+      scheduleRender();
+    };
+    const markHomeworkError=(where,e)=>{
+      if(hwGen!==homeworkLoadGen) return;
+      console.error('[숙제 조회 실패]',where,e);
+      homeworkRecentLoadState='error';
+      setConnStatus(false);
+      scheduleRender();
+    };
+    // (1) date 필드가 있는 최근 기록: 실시간 구독
     const q=fsdb.collection('submissions').where('date','>=',recentStart);
-    subs.push(q.onSnapshot(snap=>{
+    subs.push(q.onSnapshot({includeMetadataChanges:true},snap=>{
+      if(hwGen!==homeworkLoadGen) return;
       const recent={};
       snap.docs.forEach(d=>recent[d.id]=d.data());
-      // 사용자가 직접 불러온 과거 날짜 데이터는 유지하고 최근 7일 부분만 교체.
+      // date 필드가 있는 최근 문서만 교체한다. date 필드가 없는 기존 문서(보완 조회분)와
+      // 원장이 직접 불러온 과거 날짜 데이터는 지우지 않는다.
       Object.keys(db.submissions).forEach(k=>{
         const d=db.submissions[k];
-        if(d?.date>=recentStart) delete db.submissions[k];
+        if(d && d.date && d.date>=recentStart && !recent[k]) delete db.submissions[k];
       });
       Object.assign(db.submissions,recent);
-      scheduleRender();
-    },roleListenerError('submissions-recent')));
+      if(!snap.metadata.fromCache){ dateQueryReady=true; markHomeworkReady(); }
+      else scheduleRender();
+    },e=>{ roleListenerError('submissions-recent')(e); markHomeworkError('submissions-recent',e); }));
+    // (2) date 필드가 없는 기존 기록 보완: 문서 ID(학생ID_날짜) 범위로 학생별 1회 조회.
+    //     로그인(세션)마다 1번만 실행되며, 실시간 스냅샷 반복과 무관하다.
+    (async()=>{
+      try{
+        const students=(db.students||[]).filter(x=>x && x.id);
+        if(!students.length) throw new Error('학생 목록이 아직 로드되지 않았습니다.');
+        let cursor=0;
+        const worker=async()=>{
+          while(cursor<students.length){
+            const sid=students[cursor++].id;
+            const snap=await idRecentRangeQuery('submissions',sid+'_',recentStart).get({source:'server'});
+            if(hwGen!==homeworkLoadGen) return;
+            snap.docs.forEach(d=>{ if(!db.submissions[d.id]) db.submissions[d.id]=d.data(); });
+          }
+        };
+        await Promise.all(Array.from({length:Math.min(6,students.length)},worker));
+        if(hwGen!==homeworkLoadGen) return;
+        idQueryReady=true; markHomeworkReady();
+      }catch(e){ markHomeworkError('submissions-id-fallback',e); }
+    })();
     // 오래된 건이라도 아직 검토대기라면 놓치지 않는다.
     let pendingIds=new Set();
     subs.push(fsdb.collection('submissions').where('status','==','대기').onSnapshot(snap=>{
+      if(hwGen!==homeworkLoadGen) return;
       const next=new Set(snap.docs.map(d=>d.id));
       pendingIds.forEach(id=>{
         if(next.has(id)) return;
         const row=db.submissions[id];
-        if(row?.date<recentStart) delete db.submissions[id];
+        if((row?.date||submissionDocKeyDate(id))<recentStart) delete db.submissions[id];
       });
       snap.docs.forEach(d=>db.submissions[d.id]=d.data());
       pendingIds=next; scheduleRender();
@@ -715,6 +773,7 @@ function tryStudentLogin(){
 }
 function saveSessionLocal(){ try{ localStorage.setItem('mnm_session', JSON.stringify(session)); }catch(e){} }
 function logout(){
+  homeworkLoadGen++; homeworkRecentLoadState='idle'; homeworkKnownDates.clear(); homeworkKnownStudents.clear();
   roleUnsubscribers.forEach(u=>{ try{ u(); }catch(e){} });
   roleUnsubscribers = [];
   clearViewListeners();
@@ -783,10 +842,11 @@ function submissionIsFinalRejected(sub){
   - 1·2차 불합격은 재제출 가능 상태, 3차 불합격만 최종 미이행으로 확정.
 */
 
-function homeworkEffectiveState(sub,date){
+function homeworkEffectiveState(sub,date,stuId){
   // 리스타트 기준일 이전은 제출 유무와 무관하게 무조건 '인정'으로 취급한다.
   if(isLegacyHomeworkDate(date)) return 'approved';
-  if(!sub) return (date < todayISO()) ? 'missing' : 'open';
+  // 기록이 없더라도 서버 조회가 끝나지 않았거나 조회 범위 밖이면 '미제출'로 단정하지 않는다.
+  if(!sub) return (date < todayISO()) ? (homeworkRecordKnown(date,stuId) ? 'missing' : 'unknown') : 'open';
   if(submissionIsApproved(sub,date)) return 'approved';
   if(submissionIsFinalRejected(sub)) return 'finalRejected';
   return submissionReviewState(sub,date); // 'pending' 또는 'rejected'
@@ -799,10 +859,10 @@ function homeworkCountsAsCompleted(sub,date){
   // 최종 인정 여부는 선생님의 판정이 우선한다.
   return submissionIsApproved(sub,date);
 }
-function homeworkCountsAsMissed(sub,date){
+function homeworkCountsAsMissed(sub,date,stuId){
   // 리스타트 기준일 이전은 제출 유무와 무관하게 무조건 미이행이 아니라고 취급한다.
   if(isLegacyHomeworkDate(date)) return false;
-  if(!sub) return date < todayISO();
+  if(!sub) return date < todayISO() && homeworkRecordKnown(date,stuId);
 
   // 선생님이 인정한 기록은 어떤 경우에도 미이행/경고 대상으로 되돌리지 않는다.
   if(submissionIsApproved(sub,date)) return false;
@@ -811,12 +871,12 @@ function homeworkCountsAsMissed(sub,date){
   // 1·2차 불합격(재제출 가능)이나 검토대기는 아직 미이행으로 확정하지 않는다.
   return false;
 }
-function submissionReviewState(sub,date){
+function submissionReviewState(sub,date,stuId){
   const recordDate = date || (sub && sub.date) || '';
   // 리스타트 기준일 이전은 제출 유무와 무관하게 무조건 보호(인정)한다.
   // (카톡 등 앱 밖으로 제출해서 Firestore에 기록 자체가 없는 날도 여기 해당됨 — 2026-09-07 리스타트)
   if(isLegacyHomeworkDate(recordDate)) return 'approved';
-  if(!sub) return 'missing';
+  if(!sub) return homeworkRecordKnown(recordDate,stuId) ? 'missing' : 'unknown';
   const status = String(sub.status||'').trim();
   if(!status) return 'approved'; // 기존 레거시 제출 보호
   if(status==='확인' || status==='approved') return 'approved';
@@ -828,12 +888,14 @@ function submissionIsApproved(sub,date){ return submissionReviewState(sub,date)=
 function submissionIsPending(sub,date){ return submissionReviewState(sub,date)==='pending'; }
 function submissionIsRejected(sub,date){ return submissionReviewState(sub,date)==='rejected'; }
 
-function homeworkReviewMark(sub,date){
-  const eff=homeworkEffectiveState(sub,date);
+function homeworkReviewMark(sub,date,stuId){
+  const eff=homeworkEffectiveState(sub,date,stuId);
+  if(eff==='unknown') return '…';
   return eff==='approved' ? '○' : (eff==='pending'||eff==='needsRevision') ? '△' : '×';
 }
-function homeworkReviewLabel(sub,date){
-  const eff=homeworkEffectiveState(sub,date);
+function homeworkReviewLabel(sub,date,stuId){
+  const eff=homeworkEffectiveState(sub,date,stuId);
+  if(eff==='unknown') return '조회 중';
   if(eff==='approved') return '인정';
   if(eff==='pending') return '검토대기';
   if(eff==='needsRevision') return '수정필요';
@@ -883,14 +945,15 @@ function homeworkStatusRowsForStudent(stuId){
       // 아직 지나지 않은 날짜(오늘 포함)는 미제출로 확정하지 않는다.
       if(d >= today) continue;
       const sub = db.submissions[stuId+'_'+d];
-      const reviewState = submissionReviewState(sub,d);
-      const effectiveState = homeworkEffectiveState(sub,d);
+      const reviewState = submissionReviewState(sub,d,stuId);
+      const effectiveState = homeworkEffectiveState(sub,d,stuId);
       if(!byDate.has(d)) byDate.set(d,{
         date:d,
         submitted:effectiveState==='approved',
         pending:effectiveState==='pending' || effectiveState==='needsRevision',
         rejected:reviewState==='rejected',
         missed:effectiveState==='missing' || effectiveState==='finalRejected',
+        unknown:effectiveState==='unknown',
         reviewState,
         effectiveState,
         assessedLessonDate:l.date,
@@ -1600,7 +1663,7 @@ function renderDashboard(){
       if(!range.length) return;
       const days = range.map(d=>{
         const sub=db.submissions[s.id+'_'+d];
-        return {date:d, sub, approved:homeworkCountsAsCompleted(sub,d), state:homeworkEffectiveState(sub,d)};
+        return {date:d, sub, approved:homeworkCountsAsCompleted(sub,d), state:homeworkEffectiveState(sub,d,s.id)};
       });
       const submittedCount = days.filter(x=>x.approved).length;
       homeworkRowsToday.push({
@@ -1613,14 +1676,17 @@ function renderDashboard(){
       });
     });
   });
-  const missingHwToday = homeworkRowsToday.filter(x=>x.submitted < x.total);
+  // 조회가 끝나지 않은 날짜(unknown)가 있는 학생은 미제출 명단에 올리지 않는다.
+  const missingHwToday = homeworkRowsToday.filter(x=>x.submitted < x.total && !x.days.some(d=>d.state==='unknown'));
 
   // HOME 개입 필요 학생 = '원장이 실제 행동해야 하는 학생'만 노출한다.
   // SLOW/STOP은 학생 상세의 학습상태로 유지하되, 그것만으로 HOME 명단에 올리지는 않는다.
   const currentMonth = today.slice(0,7);
-  const monthlyFailCount = (studentId) => Object.values(db.submissions||{}).filter(sub=>
-    sub && sub.studentId===studentId && String(sub.date||'').startsWith(currentMonth) && submissionIsRejected(sub,sub.date)
-  ).length;
+  // 기존 문서에는 studentId/date 필드가 없을 수 있으므로 문서 ID(학생ID_날짜)로 판정한다.
+  const monthlyFailCount = (studentId) => Object.entries(db.submissions||{}).filter(([key,sub])=>{
+    const d=sub?.date||submissionDocKeyDate(key);
+    return sub && key.startsWith(studentId+'_') && String(d).startsWith(currentMonth) && submissionIsRejected(sub,d);
+  }).length;
   // HOME 개입 명단은 '오늘 실제 수업하는 학생'으로만 한정한다.
   // 전체 재원생의 개입 상태는 보존하되, 수업일이 아닌 학생은 오늘 HOME에 노출하지 않는다.
   const todayStudentIds = new Set(todaysClasses.flatMap(c=>c.studentIds||[]));
@@ -1698,15 +1764,15 @@ function renderDashboard(){
               const dt=new Date(day.date+'T00:00:00');
               const wd=['일','월','화','수','목','금','토'][dt.getDay()];
               const label=`${dt.getMonth()+1}/${dt.getDate()}(${wd})`;
-              const mark=homeworkReviewMark(day.sub,day.date);
+              const mark=homeworkReviewMark(day.sub,day.date,x.studentId);
               const state=day.state;
-              const border=state==='approved'?'#bfe3c6':state==='pending'?'#ead89a':'#f3c5c0';
-              const bg=state==='approved'?'#f0faf2':state==='pending'?'#fff9e8':'#fff3f1';
-              const color=state==='approved'?'#2c7a3d':state==='pending'?'#9a6b16':'#c94236';
-              return `<span title="${label} ${homeworkReviewLabel(day.sub,day.date)}" style="display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border-radius:999px;border:1px solid ${border};background:${bg};color:${color};font-size:12px;font-weight:700;white-space:nowrap;">${mark} ${label}</span>`;
+              const border=state==='approved'?'#bfe3c6':state==='pending'?'#ead89a':state==='unknown'?'#dcd8cc':'#f3c5c0';
+              const bg=state==='approved'?'#f0faf2':state==='pending'?'#fff9e8':state==='unknown'?'#f6f4ec':'#fff3f1';
+              const color=state==='approved'?'#2c7a3d':state==='pending'?'#9a6b16':state==='unknown'?'#8a8674':'#c94236';
+              return `<span title="${label} ${homeworkReviewLabel(day.sub,day.date,x.studentId)}" style="display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border-radius:999px;border:1px solid ${border};background:${bg};color:${color};font-size:12px;font-weight:700;white-space:nowrap;">${mark} ${label}</span>`;
             }).join('')}
           </div>
-          <span class="badge ${x.submitted===x.total?'green':'red'}" style="white-space:nowrap;">${x.submitted}/${x.total} 인정</span>
+          <span class="badge ${x.submitted===x.total?'green':x.days.some(d=>d.state==='unknown')?'gray':'red'}" style="white-space:nowrap;">${x.submitted}/${x.total} 인정${x.days.some(d=>d.state==='unknown')?' · 조회 중':''}</span>
         </div>
       </div>`).join('')}
     </div>` : `<div class="empty" style="padding:16px;">표시할 숙제 검사기간이 없어요.</div>`}
@@ -2420,9 +2486,9 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames, focusRecommended=f
   const dayChecklist = hwDateRange.map(d=>{
     const daySub = db.submissions[s.id+'_'+d];
     const dowKey = DAY_KEYS[new Date(d+'T00:00:00').getDay()];
-    const st = submissionReviewState(daySub,d);
-    const cls2 = st==='approved' ? 'green' : st==='pending' ? 'yellow' : 'red';
-    return `<span class="badge ${cls2}" title="${homeworkReviewLabel(daySub,d)}" style="margin:2px 3px 0 0;font-size:9px;padding:2px 6px;">${DAY_LABEL[dowKey]} ${homeworkReviewMark(daySub,d)}</span>`;
+    const st = submissionReviewState(daySub,d,s.id);
+    const cls2 = st==='approved' ? 'green' : st==='pending' ? 'yellow' : st==='unknown' ? 'gray' : 'red';
+    return `<span class="badge ${cls2}" title="${homeworkReviewLabel(daySub,d,s.id)}" style="margin:2px 3px 0 0;font-size:9px;padding:2px 6px;">${DAY_LABEL[dowKey]} ${homeworkReviewMark(daySub,d,s.id)}</span>`;
   }).join('');
   const submittedCount = hwDateRange.filter(d=>homeworkCountsAsCompleted(db.submissions[s.id+'_'+d],d)).length;
   const totalRangeDays = hwDateRange.length;
@@ -4008,7 +4074,12 @@ async function openStudentDetail(stuId){
     if(stu?.classId){
       jobs.push(idRangeQuery('classRecords',stu.classId+'_').get().then(snap=>{ snap.docs.forEach(d=>{ db.classRecords[d.id]=d.data(); }); }));
     }
-    jobs.push(idRangeQuery('submissions',stuId+'_').get().then(snap=>{ snap.docs.forEach(d=>{ db.submissions[d.id]=d.data(); }); }));
+    const detailGen=homeworkLoadGen;
+    jobs.push(idRangeQuery('submissions',stuId+'_').get().then(snap=>{
+      if(detailGen!==homeworkLoadGen) return;
+      snap.docs.forEach(d=>{ db.submissions[d.id]=d.data(); });
+      if(!snap.metadata.fromCache) homeworkKnownStudents.add(stuId);
+    }));
     await Promise.all(jobs);
     currentSubState.studentHistoryLoaded=stuId;
   }catch(e){
@@ -4052,9 +4123,21 @@ async function loadStudentHistoryDate(stuId,date){
 async function loadHomeworkReviewDate(date){
   if(!/^\d{4}-\d{2}-\d{2}$/.test(date||'')){ alert('날짜를 선택해주세요.'); return; }
   currentSubState.hwHistoryLoading=true; currentSubState.hwHistoryDate=date; render();
+  const gen=homeworkLoadGen;
   try{
-    const snap=await fsdb.collection('submissions').where('date','==',date).get();
-    snap.docs.forEach(d=>{db.submissions[d.id]=d.data();});
+    // (1) date 필드가 있는 문서 + (2) date 필드가 없는 기존 문서(문서ID=학생ID_날짜)를 모두 조회한다.
+    const found={};
+    const byField=await fsdb.collection('submissions').where('date','==',date).get({source:'server'});
+    byField.docs.forEach(d=>{found[d.id]=d.data();});
+    const ids=(db.students||[]).filter(x=>x && x.id).map(x=>x.id+'_'+date);
+    const fp=firebase.firestore.FieldPath.documentId();
+    for(let i=0;i<ids.length;i+=10){
+      const snap=await fsdb.collection('submissions').where(fp,'in',ids.slice(i,i+10)).get({source:'server'});
+      snap.docs.forEach(d=>{found[d.id]=d.data();});
+    }
+    if(gen!==homeworkLoadGen) return;
+    Object.assign(db.submissions,found);
+    homeworkKnownDates.add(date);
   }catch(e){
     console.error('[과거 숙제 조회]',e);
     alert('해당 날짜 숙제 기록을 불러오지 못했어요.');
@@ -4423,6 +4506,11 @@ async function applyHomeworkReviewPatch(stuId,date,patch,btn){
   const before=db.submissions[key];
   if(!before) return false;
 
+  // 기존 문서에 studentId/date 필드가 없으면 판정 저장 때 함께 기록한다(문서 ID에서 유도한 값).
+  // → 이후 원장 화면의 최근 숙제 실시간 조회에서 누락되지 않는다. 기존 사진·필드는 건드리지 않는다.
+  patch={...patch};
+  if(!before.studentId) patch.studentId=stuId;
+  if(!before.date) patch.date=date;
   // 운영 화면은 서버 왕복을 기다리지 않는다.
   // 먼저 로컬 상태를 반영하고, 저장 실패시에만 원상복구한다.
   db.submissions[key]={...before,...patch};
@@ -4822,6 +4910,12 @@ async function submitHomework(stuId,date){
     return;
   }
 
+  // 입력 화면 상태가 없으면 제출하지 않는다(빈 내용으로 기존 사진을 덮어쓰는 사고 방지).
+  if(!draft || currentSubState._draftSubKey!==key){
+    alert('숙제 입력 화면을 다시 열어주세요. 첨부한 사진은 지워지지 않았어요.');
+    render();
+    return;
+  }
   const nowIso = new Date().toISOString();
   if(draft){
     draft.hwPhotos=dedupeHomeworkPhotos(draft.hwPhotos||[]);
@@ -4830,6 +4924,8 @@ async function submitHomework(stuId,date){
   const {errorTypes: _legacyErrorTypes, ...submissionDraft} = draft || {};
   const payload = {
     ...submissionDraft,
+    studentId:stuId,
+    date:date,
     status:'대기',
     reviewCount:homeworkReviewCount(existing),
     reviewReason:'',
@@ -4938,7 +5034,7 @@ function homeworkGlanceRowsForStudent(stuId, limitDays){
   for(const l of lessons){
     for(const d of homeworkDateRangeDates(l.dayGroup,l.date)){
       const sub = db.submissions[stuId+'_'+d];
-      byDate.set(d, {state: homeworkEffectiveState(sub, d), clsId: l.clsId});
+      byDate.set(d, {state: homeworkEffectiveState(sub, d, stuId), clsId: l.clsId});
     }
   }
   const dates = [...byDate.keys()].sort();
@@ -4964,8 +5060,8 @@ function currentMissedStreakForStudent(stuId){
 }
 function renderHomeworkGlanceForWarning(stuId){
   const rows = homeworkGlanceRowsForStudent(stuId, 14);
-  const labelFor = st => ({approved:'인정', pending:'검토대기', rejected:'불합격(재제출)', finalRejected:'최종불합격', missing:'미제출', open:'대기중'}[st] || st);
-  const colorFor = st => ({approved:'green', pending:'yellow', rejected:'yellow', finalRejected:'red', missing:'red', open:'gray'}[st] || 'gray');
+  const labelFor = st => ({approved:'인정', pending:'검토대기', rejected:'불합격(재제출)', finalRejected:'최종불합격', missing:'미제출', open:'대기중', unknown:'조회 전'}[st] || st);
+  const colorFor = st => ({approved:'green', pending:'yellow', rejected:'yellow', finalRejected:'red', missing:'red', open:'gray', unknown:'gray'}[st] || 'gray');
   const missedStreak = currentMissedStreakForStudent(stuId);
   return `
   <div class="card">
@@ -5415,7 +5511,7 @@ function finalAuditRowForStudent(stu){
   const assessRows = homeworkStatusRowsForStudent(sid)||[];
   const submitted = assessRows.filter(r=>r.submitted).length;
   const pendingHomework = assessRows.filter(r=>r.pending).length;
-  const missed = assessRows.filter(r=>!r.submitted && !r.pending).length;
+  const missed = assessRows.filter(r=>!r.submitted && !r.pending && !r.unknown).length;
 
   // 2026-09-02부터 경고는 관리자가 수동으로만 입력하며, type:'homework3days' 표시를 달지 않는다.
   // (그 표시는 이제 중단된 옛 자동경고 시스템 전용이었음.) 그래서 실제 화면에 보이는 경고 횟수와
@@ -6327,7 +6423,7 @@ function buildMonthlyReportText(stuId, traffic, comment){
   const assessRows = (homeworkStatusRowsForStudent(stuId)||[]).filter(r=>r.date.startsWith(ym));
   const submittedCount = assessRows.filter(r=>r.submitted).length;
   const pendingCount = assessRows.filter(r=>r.pending).length;
-  const missedCount = assessRows.filter(r=>!r.submitted && !r.pending).length;
+  const missedCount = assessRows.filter(r=>!r.submitted && !r.pending && !r.unknown).length;
   const totalAssess = assessRows.length;
   const decidedCount = submittedCount + missedCount;
   const submitRate = decidedCount ? Math.round(submittedCount/decidedCount*100) : null;
