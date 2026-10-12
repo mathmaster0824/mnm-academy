@@ -548,7 +548,34 @@ function attachRoleListeners(){
         if(d?.date>=recentStart) delete db.submissions[k];
       });
       Object.assign(db.submissions,recent);
-      homeworkRecentLoadState = 'ready';
+      // 최근 조회가 성공했어도 레거시 문서의 date 필드 누락 가능성이 있다.
+      // 자동 보완 조회 완료 전에는 미제출 판정을 보류한다.
+      if(!currentSubState._legacyHwCheckedFor || currentSubState._legacyHwCheckedFor!==recentStart){
+        homeworkRecentLoadState='loading';
+        const ids=(db.students||[]).filter(x=>x && x.id && x.status!=='withdrawn')
+          .flatMap(x=>Array.from({length:RECENT_RECORD_DAYS},(_,i)=>x.id+'_'+dateDaysAgoISO(i)));
+        const fp=firebase.firestore.FieldPath.documentId();
+        (async()=>{
+          try{
+            for(let i=0;i<ids.length;i+=10){
+              const docs=await fsdb.collection('submissions').where(fp,'in',ids.slice(i,i+10)).get();
+              docs.docs.forEach(doc=>{
+                // 실시간 리스너의 최신 값은 덮어쓰지 않는다.
+                if(!db.submissions[doc.id]) db.submissions[doc.id]=doc.data();
+              });
+            }
+            currentSubState._legacyHwCheckedFor=recentStart;
+            homeworkRecentLoadState='ready';
+          }catch(e){
+            console.error('[숙제 레거시 조회 오류]',e);
+            homeworkRecentLoadState='error';
+            setConnStatus(false);
+          }
+          scheduleRender();
+        })();
+      }else{
+        homeworkRecentLoadState='ready';
+      }
       scheduleRender();
     },err=>{ homeworkRecentLoadState='error'; scheduleRender(); roleListenerError('submissions-recent')(err); }));
     // 오래된 건이라도 아직 검토대기라면 놓치지 않는다.
