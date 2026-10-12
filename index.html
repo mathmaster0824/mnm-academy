@@ -545,7 +545,7 @@ function attachRoleListeners(){
       // 사용자가 직접 불러온 과거 날짜 데이터는 유지하고 최근 7일 부분만 교체.
       Object.keys(db.submissions).forEach(k=>{
         const d=db.submissions[k];
-        if(d?.date>=recentStart) delete db.submissions[k];
+        if((d?.date||k.slice(-10))>=recentStart && recent[k]) delete db.submissions[k];
       });
       Object.assign(db.submissions,recent);
       // 최근 조회가 성공했어도 레거시 문서의 date 필드 누락 가능성이 있다.
@@ -589,7 +589,7 @@ function attachRoleListeners(){
       pendingIds.forEach(id=>{
         if(next.has(id)) return;
         const row=db.submissions[id];
-        if(row?.date<recentStart) delete db.submissions[id];
+        if((row?.date||id.slice(-10))<recentStart) delete db.submissions[id];
       });
       snap.docs.forEach(d=>db.submissions[d.id]=d.data());
       pendingIds=next; scheduleRender();
