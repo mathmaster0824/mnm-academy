@@ -5031,6 +5031,7 @@ function operationStartDateForStudent(stuId){
   return studentById(stuId)?.operationStartDate || '';
 }
 function currentMissedStreakForStudent(stuId){
+  if(session?.mode==='director' && homeworkRecentLoadState!=='ready') return 0;
   const start = operationStartDateForStudent(stuId);
   const rows = homeworkGlanceRowsForStudent(stuId, 30).filter(r=>!start || r.date>=start);
   let streak=0;
@@ -5048,6 +5049,7 @@ function renderHomeworkGlanceForWarning(stuId){
   const missedStreak = currentMissedStreakForStudent(stuId);
   return `
   <div class="card">
+    ${homeworkRecentLoadState!=='ready' ? '<div style="color:#98651d;font-size:12px;">숙제 조회 미완료 · 미제출 판정 보류</div>' : ''}
     <div class="row between"><h3 style="margin:0;">📋 최근 숙제 제출 현황 (경고 판단용)</h3>${missedStreak>=3?`<span class="badge red">최근 ${missedStreak}일 연속 미이행</span>`:''}</div>
     ${rows.length ? `<table style="margin-top:8px;">
       <tr><th style="width:70px;">날짜</th><th style="width:90px;">상태</th><th>그날 숙제 내용</th></tr>
