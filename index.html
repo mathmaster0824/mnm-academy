@@ -500,6 +500,7 @@ async function setClassDate(clsId,date){
   render();
 }
 
+let homeworkRecentLoadState = 'idle';
 function attachRoleListeners(){
   roleUnsubscribers.forEach(u=>{ try{ u(); }catch(e){} });
   roleUnsubscribers=[];
@@ -511,6 +512,8 @@ function attachRoleListeners(){
   const resolvedClass=stuId?classForStudent(stuId):null;
   const clsId=resolvedClass?resolvedClass.id:(stu?stu.classId:null);
   const subs=[];
+  // 숙제 조회 완료 전에는 '미제출'로 단정하지 않는다.
+  homeworkRecentLoadState = isDirector ? 'loading' : 'idle';
   const recentStart=recentRecordStartISO();
   const currentWeek=weekStartISO(todayISO());
 
@@ -545,8 +548,9 @@ function attachRoleListeners(){
         if(d?.date>=recentStart) delete db.submissions[k];
       });
       Object.assign(db.submissions,recent);
+      homeworkRecentLoadState = 'ready';
       scheduleRender();
-    },roleListenerError('submissions-recent')));
+    },err=>{ homeworkRecentLoadState='error'; scheduleRender(); roleListenerError('submissions-recent')(err); }));
     // 오래된 건이라도 아직 검토대기라면 놓치지 않는다.
     let pendingIds=new Set();
     subs.push(fsdb.collection('submissions').where('status','==','대기').onSnapshot(snap=>{
@@ -1595,7 +1599,7 @@ function renderDashboard(){
       });
     });
   });
-  const missingHwToday = homeworkRowsToday.filter(x=>x.submitted < x.total);
+  const missingHwToday = homeworkRecentLoadState==='ready' ? homeworkRowsToday.filter(x=>x.submitted < x.total) : [];
 
   // HOME 개입 필요 학생 = '원장이 실제 행동해야 하는 학생'만 노출한다.
   // SLOW/STOP은 학생 상세의 학습상태로 유지하되, 그것만으로 HOME 명단에 올리지는 않는다.
@@ -4283,6 +4287,7 @@ function renderHomeworkReview(){
 
   return `
   <h1 class="page-title">숙제 확인</h1>
+  ${homeworkRecentLoadState!=='ready' ? `<div class="card" style="border:2px solid #d8a245;background:#fff9e8;color:#674c16;">⚠ 숙제 데이터 ${homeworkRecentLoadState==='error'?'조회 실패':'불러오는 중'} · 현재 목록은 전체 기록이 아닐 수 있습니다. 미제출 판정을 보류하세요.</div>` : ''}
   <p class="page-sub">기본은 최근 7일 기록만 불러옵니다. 더 오래된 숙제는 필요한 날짜만 선택해서 조회하세요.</p>
   <div class="card" style="padding:12px 16px;">
     <div class="row between" style="gap:10px;flex-wrap:wrap;">
