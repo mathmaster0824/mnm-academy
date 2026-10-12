@@ -535,6 +535,11 @@ function attachRoleListeners(){
       .then(snap=>snap.docs.forEach(d=>{db.fridaySupp[d.id]=d.data();}))
   ])).then(()=>scheduleRender()).catch(e=>console.error('[최근 7일 수업기록 조회]',e));
 
+  // 로그인 전환 시 이전 비동기 조회 결과를 무효화한다.
+  const homeworkLoadGeneration=(currentSubState._homeworkLoadGeneration||0)+1;
+  currentSubState._homeworkLoadGeneration=homeworkLoadGeneration;
+  currentSubState._legacyHwCheckedFor=null;
+  currentSubState._legacyHwCheckingFor=null;
   // 숙제: 원장은 학생별 N개 리스너 대신 최근 7일 전체를 단일 쿼리로 구독한다.
   db.submissions={};
   if(isDirector){
@@ -562,11 +567,13 @@ function attachRoleListeners(){
           try{
             for(let i=0;i<ids.length;i+=10){
               const docs=await fsdb.collection('submissions').where(fp,'in',ids.slice(i,i+10)).get();
+              if(currentSubState._homeworkLoadGeneration!==homeworkLoadGeneration) return;
               docs.docs.forEach(doc=>{
                 // 실시간 리스너의 최신 값은 덮어쓰지 않는다.
                 if(!db.submissions[doc.id]) db.submissions[doc.id]=doc.data();
               });
             }
+            if(currentSubState._homeworkLoadGeneration!==homeworkLoadGeneration) return;
             currentSubState._legacyHwCheckedFor=recentStart;
             homeworkRecentLoadState='ready';
           }catch(e){
@@ -574,6 +581,7 @@ function attachRoleListeners(){
             homeworkRecentLoadState='error';
             setConnStatus(false);
           }
+          if(currentSubState._homeworkLoadGeneration!==homeworkLoadGeneration) return;
           currentSubState._legacyHwCheckingFor=null;
           scheduleRender();
         })();
