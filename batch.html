@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M&m 촬영 목록 업로드</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap');
+  :root{
+    --navy:#141B2E; --navy2:#1D2A44; --gold:#C9A24B; --gold-l:#E8CE8B;
+    --ink:#1A1D26; --paper:#F7F5F0; --line:#E4DFD3; --green:#3EA55A; --red:#D65A4A;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Noto Sans KR',sans-serif;background:var(--paper);color:var(--ink);padding:16px;padding-bottom:120px;}
+  h1{font-size:20px;color:var(--navy);margin:0 0 4px;}
+  .sub{color:#8a8674;font-size:13px;margin-bottom:20px;line-height:1.6;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:16px;}
+  label{display:block;font-weight:600;font-size:13px;margin-bottom:6px;color:var(--navy2);}
+  select,input[type=number]{
+    width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--paper);
+    font-size:15px;margin-bottom:14px;font-family:inherit;
+  }
+  .btn{display:block;width:100%;padding:14px;border-radius:12px;border:none;font-weight:700;font-size:15px;cursor:pointer;margin-top:6px;font-family:inherit;}
+  .btn-gold{background:linear-gradient(135deg,var(--gold-l),var(--gold));color:var(--navy);}
+  .btn-navy{background:var(--navy);color:#fff;}
+  .btn-ghost{background:#fff;color:var(--navy);border:1px solid var(--navy);}
+  .btn:disabled{opacity:.45;}
+  canvas{width:100%;border-radius:10px;border:1px solid var(--line);margin-bottom:6px;background:#000;}
+  .hint{font-size:12px;color:#8a8674;margin:4px 0 14px;line-height:1.6;}
+  .log{background:var(--navy);color:#dfe6f5;font-size:13px;border-radius:10px;padding:14px;font-family:monospace;white-space:pre-wrap;min-height:60px;max-height:320px;overflow:auto;line-height:1.7;}
+  .ok{color:#8bdc9e;} .err{color:#ff9d8a;} .step{color:var(--gold-l);} .warn{color:#f3d27a;}
+  .chk{display:flex;align-items:center;gap:8px;font-weight:500;margin:4px 0 0;}
+  .chk input{width:18px;height:18px;}
+  .gh1{background:var(--navy);color:#fff;padding:9px 14px;border-radius:10px;margin:18px 0 8px;font-weight:700;font-size:14px;}
+  .gh1 span{font-weight:400;color:var(--gold-l);font-size:12px;margin-left:6px;}
+  .gh2{font-size:12px;font-weight:700;color:var(--gold);margin:12px 0 2px;}
+  .row{display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);}
+  .row:last-child{border-bottom:none;}
+  .num{width:42px;font-weight:700;color:var(--navy2);font-size:14px;flex-shrink:0;}
+  .info{flex:1;min-width:0;}
+  .t{font-weight:600;font-size:14px;cursor:pointer;line-height:1.4;}
+  .m{font-size:11px;color:#8a8674;margin-top:2px;}
+  .act{text-align:right;font-size:12px;max-width:46%;flex-shrink:0;}
+  .pick{display:inline-block;padding:8px 12px;border-radius:8px;border:1px solid var(--navy);color:var(--navy);font-weight:600;cursor:pointer;font-size:12px;}
+  .fname{display:inline-block;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;color:var(--navy2);}
+  .x,.mini{border:1px solid var(--line);background:#fff;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;}
+  .errtxt{color:var(--red);}
+  .bar{height:6px;background:var(--line);border-radius:3px;margin-top:6px;overflow:hidden;}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--gold-l),var(--gold));width:0;}
+  .runbar{position:fixed;left:0;right:0;bottom:0;background:rgba(247,245,240,.96);border-top:1px solid var(--line);padding:12px 16px;}
+</style>
+</head>
+<body>
+
+<h1>M&m 촬영 목록 업로드</h1>
+<div class="sub">촬영 목록에서 영상 파일만 연결하면, 썸네일 생성 → 유튜브 업로드 → 썸네일 지정 → 학원 프로그램 등록(분류 포함)이 순서대로 자동으로 진행돼요.</div>
+
+<div class="card">
+  <label>1. 구글 계정 연결</label>
+  <button class="btn btn-navy" id="btnLogin">구글 로그인 / 권한 허용</button>
+  <div class="hint" id="loginStatus">아직 연결 안 됨 (로그인은 1시간쯤 지나면 풀려요. 풀리면 다시 로그인하고 업로드 버튼만 누르면 남은 것부터 이어서 해요.)</div>
+</div>
+
+<div class="card">
+  <label>2. 촬영 목록</label>
+  <select id="planSelect"></select>
+  <div class="hint" id="planSummary">불러오는 중...</div>
+  <label>썸네일 미리보기 (목록에서 제목을 누르면 그 강의 썸네일이 보여요)</label>
+  <canvas id="thumbCanvas" width="1280" height="720"></canvas>
+</div>
+
+<div class="card">
+  <label>3. 영상 파일 연결</label>
+  <button class="btn btn-navy" id="btnAutoNum">파일 여러 개 선택 → 번호로 자동 연결</button>
+  <button class="btn btn-ghost" id="btnAutoOrder">파일 여러 개 선택 → 순서대로 자동 연결</button>
+  <input type="file" id="multiNum" accept="video/*" multiple hidden>
+  <input type="file" id="multiOrder" accept="video/*" multiple hidden>
+  <div class="hint">
+    · <b>번호로</b>: 파일 이름이 <b>12.mp4</b>, <b>12_일차함수.mp4</b>, <b>중3-1_12강.mp4</b> 처럼 강 번호로 시작하거나 "12강"이 들어 있으면 그 강에 연결돼요.<br>
+    · <b>순서대로</b>: 번호 없는 폰 촬영 파일용이에요. 파일 이름순(촬영 순서)으로 정렬해서, 아직 안 올린 강부터 차례로 연결해요.<br>
+    · 연결 결과는 아래 목록에서 확인하고, 틀리면 ✕로 빼면 돼요. 강마다 직접 "영상 선택"도 돼요.
+  </div>
+  <label>공개 범위</label>
+  <select id="privacy">
+    <option value="unlisted" selected>미등록(링크 아는 사람만 시청) — 추천</option>
+    <option value="private">비공개</option>
+    <option value="public">공개</option>
+  </select>
+  <label>이번에 올릴 최대 개수</label>
+  <input type="number" id="maxCount" value="6" min="1" max="50">
+  <div class="hint">유튜브 기본 한도가 하루 6개 정도라서 6으로 해뒀어요. 한도가 다 차면 알아서 멈춰요.</div>
+  <label class="chk"><input type="checkbox" id="showDone"> 완료한 강도 보기</label>
+</div>
+
+<div id="listBox"></div>
+
+<div class="card">
+  <label>진행 상황</label>
+  <div class="log" id="logBox">대기 중...</div>
+</div>
+
+<div class="runbar">
+  <button class="btn btn-gold" id="btnRun" disabled style="margin-top:0;">🚀 연결된 영상 업로드 시작</button>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="https://accounts.google.com/gsi/client"></script>
+
+<script>
+const GOOGLE_CLIENT_ID = "756595474631-ilgqu7u0o2jsedbr75b20aro9u4leomh.apps.googleusercontent.com";
+const firebaseConfig = {
+  apiKey: "AIzaSyA4Uf5jRBd5K9CKU-W4l0Rk5KvQDp-Rq2M",
+  authDomain: "math-master-6a888.firebaseapp.com",
+  projectId: "math-master-6a888",
+  storageBucket: "math-master-6a888.firebasestorage.app",
+  messagingSenderId: "943375843047",
+  appId: "1:943375843047:web:116ce75ba8d15cb126ec42"
+};
+firebase.initializeApp(firebaseConfig);
+const fsdb = firebase.firestore();
+const fauth = firebase.auth();
+
+/* =========================================================
+   촬영 목록 데이터
+   다른 교재/학기 목록은 PLANS 안에 같은 모양으로 추가하면 돼요.
+   items: [강 번호, 제목, 교재 쪽]
+   ========================================================= */
+const PLANS = {
+  m31c: {
+    label: '본질잡다 중3-1 · 개념 강의 (65강)',
+    short: '중3-1',
+    bookLabel: '본질잡다 중3-1',
+    courseName: '[중등] 중3-1학기',
+    videoType: '개념',
+    book: '',
+    units: [
+      {name:'실수와 그 계산', from:1, to:18, subs:[
+        {name:'제곱근과 실수', from:1, to:10},
+        {name:'근호를 포함한 식의 계산', from:11, to:18}]},
+      {name:'다항식의 곱셈과 인수분해', from:19, to:35, subs:[
+        {name:'다항식의 곱셈', from:19, to:26},
+        {name:'인수분해', from:27, to:35}]},
+      {name:'이차방정식', from:36, to:50, subs:[
+        {name:'이차방정식과 그 풀이', from:36, to:44},
+        {name:'이차방정식의 활용', from:45, to:50}]},
+      {name:'이차함수', from:51, to:65, subs:[
+        {name:'이차함수와 그 그래프', from:51, to:59},
+        {name:'이차함수의 활용', from:60, to:65}]}
+    ],
+    items: [
+      [1,'제곱근의 뜻과 개수',2],
+      [2,'제곱근의 표현',3],
+      [3,'제곱근의 성질',4],
+      [4,'근호 없애기 (√A² = |A|)',5],
+      [5,'제곱수를 이용하여 근호 없애기',6],
+      [6,'제곱근의 대소 관계',7],
+      [7,'무리수와 실수',8],
+      [8,'실수와 수직선',9],
+      [9,'무리수를 수직선 위에 나타내기',10],
+      [10,'실수의 대소 관계',11],
+      [11,'제곱근의 곱셈과 나눗셈',12],
+      [12,'분모의 유리화',13],
+      [13,'제곱근의 덧셈과 뺄셈',14],
+      [14,'분배법칙과 근호를 포함한 복잡한 식의 계산',15],
+      [15,'제곱근의 변신과 제곱근표',16],
+      [16,'무리수의 정수 부분과 소수 부분',17],
+      [17,'무리수의 상등',18],
+      [18,'제곱근의 활용',19],
+      [19,'다항식과 다항식의 곱셈',28],
+      [20,'곱셈 공식 ① 완전제곱식과 합차공식',29],
+      [21,'곱셈 공식 ② 일차식과 일차식의 곱',30],
+      [22,'치환을 이용한 전개',31],
+      [23,'곱셈 공식의 확장',32],
+      [24,'곱셈 공식을 이용한 계산',33],
+      [25,'곱셈 공식의 변형',34],
+      [26,'곱셈 공식의 변형 (세제곱)',35],
+      [27,'인수분해의 뜻',36],
+      [28,'인수분해 공식 ① 공통인수와 완전제곱식',37],
+      [29,'인수분해 공식 ② 제곱의 차',38],
+      [30,'인수분해 공식 ③ 지그재그',39],
+      [31,'그 밖의 인수분해 공식',40],
+      [32,'치환을 이용한 인수분해',41],
+      [33,'복잡한 식의 인수분해',42],
+      [34,'인수분해 공식의 활용',43],
+      [35,'도형과 곱셈 공식 · 인수분해의 조건',44],
+      [36,'이차방정식의 뜻',53],
+      [37,'이차방정식의 해',54],
+      [38,'인수분해를 이용한 풀이',55],
+      [39,'이차방정식의 중근',56],
+      [40,'제곱근을 이용한 풀이',57],
+      [41,'완전제곱식 만들기',58],
+      [42,'완전제곱식을 이용한 풀이',59],
+      [43,'근의 공식',60],
+      [44,'복잡한 이차방정식의 풀이',61],
+      [45,'판별식과 근의 개수',62],
+      [46,'이차방정식 만들기',63],
+      [47,'근과 계수의 관계',64],
+      [48,'켤레근',65],
+      [49,'이차방정식의 활용',66],
+      [50,'이차방정식의 응용 유형',67],
+      [51,'이차함수의 뜻',76],
+      [52,'이차함수 y = ax² 의 그래프',77],
+      [53,'이차함수의 평행이동',78],
+      [54,'y = a(x − p)² + q의 그래프 (표준형)',79],
+      [55,'이차함수의 대칭성과 대칭이동',80],
+      [56,'y = ax² + bx + c의 그래프',81],
+      [57,'a, b, c의 부호 판별',82],
+      [58,'그래프 그리기와 지나는 사분면',83],
+      [59,'일반형의 이동과 도형의 넓이',84],
+      [60,'이차함수의 식 구하기 ① ②',85],
+      [61,'이차함수의 식 구하기 ③ ④',86],
+      [62,'이차함수와 이차방정식',87],
+      [63,'이차함수와 일차함수',88],
+      [64,'최댓값과 최솟값',89],
+      [65,'이차함수의 활용',90]
+    ]
+  }
+};
+const ROMAN = ['Ⅰ','Ⅱ','Ⅲ','Ⅳ','Ⅴ','Ⅵ'];
+
+/* ---------------- 상태 ---------------- */
+let planKey = 'm31c';
+let db = { courses: [], done: {} };   // done: planId -> 유튜브 링크 (학원 프로그램에 이미 등록된 것)
+let rows = {};                        // 강별 진행 상태
+let accessToken = null, tokenClient = null, running = false, wakeLock = null;
+let baseReady = false;
+
+const plan = () => PLANS[planKey];
+const pid = n => planKey + '-' + String(n).padStart(2,'0');
+const itemOf = n => plan().items.find(i=>i[0]===n);
+const unitOf = n => plan().units.find(u=>n>=u.from && n<=u.to);
+const subOf = n => unitOf(n).subs.find(s=>n>=s.from && n<=s.to);
+const videoTitle = n => plan().short + ' ' + String(n).padStart(2,'0') + '강 ' + itemOf(n)[1];
+const isDone = n => !!db.done[pid(n)];
+const privacyVal = () => document.getElementById('privacy').value;
+const esc = s => String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function rowOf(n){
+  const k = pid(n);
+  if(!rows[k]) rows[k] = {file:null, status:'pending', pct:0, err:'', videoId:''};
+  return rows[k];
+}
+function courseId(){
+  const c = db.courses.find(c=>c.name===plan().courseName);
+  return c ? c.id : '';
+}
+
+const logBox = document.getElementById('logBox');
+function log(msg, cls){
+  const line = document.createElement('div');
+  if(cls) line.className = cls;
+  line.textContent = msg;
+  logBox.appendChild(line);
+  logBox.scrollTop = logBox.scrollHeight;
+}
+function clearLog(){ logBox.innerHTML = ''; }
+
+/* ---------------- 데이터 불러오기 ---------------- */
+async function loadData(){
+  try{
+    await fauth.signInAnonymously();
+    const [c, v] = await Promise.all([
+      fsdb.collection('courses').get(),
+      fsdb.collection('videos').get()
+    ]);
+    db.courses = c.docs.map(d=>({id:d.id, ...d.data()}));
+    v.docs.forEach(d=>{ const x = d.data(); if(x.planId) db.done[x.planId] = x.url; });
+  }catch(e){
+    log('❌ 학원 프로그램 데이터를 불러오지 못했어요: ' + e.message, 'err');
+  }
+  renderList();
+  previewNext();
+}
+
+/* ---------------- 썸네일 ---------------- */
+const canvas = document.getElementById('thumbCanvas');
+const baseImg = new Image();
+const baseLoaded = new Promise(res=>{ baseImg.onload = ()=>{ baseReady = true; res(); }; baseImg.onerror = ()=>res(); });
+baseImg.src = 'thumb_base.png';
+
+function wrapText(ctx, text, maxWidth){
+  const words = text.split(' ');
+  const lines = []; let cur = '';
+  words.forEach(w=>{
+    const test = cur ? cur + ' ' + w : w;
+    if(ctx.measureText(test).width > maxWidth && cur){ lines.push(cur); cur = w; }
+    else cur = test;
+  });
+  if(cur) lines.push(cur);
+  return lines;
+}
+function drawThumb(ctx, title){
+  const W = 1280, H = 720;
+  if(baseReady) ctx.drawImage(baseImg, 0, 0, W, H);
+  else { ctx.fillStyle = '#cccccc'; ctx.fillRect(0,0,W,H); }
+  const barTop = 505;
+  const grad = ctx.createLinearGradient(0, barTop, 0, H);
+  grad.addColorStop(0, 'rgba(10,14,28,0)');
+  grad.addColorStop(1, 'rgba(10,14,28,1)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, barTop, W, H - barTop);
+
+  ctx.textBaseline = 'alphabetic';
+  ctx.lineJoin = 'round';
+  let fontSize = 92;
+  const maxWidth = W - 120;
+  ctx.font = `900 ${fontSize}px "Noto Sans KR", sans-serif`;
+  let lines = wrapText(ctx, title, maxWidth);
+  while((lines.length > 2 || lines.some(l=>ctx.measureText(l).width > maxWidth)) && fontSize > 48){
+    fontSize -= 4;
+    ctx.font = `900 ${fontSize}px "Noto Sans KR", sans-serif`;
+    lines = wrapText(ctx, title, maxWidth);
+  }
+  const lineHeight = fontSize * 1.18;
+  const totalH = lineHeight * lines.length;
+  const startY = H - 40 - totalH + fontSize * 0.85;
+  lines.forEach((line, i)=>{
+    const w = ctx.measureText(line).width;
+    const x = (W - w) / 2;
+    const y = startY + i * lineHeight;
+    ctx.lineWidth = 10;
+    ctx.strokeStyle = '#141c3c';
+    ctx.strokeText(line, x, y);
+    ctx.fillStyle = '#FFDB14';
+    ctx.fillText(line, x, y);
+  });
+}
+async function fontsReady(){
+  try{ await document.fonts.load('900 92px "Noto Sans KR"'); }catch(e){}
+  await baseLoaded;
+}
+async function previewThumb(n){
+  await fontsReady();
+  drawThumb(canvas.getContext('2d'), itemOf(n)[1]);
+}
+function previewNext(){
+  const next = plan().items.map(i=>i[0]).find(n=>!isDone(n));
+  previewThumb(next || plan().items[0][0]);
+}
+async function thumbBlob(title){
+  await fontsReady();
+  const c = document.createElement('canvas');
+  c.width = 1280; c.height = 720;
+  drawThumb(c.getContext('2d'), title);
+  return await new Promise(res=>c.toBlob(res, 'image/jpeg', 0.92));
+}
+
+/* ---------------- 목록 화면 ---------------- */
+function rowHTML(n){
+  const it = itemOf(n), r = rowOf(n);
+  let act = '';
+  if(isDone(n)){
+    act = `<a href="${esc(db.done[pid(n)])}" target="_blank" style="color:var(--green);text-decoration:none;">✅ 완료 ↗</a>`;
+  } else if(r.status === 'uploading'){
+    act = `<span id="pct_${n}" class="step">${r.pct || 0}%</span>`;
+  } else if(r.status === 'ready'){
+    act = r.file
+      ? `<span class="fname">🎬 ${esc(r.file.name)}</span> <button class="x" onclick="detach(${n})">✕</button>`
+      : `<span class="step">이어서 등록 대기</span>`;
+  } else if(r.status === 'error'){
+    act = `<span class="errtxt">⚠ ${esc(r.err || '오류')}</span> <button class="mini" onclick="retry(${n})">다시</button>`;
+  } else {
+    act = `<label class="pick">영상 선택<input type="file" accept="video/*" hidden onchange="pickOne(${n}, this)"></label>`;
+  }
+  const bar = r.status === 'uploading' ? `<div class="bar"><i id="bar_${n}" style="width:${r.pct || 0}%"></i></div>` : '';
+  return `<div class="row" id="row_${n}">
+    <div class="num">${n}강</div>
+    <div class="info">
+      <div class="t" onclick="previewThumb(${n})">${esc(it[1])}</div>
+      <div class="m">교재 ${it[2]}쪽 · ${esc(subOf(n).name)}</div>
+      ${bar}
+    </div>
+    <div class="act" id="act_${n}">${act}</div>
+  </div>`;
+}
+function renderList(){
+  const showDone = document.getElementById('showDone').checked;
+  let html = '';
+  plan().units.forEach((u, ui)=>{
+    let unitHtml = '';
+    u.subs.forEach(s=>{
+      let subHtml = '';
+      plan().items.filter(i=>i[0]>=s.from && i[0]<=s.to).forEach(i=>{
+        if(isDone(i[0]) && !showDone) return;
+        subHtml += rowHTML(i[0]);
+      });
+      if(subHtml) unitHtml += `<div class="gh2">${esc(s.name)}</div>` + subHtml;
+    });
+    if(unitHtml){
+      html += `<div class="gh1">${ROMAN[ui] || ''}. ${esc(u.name)} <span>(${u.from}강 ~ ${u.to}강)</span></div>
+               <div class="card" style="padding:4px 14px;">${unitHtml}</div>`;
+    }
+  });
+  if(!html) html = '<div class="card">🎉 이 목록의 영상이 모두 등록됐어요!</div>';
+  document.getElementById('listBox').innerHTML = html;
+  updateSummary();
+}
+function refreshRow(n){
+  const showDone = document.getElementById('showDone').checked;
+  const el = document.getElementById('row_' + n);
+  if(!el || (isDone(n) && !showDone)){ renderList(); return; }
+  el.outerHTML = rowHTML(n);
+  updateSummary();
+}
+function counts(){
+  let done = 0, ready = 0, pending = 0;
+  plan().items.forEach(i=>{
+    const n = i[0];
+    if(isDone(n)) done++;
+    else if(rowOf(n).status === 'ready') ready++;
+    else pending++;
+  });
+  return {done, ready, pending, total: plan().items.length};
+}
+function updateSummary(){
+  const c = counts();
+  const cid = courseId();
+  const courseMsg = cid
+    ? `✅ 학원 프로그램 과정 연결: ${plan().courseName}`
+    : `⚠ 학원 프로그램에서 "${plan().courseName}" 과정을 못 찾았어요 (미분류로 등록돼요)`;
+  document.getElementById('planSummary').innerHTML =
+    `총 ${c.total}강 · 완료 ${c.done} · 영상 연결됨 ${c.ready} · 대기 ${c.pending}<br>${courseMsg}`;
+  const max = parseInt(document.getElementById('maxCount').value, 10) || 6;
+  const btn = document.getElementById('btnRun');
+  const will = Math.min(c.ready, max);
+  btn.disabled = !(accessToken && c.ready > 0 && !running);
+  btn.textContent = running ? '업로드 진행 중... (화면을 켜 둔 채로 두세요)'
+    : `🚀 연결된 영상 ${will}개 업로드 시작` + (c.ready > max ? ` (이번엔 ${max}개까지)` : '');
+}
+
+/* ---------------- 파일 연결 ---------------- */
+function numberOf(name){
+  let m = name.match(/(\d{1,3})\s*강/);
+  if(!m) m = name.match(/^(\d{1,3})(?!\d)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+function attach(n, file){
+  if(isDone(n)) return false;
+  const r = rowOf(n);
+  if(r.status === 'uploading') return false;
+  r.file = file; r.status = 'ready'; r.err = '';
+  return true;
+}
+function pickOne(n, input){
+  if(running){ alert('업로드 중에는 파일을 바꿀 수 없어요.'); return; }
+  const f = input.files[0];
+  if(f && attach(n, f)) refreshRow(n);
+}
+function detach(n){
+  if(running) return;
+  const r = rowOf(n);
+  r.file = null; r.status = 'pending';
+  refreshRow(n);
+}
+function retry(n){
+  const r = rowOf(n);
+  r.err = '';
+  r.status = (r.file || r.videoId) ? 'ready' : 'pending';
+  refreshRow(n);
+}
+function handleMulti(files, mode){
+  if(running){ alert('업로드 중에는 파일을 바꿀 수 없어요.'); return; }
+  const arr = Array.from(files);
+  if(!arr.length) return;
+  let ok = 0; const miss = [];
+  if(mode === 'num'){
+    arr.forEach(f=>{
+      const n = numberOf(f.name);
+      if(n && itemOf(n) && attach(n, f)) ok++; else miss.push(f.name);
+    });
+  } else {
+    arr.sort((a,b)=>a.name.localeCompare(b.name, 'ko', {numeric:true}));
+    const slots = plan().items.map(i=>i[0]).filter(n=>!isDone(n) && rowOf(n).status === 'pending');
+    arr.forEach((f, i)=>{
+      if(i < slots.length && attach(slots[i], f)) ok++; else miss.push(f.name);
+    });
+  }
+  clearLog();
+  log(`▶ ${ok}개 연결됐어요. 아래 목록에서 맞게 연결됐는지 확인하세요.`, 'ok');
+  if(miss.length) log(`⚠ 연결 못 한 파일 ${miss.length}개: ` + miss.join(', '), 'warn');
+  renderList();
+}
+document.getElementById('btnAutoNum').addEventListener('click', ()=>document.getElementById('multiNum').click());
+document.getElementById('btnAutoOrder').addEventListener('click', ()=>document.getElementById('multiOrder').click());
+document.getElementById('multiNum').addEventListener('change', e=>{ handleMulti(e.target.files, 'num'); e.target.value = ''; });
+document.getElementById('multiOrder').addEventListener('change', e=>{ handleMulti(e.target.files, 'order'); e.target.value = ''; });
+document.getElementById('showDone').addEventListener('change', renderList);
+document.getElementById('maxCount').addEventListener('input', updateSummary);
+
+/* ---------------- 구글 로그인 ---------------- */
+function initGoogleAuth(){
+  if(typeof google === 'undefined' || !google.accounts){ setTimeout(initGoogleAuth, 500); return; }
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: 'https://www.googleapis.com/auth/youtube.upload',
+    callback: resp=>{
+      if(resp.error){ log('로그인 실패: ' + resp.error, 'err'); return; }
+      accessToken = resp.access_token;
+      document.getElementById('loginStatus').textContent = '✅ 연결됨';
+      updateSummary();
+    }
+  });
+}
+document.getElementById('btnLogin').addEventListener('click', ()=>{
+  if(!tokenClient){ alert('구글 로그인 준비 중이에요. 잠시 후 다시 눌러주세요.'); return; }
+  tokenClient.requestAccessToken();
+});
+
+/* ---------------- 유튜브 업로드 ---------------- */
+function xhrPut(url, file, onPct){
+  return new Promise((resolve, reject)=>{
+    const x = new XMLHttpRequest();
+    x.open('PUT', url);
+    x.setRequestHeader('Content-Type', file.type || 'video/*');
+    x.upload.onprogress = e=>{ if(e.lengthComputable) onPct(Math.round(e.loaded / e.total * 100)); };
+    x.onload = ()=>{
+      if(x.status >= 200 && x.status < 300){
+        try{ resolve(JSON.parse(x.responseText)); }catch(err){ reject(new Error('유튜브 응답을 해석하지 못했어요')); }
+      } else if(x.status === 401){
+        const e = new Error('로그인이 만료됐어요. 다시 로그인해주세요.'); e.stop = true; reject(e);
+      } else {
+        reject(new Error('영상 전송 실패 ' + x.status + ' ' + String(x.responseText).slice(0, 150)));
+      }
+    };
+    x.onerror = ()=>reject(new Error('네트워크 오류 (와이파이를 확인하세요)'));
+    x.send(file);
+  });
+}
+async function uploadToYoutube(file, title, desc, privacy, onPct){
+  const metadata = {
+    snippet: { title, description: desc, categoryId: '27' },
+    status: { privacyStatus: privacy }
+  };
+  const initRes = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + accessToken,
+      'Content-Type': 'application/json',
+      'X-Upload-Content-Type': file.type || 'video/*',
+      'X-Upload-Content-Length': file.size
+    },
+    body: JSON.stringify(metadata)
+  });
+  if(!initRes.ok){
+    const t = await initRes.text();
+    const err = new Error('업로드 시작 실패 ' + initRes.status + ' ' + t.slice(0, 150));
+    if(initRes.status === 401){ err.stop = true; err.message = '로그인이 만료됐어요. 다시 로그인해주세요.'; }
+    if(/quota|uploadLimitExceeded/i.test(t)){
+      err.stop = true;
+      err.message = '오늘 유튜브 업로드 한도를 다 썼어요. 한도가 다시 열리면(한국시간 오후 4~5시쯤) 이어서 하세요.';
+    }
+    throw err;
+  }
+  const uploadUrl = initRes.headers.get('Location');
+  return await xhrPut(uploadUrl, file, onPct);
+}
+async function setThumbnail(videoId, blob){
+  const res = await fetch(`https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${videoId}`, {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + accessToken, 'Content-Type': 'image/jpeg' },
+    body: blob
+  });
+  if(!res.ok) throw new Error(res.status + ' ' + (await res.text()).slice(0, 120));
+}
+async function registerToAcademy(n, title, url){
+  const p = plan();
+  await fsdb.collection('videos').doc().set({
+    title, url,
+    courseId: courseId(),
+    videoType: p.videoType,
+    book: p.book || '',
+    unit: unitOf(n).name,
+    planId: pid(n)
+  });
+}
+function setPct(n, p){
+  rowOf(n).pct = p;
+  const a = document.getElementById('pct_' + n); if(a) a.textContent = p + '%';
+  const b = document.getElementById('bar_' + n); if(b) b.style.width = p + '%';
+}
+
+async function processOne(n){
+  const r = rowOf(n), it = itemOf(n), title = videoTitle(n);
+  let lockedTo = '';
+  r.status = 'uploading'; r.pct = 0; refreshRow(n);
+  if(!r.videoId){
+    const desc = `${plan().bookLabel} · ${unitOf(n).name} · ${subOf(n).name}\n교재 ${it[2]}쪽 · ${n}강\nM&m 수학훈련소`;
+    log(`▶ ${n}강 업로드 시작 (${r.file.name})`, 'step');
+    const data = await uploadToYoutube(r.file, title, desc, privacyVal(), p=>setPct(n, p));
+    r.videoId = data.id;
+    const got = data.status && data.status.privacyStatus;
+    if(got && got !== privacyVal()) lockedTo = got;
+    log(`✅ ${n}강 유튜브 업로드 완료`, 'ok');
+  }
+  try{
+    await setThumbnail(r.videoId, await thumbBlob(it[1]));
+    log(`✅ ${n}강 썸네일 지정 완료`, 'ok');
+  }catch(e){
+    log(`⚠ ${n}강 썸네일 지정 실패 — 나중에 유튜브 스튜디오에서 직접 지정해주세요 (${e.message})`, 'warn');
+  }
+  const url = `https://youtu.be/${r.videoId}`;
+  await registerToAcademy(n, title, url);
+  db.done[pid(n)] = url;
+  r.status = 'done'; r.file = null;
+  log(`✅ ${n}강 학원 프로그램 등록 완료 → ${url}`, 'ok');
+  refreshRow(n);
+  return lockedTo;
+}
+
+async function runQueue(){
+  if(running) return;
+  if(!accessToken){ alert('먼저 구글 로그인을 해주세요.'); return; }
+  const queue = plan().items.map(i=>i[0]).filter(n=>{
+    const r = rowOf(n);
+    return !isDone(n) && r.status === 'ready' && (r.file || r.videoId);
+  });
+  if(!queue.length){ alert('연결된 영상이 없어요.'); return; }
+  const max = parseInt(document.getElementById('maxCount').value, 10) || 6;
+  const todo = queue.slice(0, max);
+
+  running = true; updateSummary(); clearLog();
+  log(`▶ ${todo.length}개 업로드를 시작합니다. 화면을 끄거나 다른 페이지로 나가지 마세요.`, 'step');
+  try{ if('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); }catch(e){}
+
+  let okCount = 0, stopped = false;
+  for(const n of todo){
+    try{
+      const locked = await processOne(n);
+      okCount++;
+      if(locked){
+        log(`⚠ 구글이 이 영상을 "${locked}"(으)로 바꿔 놓았어요. 인증받지 않은 앱이 올린 영상을 구글이 잠그는 경우예요. 더 올리기 전에 유튜브 스튜디오에서 이 영상이 열리는지 확인하세요. 여기서 멈춥니다.`, 'warn');
+        stopped = true; break;
+      }
+    }catch(e){
+      const r = rowOf(n);
+      r.status = 'error'; r.err = e.message;
+      log(`❌ ${n}강: ${e.message}`, 'err');
+      refreshRow(n);
+      if(e.stop){ stopped = true; break; }
+    }
+  }
+  running = false;
+  try{ if(wakeLock){ wakeLock.release(); wakeLock = null; } }catch(e){}
+  log(`\n🎉 이번 작업 끝: ${okCount}개 완료` + (stopped ? ' (중간에 멈췄어요)' : ''), 'ok');
+  const left = counts().ready;
+  if(left > 0) log(`아직 연결만 해 둔 영상이 ${left}개 남아 있어요. 다시 업로드 버튼을 누르면 이어서 해요.`, 'step');
+  renderList();
+  previewNext();
+}
+document.getElementById('btnRun').addEventListener('click', runQueue);
+window.addEventListener('beforeunload', e=>{ if(running){ e.preventDefault(); e.returnValue = ''; } });
+
+/* ---------------- 시작 ---------------- */
+(function init(){
+  const sel = document.getElementById('planSelect');
+  sel.innerHTML = Object.keys(PLANS).map(k=>`<option value="${k}">${esc(PLANS[k].label)}</option>`).join('');
+  sel.addEventListener('change', ()=>{ planKey = sel.value; renderList(); previewNext(); });
+  initGoogleAuth();
+  loadData();
+})();
+</script>
+</body>
+</html>
