@@ -1,0 +1,12 @@
+{
+  "name": "mnm-academy-functions",
+  "private": true,
+  "description": "M&m 수학훈련소 월말 리포트 예약 생성 (배포 전 검토용 — 아직 배포되지 않음)",
+  "engines": { "node": "20" },
+  "main": "index.js",
+  "scripts": { "test": "node ../tests/monthly-report.test.js" },
+  "dependencies": {
+    "firebase-admin": "^12.0.0",
+    "firebase-functions": "^5.0.0"
+  }
+}
