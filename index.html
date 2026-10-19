@@ -2073,8 +2073,10 @@ function buildDailyReportText(s, date, r, dayGroup){
     ? `${hwApproved.length}/${hwDates.length} 인정${hwPending.length ? ` · 검토대기 ${hwPending.map(d=>d.slice(5).replace('-','/')).join(', ')}` : ''}${hwMissing.length ? ` · 미인증/불합격 ${hwMissing.map(d=>d.slice(5).replace('-','/')).join(', ')}` : (hwApproved.length===hwDates.length ? ' · 전체 인정' : '')}`
     : '확인할 숙제 날짜 없음';
 
-  const hwLevel = r.homeworkCompletionLevel || suggestedHomeworkLevel(s.id, dayGroup, date);
-  const hwTxt = hwLevel ? `${hwLevel} — ${homeworkLevelPhrase(hwLevel)}` : '-';
+  // v97: 완성도는 수업 중 원장이 기록한 값만 사용한다(제출 비율로 자동 추정하지 않음).
+  const hwQualityTxt = HW_QUALITY_GUIDE[r.homeworkCompletionLevel] ? `${r.homeworkCompletionLevel} — ${HW_QUALITY_GUIDE[r.homeworkCompletionLevel]}` : '미평가';
+  const lessonDetailTxt = String(r.lessonDetail||'').replace(/\s*\n+\s*/g,' ').trim();
+  const lessonDetailLine = lessonDetailTxt ? `\n· 수업 상세: ${lessonDetailTxt}` : '';
   const todayKmm = db.kmm.find(k=>k.studentId===s.id && k.date===date);
   const hasScore = r.dailyTestScore!==undefined && r.dailyTestScore!=='' && r.dailyTestScore!==null;
   let examLine;
@@ -2100,19 +2102,25 @@ function buildDailyReportText(s, date, r, dayGroup){
   return `[M&m 수학훈련소] ${s.name} 학생 오늘의 학습 리포트 · ${fmtDate(date)}
 ${trafficEmoji} 출석: ${r.attendance||'-'}
 ${examLine}${kmmMakeupTxt}
-· 오늘 ${r.stepType==='유형'?'유형학습':'개념학습'}: ${stepTxt}${extraStepsTxt}
+· 오늘 ${r.stepType==='유형'?'유형학습':'개념학습'}: ${stepTxt}${extraStepsTxt}${lessonDetailLine}
 ${r.practiceBook? `· 문제 적용: ${r.practiceBook}${r.practiceRange? ' '+r.practiceRange : ''}${(r.extraPractice&&r.extraPractice.length)? ', '+r.extraPractice.map(e=>`${e.book}${e.range?' '+e.range:''}`).join(', ') : ''}` : ((r.extraPractice&&r.extraPractice.length)? `· 문제 적용: ${r.extraPractice.map(e=>`${e.book}${e.range?' '+e.range:''}`).join(', ')}` : '')}
-· 숙제완성도: ${hwCompletionText}
+· 숙제 제출 이행: ${hwCompletionText}
+· 숙제 완성도: ${hwQualityTxt}
 ${r.note? `· 특이사항: ${r.note}` : ''}${warnTxt}${bookDoneTxt}`;
 }
 function allStepOptions(){
   let opts=''; db.courses.forEach(c=>{ c.steps.forEach(st=>{ opts+=`<option value="${st.id}">[${c.name}] ${st.name}</option>`; }); }); return opts;
 }
+// v97: 표준 STEP에 맞는 항목이 없을 때 쓰는 통계용 표준값. 구체 내용은 lessonDetail에 따로 저장한다.
+const STEP_ETC_ID='__etc__', STEP_ETC_LABEL='기타·직접입력';
+const HW_QUALITY_GUIDE={'상':'지정 범위를 대부분 완료했고 풀이 과정과 오답 정리가 충실함','중':'일부 누락이 있거나 풀이·오답 정리가 충분하지 않음','하':'미완성 범위가 많거나 풀이 흔적이 부족함'};
 function stepLabel(stepId){
+  if(stepId===STEP_ETC_ID) return STEP_ETC_LABEL;
   for(const c of db.courses){ const st=(c.steps||[]).find(x=>x.id===stepId); if(st) return `[${c.name}] ${st.name}`; }
   return '';
 }
 function stepShortLabel(stepId){
+  if(stepId===STEP_ETC_ID) return STEP_ETC_LABEL;
   for(const c of db.courses){
     const st = (c.steps||[]).find(x=>x.id===stepId);
     if(st){
@@ -2145,7 +2153,7 @@ function renderStepCascadeSelect(clsId, date, stuId, currentStepId){
   currentSubState._stepCourseSel = currentSubState._stepCourseSel || {};
   let selCourseId = currentSubState._stepCourseSel[rowKey];
   if(selCourseId===undefined){
-    selCourseId = courseIdForStep(currentStepId) || '';
+    selCourseId = currentStepId===STEP_ETC_ID ? STEP_ETC_ID : (courseIdForStep(currentStepId) || '');
     if(!selCourseId){
       const last = lastRecordedStep(stuId, date);
       if(last) selCourseId = courseIdForStep(last.stepId) || '';
@@ -2154,14 +2162,27 @@ function renderStepCascadeSelect(clsId, date, stuId, currentStepId){
   const course = courseById(selCourseId);
   const steps = course ? (course.steps||[]) : [];
   return `
-  <select style="max-width:150px;font-size:11px;" onchange="currentSubState._stepCourseSel['${rowKey}']=this.value;render();">
+  <select style="max-width:150px;font-size:11px;" onchange="onStepCourseChange('${clsId}','${date}','${stuId}','${rowKey}',this.value)">
     <option value="">학년학기 선택</option>
     ${sortedCourses().map(c=>`<option value="${c.id}" ${c.id===selCourseId?'selected':''}>${c.name}</option>`).join('')}
+    <option value="${STEP_ETC_ID}" ${selCourseId===STEP_ETC_ID?'selected':''}>${STEP_ETC_LABEL}</option>
   </select>
   <select style="max-width:150px;font-size:11px;margin-top:4px;" onchange="updateClassRec('${clsId}','${date}','${stuId}','stepId',this.value)" ${!course?'disabled':''}>
     <option value="">${course?'STEP 선택':'학년학기 먼저 선택'}</option>
     ${steps.map(st=>`<option value="${st.id}" ${currentStepId===st.id?'selected':''}>${st.name}</option>`).join('')}
   </select>`;
+}
+function onStepCourseChange(clsId,date,stuId,rowKey,val){
+  currentSubState._stepCourseSel = currentSubState._stepCourseSel || {};
+  currentSubState._stepCourseSel[rowKey]=val;
+  if(val===STEP_ETC_ID){ updateClassRec(clsId,date,stuId,'stepId',STEP_ETC_ID); return; }
+  render();
+}
+function renderLessonDetailInput(clsId,date,stuId,r){
+  return `<div style="margin-top:6px;">
+    <label style="font-size:10px;color:#8a8674;display:block;margin-bottom:2px;">수업 상세 <span style="color:#b08a2e;">(일일리포트에 표시)</span></label>
+    <textarea rows="2" maxlength="300" placeholder="예: 외심 작도 복습, 교재 82쪽 3~7번" style="font-size:11px;width:100%;box-sizing:border-box;" onchange="updateClassRec('${clsId}','${date}','${stuId}','lessonDetail',this.value.trim())">${escapeHtml(r.lessonDetail||'')}</textarea>
+  </div>`;
 }
 function renderExtraSteps(clsId, date, stuId, extraSteps){
   const rowKey = `${clsId}_${date}_${stuId}`;
@@ -2492,7 +2513,7 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames, focusRecommended=f
   }).join('');
   const submittedCount = hwDateRange.filter(d=>homeworkCountsAsCompleted(db.submissions[s.id+'_'+d],d)).length;
   const totalRangeDays = hwDateRange.length;
-  const hwLevel = r.homeworkCompletionLevel || suggestedHomeworkLevel(s.id, cls.dayGroup, date);
+  const hwLevel = r.homeworkCompletionLevel || '';
   const status = studentStatus(s.id);
   const nameBg = status==='STOP' ? '#fbe6e2' : status==='SLOW' ? '#fdf2df' : '';
   const warnCount = verifiedWarnings(s).length;
@@ -2503,12 +2524,12 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames, focusRecommended=f
   const conceptHtml = (()=>{
     const last = lastRecordedStep(s.id, date);
     const hint = last ? `<div style="font-size:10px;color:#8a8674;margin-bottom:5px;">지난 시간(${fmtDate(last.date)}): ${stepShortLabel(last.stepId)}</div>` : '';
-    const memoBox = `<textarea placeholder="📝 다음 시간 메모 (나만 보임)" rows="2" style="font-size:11px;width:100%;margin-bottom:6px;background:#fffbea;box-sizing:border-box;" onchange="fsUpdate('students','${s.id}',{conceptMemo:this.value})">${s.conceptMemo||''}</textarea>`;
+    const memoBox = `<textarea placeholder="📝 다음 시간 메모 (나만 보임 · 리포트에 안 나가요)" rows="2" style="font-size:11px;width:100%;margin-bottom:6px;background:#fffbea;box-sizing:border-box;" onchange="fsUpdate('students','${s.id}',{conceptMemo:this.value})">${s.conceptMemo||''}</textarea>`;
     const typeSelect = `<select style="width:100%;font-size:11px;margin-bottom:6px;" onchange="updateClassRec('${cls.id}','${date}','${s.id}','stepType',this.value)">
       <option value="개념" ${(r.stepType||'개념')==='개념'?'selected':''}>오늘: 개념학습</option>
       <option value="유형" ${r.stepType==='유형'?'selected':''}>오늘: 유형학습</option>
     </select>`;
-    return hint + memoBox + typeSelect + renderStepCascadeSelect(cls.id, date, s.id, r.stepId) + renderExtraSteps(cls.id, date, s.id, r.extraSteps);
+    return hint + memoBox + typeSelect + renderStepCascadeSelect(cls.id, date, s.id, r.stepId) + renderLessonDetailInput(cls.id, date, s.id, r) + renderExtraSteps(cls.id, date, s.id, r.extraSteps);
   })();
 
   return `<div class="class-student-card" style="${nameBg?`border-left:5px solid ${status==='STOP'?'var(--red)':'var(--gold)'};`:''}">
@@ -2560,9 +2581,10 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames, focusRecommended=f
         <div style="font-size:11px;color:#6b6858;line-height:1.5;">${hwText||'-'}</div>
         ${totalRangeDays? `<div style="margin-top:7px;">${dayChecklist}</div><div style="font-size:10px;color:#8a8674;margin-top:4px;">${submittedCount}/${totalRangeDays} 제출</div>` : ''}
         <div class="class-mini-grid" style="grid-template-columns:1fr 1fr;margin-top:9px;">
-          <div class="class-field"><label>숙제완성도</label><select onchange="updateClassRec('${cls.id}','${date}','${s.id}','homeworkCompletionLevel',this.value)"><option value="">-</option>${['상','중','하'].map(o=>`<option ${hwLevel===o?'selected':''}>${o}</option>`).join('')}</select></div>
+          <div class="class-field"><label title="상: ${HW_QUALITY_GUIDE['상']}&#10;중: ${HW_QUALITY_GUIDE['중']}&#10;하: ${HW_QUALITY_GUIDE['하']}">숙제 완성도 ⓘ</label><select onchange="updateClassRec('${cls.id}','${date}','${s.id}','homeworkCompletionLevel',this.value)"><option value="">미평가</option>${['상','중','하'].map(o=>`<option ${hwLevel===o?'selected':''}>${o}</option>`).join('')}</select></div>
           <div class="class-field"><label>학습완성도</label><select onchange="updateClassRec('${cls.id}','${date}','${s.id}','studyCompletionLevel',this.value)"><option value="">-</option>${['상','중','하'].map(o=>`<option ${r.studyCompletionLevel===o?'selected':''}>${o}</option>`).join('')}</select></div>
         </div>
+        <div style="font-size:9.5px;color:#8a8674;margin-top:5px;line-height:1.5;">완성도는 제출 여부와 별개로 수업 중 직접 기록해요. 상: 대부분 완료·풀이/오답정리 충실 · 중: 일부 누락 또는 정리 부족 · 하: 미완성 많음·풀이 흔적 부족</div>
       </div>
 
       <div class="class-record-box class-note">
@@ -4226,7 +4248,7 @@ function renderStudentDetail(stuId, directorView){
     ${histRows.length? `<table><tr><th>날짜</th><th>출석</th><th>일일테스트</th><th>진도</th><th>숙제완성도</th><th>학습완성도</th><th>특이사항</th></tr>
       ${histRows.slice(0,30).map(h=>`<tr><td>${fmtDate(h.date)}</td><td>${h.attendance||'-'}</td>
       <td>${h.dailyTestScore!==undefined && h.dailyTestScore!=='' ? h.dailyTestScore + (Number(h.dailyTestScore)>=80?' <span class="badge green">PASS</span>':' <span class="badge red">FAIL</span>') : '-'}</td>
-      <td>${stepLabel(h.stepId)||'-'}${(h.extraSteps&&h.extraSteps.length)? '<br><span style="color:#9c9880;">+ '+h.extraSteps.map(id=>stepLabel(id)).filter(Boolean).join(', ')+'</span>':''}</td><td>${h.homeworkCompletionLevel||'-'}</td><td>${h.studyCompletionLevel||'-'}</td><td>${h.note||'-'}</td></tr>`).join('')}
+      <td>${stepLabel(h.stepId)||'-'}${h.lessonDetail?'<br><span style="color:#6f6958;">'+escapeHtml(h.lessonDetail)+'</span>':''}${(h.extraSteps&&h.extraSteps.length)? '<br><span style="color:#9c9880;">+ '+h.extraSteps.map(id=>stepLabel(id)).filter(Boolean).join(', ')+'</span>':''}</td><td>${h.homeworkCompletionLevel||'-'}</td><td>${h.studyCompletionLevel||'-'}</td><td>${h.note||'-'}</td></tr>`).join('')}
       </table>` : `<div class="empty">기록이 없어요.</div>`}
   </div>
 
@@ -6868,7 +6890,7 @@ function renderStudentProgressPage(){
     <div class="card" style="overflow-x:auto;">
       <h3 style="margin-top:0;">1. 출석·진도 이력</h3>
       ${histRows.length? `<table><tr><th>날짜</th><th>출석</th><th>일일테스트</th><th>진도</th><th>숙제완성도</th><th>학습완성도</th><th>특이사항</th></tr>
-        ${histRows.slice(0,30).map(h=>`<tr><td>${fmtDate(h.date)}</td><td>${h.attendance||'-'}</td><td>${h.dailyTestScore!==undefined&&h.dailyTestScore!==''?h.dailyTestScore:'-'}</td><td>${stepLabel(h.stepId)||'-'}${(h.extraSteps&&h.extraSteps.length)?'<br><span style="color:#9c9880;">+ '+h.extraSteps.map(id=>stepLabel(id)).filter(Boolean).join(', ')+'</span>':''}</td><td>${h.homeworkCompletionLevel||'-'}</td><td>${h.studyCompletionLevel||'-'}</td><td>${h.note||'-'}</td></tr>`).join('')}
+        ${histRows.slice(0,30).map(h=>`<tr><td>${fmtDate(h.date)}</td><td>${h.attendance||'-'}</td><td>${h.dailyTestScore!==undefined&&h.dailyTestScore!==''?h.dailyTestScore:'-'}</td><td>${stepLabel(h.stepId)||'-'}${h.lessonDetail?'<br><span style="color:#6f6958;">'+escapeHtml(h.lessonDetail)+'</span>':''}${(h.extraSteps&&h.extraSteps.length)?'<br><span style="color:#9c9880;">+ '+h.extraSteps.map(id=>stepLabel(id)).filter(Boolean).join(', ')+'</span>':''}</td><td>${h.homeworkCompletionLevel||'-'}</td><td>${h.studyCompletionLevel||'-'}</td><td>${h.note||'-'}</td></tr>`).join('')}
         </table>`:`<div class="empty">기록이 없어요.</div>`}
     </div>
 
