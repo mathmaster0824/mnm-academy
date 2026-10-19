@@ -46,6 +46,17 @@ const { chromium } = require('playwright');
     currentSubState._draftSub.hwPhotos=[]; await submitHomework('stu_a','2026-10-20');
     return calls.map(c=>({id:c.id,studentId:c.data.studentId,classId:c.data.classId,status:c.data.status,reviewCount:c.data.reviewCount}));
   });
+  const bulk=await page.evaluate(async()=>{
+    window.fsSet=async()=>true;
+    session={mode:'director'}; currentView='classes'; currentSubState={classId:'cls_x',classDate:'2026-10-19',classLoadError:'ERR'}; db.classRecords={};
+    const html=renderClassDetail(db.classes[0]);
+    document.body.insertAdjacentHTML('beforeend',html);
+    document.getElementById('bulkStepType').value='유형'; document.getElementById('bulkHwComp').value='상';
+    await applyBulk('cls_x','2026-10-19');
+    const rec=db.classRecords['cls_x_2026-10-19'];
+    return {banner:html.includes('ERR'), type:rec&&rec.stu_a&&rec.stu_a.stepType, hw:rec&&rec.stu_b.homeworkCompletionLevel};
+  });
+  console.log('BULK',JSON.stringify(bulk));
   console.log('SUBMIT',JSON.stringify(sub));
   console.log(JSON.stringify(out)); console.log(errs.slice(0,8).join('\n')||'no page errors');
   await browser.close();

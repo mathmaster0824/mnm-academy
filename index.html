@@ -479,16 +479,20 @@ function dateDaysAgoISO(days){
   const d=new Date(); d.setHours(12,0,0,0); d.setDate(d.getDate()-Number(days||0));
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
-async function ensureClassDateData(clsId,date){
+async function ensureClassDateData(clsId,date,force){
   if(!session || session.mode!=='director' || !clsId || !/^\d{4}-\d{2}-\d{2}$/.test(date||'')) return;
   const wk=weekStartISO(date);
   const wants=[['classRecords',clsId+'_'+date],['weeklyPlans',clsId+'_'+wk],['fridaySupp',clsId+'_'+date]];
   await Promise.all(wants.map(async ([col,key])=>{
-    if(db[col] && db[col][key]!==undefined) return;
+    if(!force && db[col] && db[col][key]!==undefined) return;
     try{
-      const doc=await fsdb.collection(col).doc(key).get();
+      // v97: 반 페이지를 열 때는 캐시가 아니라 서버에서 직접 읽는다(일괄 적용 등 다른 경로로 저장된 기록이 빠지지 않게)
+      const doc=await fsdb.collection(col).doc(key).get({source:'server'});
       if(doc.exists){ db[col][key]=doc.data(); }
-    }catch(e){ console.error('[과거 수업 데이터 조회 오류]',col,key,e); }
+    }catch(e){
+      console.error('[수업 데이터 조회 오류]',col,key,e);
+      currentSubState.classLoadError='이 날짜의 수업 기록을 서버에서 불러오지 못했어요. 비어 보여도 기록이 없는 게 아닐 수 있으니 새로고침 후 다시 확인해주세요.';
+    }
   }));
   scheduleRender();
 }
@@ -1999,7 +2003,7 @@ function renderClassDetail(cls){
   const loadKey=cls.id+'_'+date;
   if(!currentSubState._classDateLoaded[loadKey]){
     currentSubState._classDateLoaded[loadKey]=true;
-    setTimeout(()=>ensureClassDateData(cls.id,date),0);
+    setTimeout(()=>ensureClassDateData(cls.id,date,true),0);
   }
   const dayGroupLabel = cls.dayGroup==='mon-wed' ? '월수반' : '화목반';
   const students = (cls.studentIds||[]).map(studentById).filter(Boolean);
@@ -2025,6 +2029,7 @@ function renderClassDetail(cls){
   Object.values(db.classRecords).forEach(obj=>{ Object.values(obj).forEach(r=>{ if(r.practiceBook) bookNames.add(r.practiceBook); }); });
 
   return `
+  ${currentSubState.classLoadError?`<div style="padding:10px 12px;margin-bottom:12px;border-radius:9px;background:#fff3f1;color:#a83b32;font-size:12px;">${currentSubState.classLoadError}</div>`:''}
   <div class="card">
     <div class="row between">
       <div><h3 style="margin:0;">${cls.name} <span class="badge gray">${dayGroupLabel}</span></h3></div>
