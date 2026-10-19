@@ -812,6 +812,9 @@ function isLegacyHomeworkDate(date){
 // 새 인증은 '대기', 원장 확인은 '확인', 불합격은 '불합격'.
 
 const HOMEWORK_MAX_REVIEWS = 3;
+// v97: 학생이 사진과 함께 제출하면 자동으로 저장되는 상태. 원장 수동 승인 없이 제출로 인정하며, 품질은 '숙제 완성도'(수업기록)로 따로 평가한다.
+const HW_AUTO_SUBMITTED = '제출완료';
+function submissionIsAutoSubmitted(sub){ return !!sub && String(sub.status||'').trim()===HW_AUTO_SUBMITTED; }
 
 function homeworkReviewCount(sub){
   const n = Number(sub && sub.reviewCount);
@@ -880,6 +883,7 @@ function submissionReviewState(sub,date,stuId){
   const status = String(sub.status||'').trim();
   if(!status) return 'approved'; // 기존 레거시 제출 보호
   if(status==='확인' || status==='approved') return 'approved';
+  if(status===HW_AUTO_SUBMITTED) return 'approved'; // v97: 사진 제출 즉시 '제출 완료'(제출 사실만 의미, 품질 평가 아님)
   if(status==='최종불합격') return 'rejected';
   if(status==='불합격' || status==='rejected') return 'rejected';
   return 'pending'; // '대기' 및 알 수 없는 신규 상태는 안전하게 검토대기
@@ -896,7 +900,7 @@ function homeworkReviewMark(sub,date,stuId){
 function homeworkReviewLabel(sub,date,stuId){
   const eff=homeworkEffectiveState(sub,date,stuId);
   if(eff==='unknown') return '조회 중';
-  if(eff==='approved') return '인정';
+  if(eff==='approved') return submissionIsAutoSubmitted(sub) ? '제출 완료' : '인정';
   if(eff==='pending') return '검토대기';
   if(eff==='needsRevision') return '수정필요';
   if(eff==='missing') return '미제출';
@@ -4384,7 +4388,7 @@ function renderHomeworkReview(){
             ? `<span class="badge">🔒 과거 기록 · 조회 전용</span>`
             : `${submissionIsFinalRejected(r)
                 ? `<span class="badge red">최종 불합격</span>`
-                : `${submissionReviewState(r,r.date)!=='approved' ? `<button class="btn sm gold" onclick="confirmSubmission('${r.studentId}','${r.date}',this)">✓ 숙제 인정</button>` : ''}
+                : `${submissionReviewState(r,r.date)!=='approved' && !submissionIsAutoSubmitted(r) ? `<button class="btn sm gold" onclick="confirmSubmission('${r.studentId}','${r.date}',this)">✓ 숙제 인정</button>` : ''}
                    ${submissionReviewState(r,r.date)!=='rejected' ? `<button class="btn sm danger" onclick="rejectSubmission('${r.studentId}','${r.date}')">✕ 불합격</button>` : ''}`}`}
           ${s ? `<button class="btn sm outline" onclick="goto('students');currentSubState.studentDetail='${r.studentId}';render();">학생 페이지</button>` : ''}
         </div>
@@ -4426,7 +4430,7 @@ function renderSubmissionCard(stuId, directorView, previewAsStudent){
     const msg=submissionIsFinalRejected(sub)
       ? `최종 불합격입니다. 숙제 검사 3회를 모두 사용했습니다.${sub.reviewReason? ' 사유: '+sub.reviewReason : ''}`
       : st==='approved'
-        ? '선생님 확인 완료 — 숙제로 인정됐어요.'
+        ? (submissionIsAutoSubmitted(sub) ? '제출 완료 — 사진이 정상적으로 접수됐어요. 숙제 완성도는 수업 시간에 선생님이 확인해요.' : '선생님 확인 완료 — 숙제로 인정됐어요.')
         : st==='pending'
           ? '선생님 검토 대기 중이에요.'
           : `숙제 수정이 필요합니다.${sub.reviewReason? ' 사유: '+sub.reviewReason : ''}`;
@@ -4457,7 +4461,9 @@ function renderSubmissionReadonly(sub,stuId,date){
         : `${submissionIsFinalRejected(sub)
             ? `<span class="badge red">최종 불합격</span>
                <button class="btn sm outline" onclick="resetSubmissionReview('${stuId}','${date}')">↩ 판정 수정</button>`
-            : `${submissionIsApproved(sub,date)
+            : `${submissionIsAutoSubmitted(sub)
+                ? `<button class="btn sm danger" onclick="rejectSubmission('${stuId}','${date}')" title="사진이 부적합할 때만 사용하세요">✕ 다시 제출 요청</button>`
+                : submissionIsApproved(sub,date)
                 ? `<button class="btn sm outline" onclick="resetSubmissionReview('${stuId}','${date}')">↩ 판정 수정</button>`
                 : submissionIsRejected(sub,date)
                   ? `<button class="btn sm gold" onclick="confirmSubmission('${stuId}','${date}',this)">✓ 재제출 인정</button>
@@ -4734,7 +4740,7 @@ function renderSubmissionForm(stuId,date,sub){
     <label style="font-size:12px;font-weight:700;">메모 <span style="font-weight:400;color:#8a8674;">(필요할 때만 작성)</span></label>
     <textarea style="width:100%;margin-top:5px;min-height:64px;" placeholder="예: 오늘 숙제 없음 / 학원에서 완료함 / 기타 특이사항"
       oninput="currentSubState._draftSub.memo=this.value;saveDraftLocal('${stuId}','${date}')">${draft.memo||''}</textarea>
-    <div style="font-size:11px;color:#8a8674;margin-top:4px;">메모는 상황 설명용입니다. 선생님이 확인하고 인정해야 숙제 완료가 됩니다.</div>
+    <div style="font-size:11px;color:#8a8674;margin-top:4px;">메모는 상황 설명용입니다. 사진과 함께 제출하면 바로 ‘제출 완료’로 접수돼요. 숙제 완성도는 수업 시간에 선생님이 확인해요.</div>
   </div>
   ${renderDraftSizeIndicator(draft)}
   <button class="btn gold" style="width:100%;margin-top:10px;opacity:${homeworkUploadState.active?'.55':'1'};" ${homeworkUploadState.active?'disabled':''} onclick="submitHomework('${stuId}','${date}')">${homeworkUploadState.active?'사진 업로드 중...':(hasExisting ? '수정한 내용 다시 제출하기' : '숙제 인증 제출하기')}</button>
@@ -4948,7 +4954,7 @@ async function submitHomework(stuId,date){
     ...submissionDraft,
     studentId:stuId,
     date:date,
-    status:'대기',
+    status:HW_AUTO_SUBMITTED,
     reviewCount:homeworkReviewCount(existing),
     reviewReason:'',
     reviewedAt:null,
