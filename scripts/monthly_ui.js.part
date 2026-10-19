@@ -1,0 +1,155 @@
+/* ---------------- 월말 리포트 초안 (v97) ----------------
+   - 생성 로직은 위 MONTHLY_CORE(순수 함수)를 쓴다. 이 화면은 데이터 조회·저장·검토 UI만 담당한다.
+   - 저장: monthlyReports/{YYYY-MM}_{학생ID}. 자동 초안(generated)과 원장 수정본(edited)을 따로 보관하고,
+     수정본이 있으면 재생성이 덮어쓰지 않는다(새 초안은 versions에 쌓고 알림만 켠다).
+   - 자동 발송 없음. 원장이 검토·수정한 뒤 복사해서 전달한다. */
+function mrState(){ currentSubState.mr = currentSubState.mr || {month:mrPrevMonthOf(todayISO()), docs:null, loading:false, busy:'', open:'', text:'', showNew:false, msg:''}; return currentSubState.mr; }
+function mrDocId(ym,stuId){ return ym+'_'+stuId; }
+async function mrLoadDocs(ym){
+  const st=mrState(); st.loading=true; st.docs=null; scheduleRender();
+  try{
+    const snap=await fsdb.collection('monthlyReports').where('month','==',ym).get();
+    const m={}; snap.docs.forEach(d=>{ m[d.data().studentId]={id:d.id,...d.data()}; });
+    st.docs=m;
+  }catch(e){ console.error('[월말 리포트 조회]',e); st.docs={}; st.msg='월말 리포트 목록을 불러오지 못했어요. 새로고침 후 다시 시도해주세요.'; }
+  st.loading=false; scheduleRender();
+}
+function mrSetMonth(ym){ if(!/^\d{4}-\d{2}$/.test(ym)) return; const st=mrState(); st.month=ym; st.open=''; st.msg=''; mrLoadDocs(ym); }
+// 선택한 달의 원자료를 한 번에 읽는다 (반별 수업기록 범위 조회 + 주간계획 문서 + 해당 월 제출 날짜 범위 조회)
+async function mrFetchMonthData(ym){
+  const r=mrMonthRange(ym), fp=firebase.firestore.FieldPath.documentId();
+  const classes=db.classes||[], weeks=mrWeekStartsOfMonth(ym);
+  const recs={}, plans=[];
+  await Promise.all(classes.map(async c=>{
+    const snap=await fsdb.collection('classRecords').where(fp,'>=',c.id+'_'+r.start).where(fp,'<',c.id+'_'+r.endEx).get();
+    recs[c.id]=snap.docs.map(d=>({date:d.id.slice(-10),data:d.data()}));
+    await Promise.all(weeks.map(async w=>{ const doc=await fsdb.collection('weeklyPlans').doc(c.id+'_'+w).get(); if(doc.exists) plans.push({clsId:c.id,weekStart:w,plan:doc.data()}); }));
+  }));
+  const ss=await fsdb.collection('submissions').where('date','>=',r.start).where('date','<',r.endEx).get();
+  const subs=ss.docs.map(d=>({key:d.id,date:d.data().date||d.id.slice(-10),...d.data()}));
+  return {recs,plans,subs};
+}
+function mrInputForStudent(s,ym,raw){
+  const classIds=new Set(classesForStudent(s.id).map(c=>c.id));
+  const records=[];
+  Object.keys(raw.recs).forEach(cid=>raw.recs[cid].forEach(x=>{ if(x.data&&x.data[s.id]){ classIds.add(cid); records.push({clsId:cid,date:x.date,rec:x.data[s.id]}); } }));
+  const classes=[...classIds].map(classById).filter(Boolean).map(c=>({id:c.id,name:c.name}));
+  const submissions=raw.subs.filter(x=>{
+    const sid=x.studentId||'';
+    return sid===s.id || (!sid && x.key.startsWith(s.id+'_'));
+  }).map(x=>({date:x.date,classId:x.classId||'',sub:x}));
+  return {month:ym,today:todayISO(),student:{id:s.id,name:s.name,grade:s.grade},classes,records,
+    plans:raw.plans.filter(p=>classIds.has(p.clsId)),submissions,
+    kmm:(db.kmm||[]).filter(k=>k.studentId===s.id).map(k=>({date:k.date,score:k.score,range:k.range||''})),
+    stepLabelOf:(id,rec)=>stepShortLabel(id)||stepLabel(id)||(rec&&rec.stepLabelSnapshot)||''};
+}
+// 한 학생 문서를 트랜잭션으로 생성/갱신 → 중복 실행돼도 문서는 월·학생당 1개, 같은 자료면 변경 없음
+async function mrWriteOne(s,ym,raw){
+  const built=mrBuildMonthlyReport(mrInputForStudent(s,ym,raw));
+  const ref=fsdb.collection('monthlyReports').doc(mrDocId(ym,s.id));
+  const nowISO=new Date().toISOString();
+  return fsdb.runTransaction(async tx=>{
+    const snap=await tx.get(ref);
+    const res=mrApplyGenerated(snap.exists?snap.data():null,built,nowISO,s.name);
+    if(res.action==='create') tx.set(ref,res.doc);
+    else if(res.action==='update'||res.action==='newer') tx.update(ref,res.doc);
+    return res.action;
+  });
+}
+async function mrGenerate(onlyStuId){
+  const st=mrState(); if(st.busy) return;
+  const ym=st.month;
+  if(ym>=todayISO().slice(0,7) && !confirm('아직 끝나지 않은 달이에요. 지금까지의 기록으로 초안을 만들까요?')) return;
+  st.busy=onlyStuId?'one':'all'; st.msg=''; scheduleRender();
+  try{
+    const raw=await mrFetchMonthData(ym);
+    const targets=(db.students||[]).filter(s=>s.status!=='withdrawn' && (!onlyStuId||s.id===onlyStuId));
+    const count={create:0,update:0,newer:0,skip:0};
+    for(const s of targets){ const a=await mrWriteOne(s,ym,raw); count[a]=(count[a]||0)+1; }
+    st.msg=`완료 · 새로 ${count.create}명 · 갱신 ${count.update}명 · 수정본 보존+새 초안 알림 ${count.newer}명 · 변화 없음 ${count.skip}명`;
+  }catch(e){ console.error('[월말 리포트 생성]',e); st.msg='월말 리포트를 만들지 못했어요. 기존 기록은 바뀌지 않았습니다. 다시 시도해주세요.'; }
+  st.busy=''; await mrLoadDocs(ym);
+}
+function mrCurrentText(doc){ return (doc.edited&&doc.edited.text)||(doc.generated&&doc.generated.text)||''; }
+function mrOpen(stuId){ const st=mrState(); st.open=stuId; st.showNew=false; const d=st.docs&&st.docs[stuId]; st.text=d?mrCurrentText(d):''; scheduleRender(); }
+async function mrSaveEdit(stuId){
+  const st=mrState(), d=st.docs&&st.docs[stuId]; if(!d) return;
+  const text=(document.getElementById('mrText')||{}).value??st.text;
+  const ok=await fsSet('monthlyReports',d.id,{edited:{text,editedAt:new Date().toISOString(),basedOnVersion:(d.generated&&d.generated.version)||1},status:'edited'});
+  if(ok){ d.edited={text,editedAt:new Date().toISOString(),basedOnVersion:(d.generated&&d.generated.version)||1}; d.status='edited'; st.text=text; st.msg='수정본을 저장했어요.'; } else st.msg='저장하지 못했어요. 다시 시도해주세요.';
+  scheduleRender();
+}
+async function mrMarkReviewed(stuId){
+  const st=mrState(), d=st.docs&&st.docs[stuId]; if(!d) return;
+  const next=d.status==='reviewed'?(d.edited?'edited':'draft'):'reviewed';
+  const ok=await fsSet('monthlyReports',d.id,{status:next}); if(ok){ d.status=next; scheduleRender(); }
+}
+async function mrAdoptNewDraft(stuId){
+  const st=mrState(), d=st.docs&&st.docs[stuId]; if(!d||!d.generated) return;
+  if(!confirm('새 초안으로 바꿀까요? 지금 수정본은 버전 기록에 보관돼요.')) return;
+  const versions=(d.versions||[]).slice();
+  if(d.edited&&d.edited.text) versions.push({version:'edited-'+Date.now(),kind:'edited',generatedAt:d.edited.editedAt||'',text:d.edited.text});
+  const patch={edited:null,versions:versions.slice(-8),hasNewerDraft:false,status:'draft'};
+  const ok=await fsSet('monthlyReports',d.id,patch);
+  if(ok){ Object.assign(d,patch); st.text=mrCurrentText(d); st.showNew=false; st.msg='새 초안을 적용했어요.'; scheduleRender(); }
+}
+async function mrKeepEdited(stuId){
+  const st=mrState(), d=st.docs&&st.docs[stuId]; if(!d) return;
+  const ok=await fsSet('monthlyReports',d.id,{hasNewerDraft:false}); if(ok){ d.hasNewerDraft=false; st.showNew=false; scheduleRender(); }
+}
+function mrCopy(btn){
+  const ta=document.getElementById('mrText'); if(!ta||!ta.value) return;
+  btn.setAttribute('data-text',encodeURIComponent(ta.value)); copyText(btn);
+}
+function mrStatusBadge(d){
+  if(!d) return '<span class="badge gray">초안 없음</span>';
+  if(d.hasNewerDraft) return '<span class="badge yellow">새 초안 있음</span>';
+  if(d.status==='reviewed') return '<span class="badge green">확인 완료</span>';
+  if(d.edited) return '<span class="badge" style="background:#e8eefc;color:#32508f;">수정본</span>';
+  return '<span class="badge gray">초안</span>';
+}
+function renderMonthlyReports(){
+  const st=mrState();
+  if(st.docs===null && !st.loading) setTimeout(()=>mrLoadDocs(st.month),0);
+  const students=(db.students||[]).filter(s=>s.status!=='withdrawn').sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));
+  const open=st.open&&st.docs?st.docs[st.open]:null, openStu=st.open?studentById(st.open):null;
+  const nextRun=(()=>{ const t=todayISO(); const y=Number(t.slice(0,4)), m=Number(t.slice(5,7)); const ny=m===12?y+1:y, nm=m===12?1:m+1; return `${ny}-${String(nm).padStart(2,'0')}-01 00:10`; })();
+  return `
+  <h1 class="page-title">월말 리포트 초안</h1>
+  <p class="page-sub">수업·숙제·점수 기록을 모아 학생별 월말 리포트 초안을 만들어요. 자동 발송은 없고, 검토·수정 후 복사해서 전달합니다. 예약 자동 생성은 설정 시 매월 1일 00:10(한국시간)에 직전 달 초안이 만들어져요 (다음 예정: ${nextRun}).</p>
+  <div class="card" style="padding:12px 16px;">
+    <div class="row between" style="gap:10px;flex-wrap:wrap;">
+      <div class="row" style="gap:8px;"><b>대상 월</b><input type="month" value="${escapeHtml(st.month)}" onchange="mrSetMonth(this.value)"></div>
+      <div class="row" style="gap:6px;">
+        <button class="btn sm gold" ${st.busy?'disabled':''} onclick="mrGenerate()">${st.busy==='all'?'만드는 중…':'이 달 초안 만들기 · 새 자료 반영'}</button>
+      </div>
+    </div>
+    <div style="font-size:11px;color:#8a8674;margin-top:6px;">이미 수정한 리포트는 덮어쓰지 않고, 새 초안을 따로 보관한 뒤 알려드려요. 같은 자료로 다시 눌러도 변화 없이 넘어갑니다.</div>
+    ${st.msg?`<div style="margin-top:8px;font-size:12px;color:var(--navy2);font-weight:700;">${escapeHtml(st.msg)}</div>`:''}
+  </div>
+  ${st.loading?'<div class="empty">불러오는 중…</div>':''}
+  <div style="display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:14px;align-items:start;">
+    <div class="card" style="padding:8px 10px;max-height:70vh;overflow:auto;">
+      ${students.map(s=>{ const d=st.docs&&st.docs[s.id]; return `<div class="row between" style="padding:7px 4px;border-bottom:1px solid var(--line);cursor:pointer;${st.open===s.id?'background:#f7f4ea;':''}" onclick="mrOpen('${s.id}')">
+        <div><b>${escapeHtml(s.name)}</b> <span style="color:#9c9880;font-size:11px;">${escapeHtml(classNamesForStudent(s.id))}</span></div>${mrStatusBadge(d)}</div>`; }).join('') || '<div class="empty">학생이 없어요.</div>'}
+    </div>
+    <div class="card">
+      ${!st.open?'<div class="empty">왼쪽에서 학생을 선택하세요.</div>':!open?`<div class="empty">${openStu?escapeHtml(openStu.name):''} 학생의 ${escapeHtml(st.month)} 초안이 아직 없어요.<br><button class="btn sm gold" style="margin-top:10px;" ${st.busy?'disabled':''} onclick="mrGenerate('${st.open}')">이 학생 초안 만들기</button></div>`:`
+        <div class="row between" style="gap:8px;flex-wrap:wrap;"><h3 style="margin:0;">${escapeHtml(openStu?openStu.name:'')} · ${escapeHtml(st.month)} ${mrStatusBadge(open)}</h3>
+          <div style="font-size:11px;color:#8a8674;">자동 초안 v${(open.generated&&open.generated.version)||1} · ${escapeHtml(((open.generated&&open.generated.generatedAt)||'').slice(0,16).replace('T',' '))}${open.edited?` · 수정 ${escapeHtml((open.edited.editedAt||'').slice(0,16).replace('T',' '))}`:''}</div></div>
+        ${open.hasNewerDraft?`<div style="margin:10px 0;padding:10px 12px;border-radius:9px;background:#fff9e8;border:1px solid #ead89a;font-size:12px;">📌 새 기록이 반영된 새 초안이 있어요. <b>내 수정본은 그대로 보존</b>돼 있습니다.
+          <div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap;"><button class="btn sm outline" onclick="mrState().showNew=!mrState().showNew;scheduleRender();">${st.showNew?'새 초안 닫기':'새 초안 보기'}</button>
+          <button class="btn sm gold" onclick="mrAdoptNewDraft('${st.open}')">새 초안으로 바꾸기 (수정본은 보관)</button>
+          <button class="btn sm outline" onclick="mrKeepEdited('${st.open}')">내 수정본 유지 (알림 닫기)</button></div>
+          ${st.showNew?`<pre style="white-space:pre-wrap;font-family:inherit;font-size:12px;line-height:1.6;margin:10px 0 0;padding:10px;background:#fff;border-radius:8px;">${escapeHtml((open.generated&&open.generated.text)||'')}</pre>`:''}</div>`:''}
+        <textarea id="mrText" rows="22" style="width:100%;box-sizing:border-box;margin-top:10px;font-size:13px;line-height:1.7;" oninput="mrState().text=this.value">${escapeHtml(st.text||mrCurrentText(open))}</textarea>
+        <div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap;">
+          <button class="btn sm gold" onclick="mrSaveEdit('${st.open}')">수정본 저장</button>
+          <button class="btn sm outline" onclick="mrCopy(this)">복사하기</button>
+          <button class="btn sm outline" onclick="mrMarkReviewed('${st.open}')">${open.status==='reviewed'?'확인 완료 해제':'✓ 검토 완료 표시'}</button>
+          <button class="btn sm outline" ${st.busy?'disabled':''} onclick="mrGenerate('${st.open}')">이 학생만 새 자료 반영</button>
+        </div>
+        <div style="font-size:11px;color:#8a8674;margin-top:8px;">내부 전용 메모(다음 시간 메모)는 포함되지 않아요. 기록이 없는 항목은 ‘기록 없음’으로 표시됩니다. ‘다음 달 학습 방향’은 기록으로 만든 초안이니 꼭 검토해주세요.</div>`}
+    </div>
+  </div>`;
+}

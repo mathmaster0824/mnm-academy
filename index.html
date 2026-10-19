@@ -479,16 +479,20 @@ function dateDaysAgoISO(days){
   const d=new Date(); d.setHours(12,0,0,0); d.setDate(d.getDate()-Number(days||0));
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
-async function ensureClassDateData(clsId,date){
+async function ensureClassDateData(clsId,date,force){
   if(!session || session.mode!=='director' || !clsId || !/^\d{4}-\d{2}-\d{2}$/.test(date||'')) return;
   const wk=weekStartISO(date);
   const wants=[['classRecords',clsId+'_'+date],['weeklyPlans',clsId+'_'+wk],['fridaySupp',clsId+'_'+date]];
   await Promise.all(wants.map(async ([col,key])=>{
-    if(db[col] && db[col][key]!==undefined) return;
+    if(!force && db[col] && db[col][key]!==undefined) return;
     try{
-      const doc=await fsdb.collection(col).doc(key).get();
+      // v97: 반 페이지를 열 때는 캐시가 아니라 서버에서 직접 읽는다(일괄 적용 등 다른 경로로 저장된 기록이 빠지지 않게)
+      const doc=await fsdb.collection(col).doc(key).get({source:'server'});
       if(doc.exists){ db[col][key]=doc.data(); }
-    }catch(e){ console.error('[과거 수업 데이터 조회 오류]',col,key,e); }
+    }catch(e){
+      console.error('[수업 데이터 조회 오류]',col,key,e);
+      currentSubState.classLoadError='이 날짜의 수업 기록을 서버에서 불러오지 못했어요. 비어 보여도 기록이 없는 게 아닐 수 있으니 새로고침 후 다시 확인해주세요.';
+    }
   }));
   scheduleRender();
 }
@@ -529,6 +533,7 @@ function attachRoleListeners(){
   const stu=stuId?studentById(stuId):null;
   const resolvedClass=stuId?classForStudent(stuId):null;
   const clsId=resolvedClass?resolvedClass.id:(stu?stu.classId:null);
+  const studentClassIds=stuId?[...new Set(classesForStudent(stuId).map(c=>c.id).concat(clsId?[clsId]:[]))]:[];
   const subs=[];
   const recentStart=recentRecordStartISO();
   const currentWeek=weekStartISO(todayISO());
@@ -537,7 +542,7 @@ function attachRoleListeners(){
   // 로그인 때 전체 역사를 실시간 구독하지 않는다.
   // 최근 7일만 1회 읽고, 특정 과거 날짜는 화면에서 선택할 때 exact doc 1건을 읽는다.
   ['classRecords','weeklyPlans','fridaySupp'].forEach(col=>{ db[col]={}; });
-  const classIds=isDirector?(db.classes||[]).map(c=>c.id):(clsId?[clsId]:[]);
+  const classIds=isDirector?(db.classes||[]).map(c=>c.id):studentClassIds;
   Promise.all(classIds.flatMap(cid=>[
     fsdb.collection('classRecords')
       .where(firebase.firestore.FieldPath.documentId(),'>=',cid+'_'+recentStart)
@@ -812,6 +817,9 @@ function isLegacyHomeworkDate(date){
 // 새 인증은 '대기', 원장 확인은 '확인', 불합격은 '불합격'.
 
 const HOMEWORK_MAX_REVIEWS = 3;
+// v97: 학생이 사진과 함께 제출하면 자동으로 저장되는 상태. 원장 수동 승인 없이 제출로 인정하며, 품질은 '숙제 완성도'(수업기록)로 따로 평가한다.
+const HW_AUTO_SUBMITTED = '제출완료';
+function submissionIsAutoSubmitted(sub){ return !!sub && String(sub.status||'').trim()===HW_AUTO_SUBMITTED; }
 
 function homeworkReviewCount(sub){
   const n = Number(sub && sub.reviewCount);
@@ -880,6 +888,7 @@ function submissionReviewState(sub,date,stuId){
   const status = String(sub.status||'').trim();
   if(!status) return 'approved'; // 기존 레거시 제출 보호
   if(status==='확인' || status==='approved') return 'approved';
+  if(status===HW_AUTO_SUBMITTED) return 'approved'; // v97: 사진 제출 즉시 '제출 완료'(제출 사실만 의미, 품질 평가 아님)
   if(status==='최종불합격') return 'rejected';
   if(status==='불합격' || status==='rejected') return 'rejected';
   return 'pending'; // '대기' 및 알 수 없는 신규 상태는 안전하게 검토대기
@@ -896,7 +905,7 @@ function homeworkReviewMark(sub,date,stuId){
 function homeworkReviewLabel(sub,date,stuId){
   const eff=homeworkEffectiveState(sub,date,stuId);
   if(eff==='unknown') return '조회 중';
-  if(eff==='approved') return '인정';
+  if(eff==='approved') return submissionIsAutoSubmitted(sub) ? '제출 완료' : '인정';
   if(eff==='pending') return '검토대기';
   if(eff==='needsRevision') return '수정필요';
   if(eff==='missing') return '미제출';
@@ -998,6 +1007,7 @@ const DIRECTOR_NAV = [
   {id:'videolib', label:'영상 보관함', icon:'🎬', group:'자료'},
   {id:'schoolExams', label:'내신 성적', icon:'🏫', group:'기록 · 보고'},
   {id:'feedback', label:'학부모 학습안내', icon:'📨', group:'기록 · 보고'},
+  {id:'monthlyReport', label:'월말 리포트', icon:'🗓️', group:'기록 · 보고'},
   {id:'audit', label:'전체 최종점검', icon:'✅', group:'설정 · 관리'},
   {id:'backup', label:'데이터 백업', icon:'🗂️', group:'설정 · 관리'},
 ];
@@ -1297,13 +1307,66 @@ async function handleMultiPhotoInput(inputEl, targetArrPush, maxW=480, quality=0
 
 /* ---------------- DOMAIN LOGIC ---------------- */
 
-function studentById(id){ return db.students.find(s=>s.id===id); }
+function studentById(id){
+  return db.students.find(s=>s.id===id) || ((typeof id==='string' && id.indexOf('_')>0) ? (hwSlotParts(id)?.student||undefined) : undefined);
+}
 function classById(id){ return db.classes.find(c=>c.id===id); }
-function classForStudent(stuId){
-  const byMembership=(db.classes||[]).find(c=>(c.studentIds||[]).includes(stuId));
-  if(byMembership) return byMembership;
-  const s=studentById(stuId);
-  return s&&s.classId ? classById(s.classId) : null;
+/* v97 복수 반 수강
+   - 학생 프로필은 1건. 소속 반은 classes.studentIds(여러 반 가능) + 레거시 students.classId(단일)로 읽는다.
+   - 대표 반(primary): students.classId가 소속 반이면 그 반, 아니면 첫 소속 반.
+   - 숙제 제출 문서 키: 대표 반/단일 반 학생은 기존 그대로 '학생ID_날짜'.
+     복수 반 학생의 대표 반이 아닌 반은 '학생ID_반ID_날짜'(슬롯 ID = '학생ID_반ID'). 끝 10자는 항상 날짜.
+   - 과거 문서는 변환하지 않는다. */
+function classesForStudent(stuId){
+  const s=db.students.find(x=>x.id===stuId);
+  const list=(db.classes||[]).filter(c=>(c.studentIds||[]).includes(stuId));
+  if(!list.length && s && s.classId){ const c=classById(s.classId); if(c) list.push(c); }
+  if(s && s.classId){ const i=list.findIndex(c=>c.id===s.classId); if(i>0) list.unshift(list.splice(i,1)[0]); }
+  return list;
+}
+function classNamesForStudent(stuId){ const l=classesForStudent(stuId); return l.length?l.map(c=>c.name).join(' · '):'미배정'; }
+function primaryClassId(stuId){ const l=classesForStudent(stuId); return l.length?l[0].id:''; }
+function classForStudent(stuId){ const l=classesForStudent(stuId); return l.length?l[0]:null; }
+function hwSlotId(stuId,clsId){
+  if(!clsId) return stuId;
+  const l=classesForStudent(stuId);
+  if(l.length<2 || clsId===l[0].id || !l.some(c=>c.id===clsId)) return stuId;
+  return stuId+'_'+clsId;
+}
+function hwSlotParts(id){
+  if(typeof id!=='string') return null;
+  const direct=db.students.find(x=>x.id===id);
+  if(direct) return {student:direct,stuId:direct.id,clsId:''};
+  for(const st of db.students){
+    if(id.length>st.id.length+1 && id.startsWith(st.id+'_')){
+      const clsId=id.slice(st.id.length+1);
+      if(classById(clsId)) return {student:st,stuId:st.id,clsId};
+    }
+  }
+  return null;
+}
+function baseStudentId(id){ const p=hwSlotParts(id); return p?p.stuId:id; }
+// 반별 숙제 제출 조회. 슬롯 문서가 없으면 반 정보가 없는 기존(레거시) 기본 문서를 그대로 인정한다.
+function subForClass(stuId,clsId,date){
+  if(!clsId) return db.submissions[stuId+'_'+date];
+  const slot=hwSlotId(stuId,clsId);
+  if(slot!==stuId){
+    const sec=db.submissions[slot+'_'+date];
+    if(sec) return sec;
+    const legacy=db.submissions[stuId+'_'+date];
+    return (legacy && !legacy.classId) ? legacy : undefined;
+  }
+  const base=db.submissions[stuId+'_'+date];
+  if(base && base.classId && base.classId!==clsId) return undefined;
+  return base;
+}
+// 이 날짜(요일)에 숙제 계획이 있는 소속 반 목록 (반별 계획은 weeklyPlans/{반ID}_{주} 안의 학생별 요일 칸)
+function homeworkClassesForDate(stuId,date){
+  const wk=weekStartISO(date), dayKey=DAY_KEYS[new Date(date+'T00:00:00').getDay()];
+  return classesForStudent(stuId).filter(c=>{
+    const per=(db.weeklyPlans[c.id+'_'+wk]||{})[stuId]||{};
+    return !!per[dayKey];
+  });
 }
 function courseById(id){ return db.courses.find(c=>c.id===id); }
 const COURSE_ORDER = [
@@ -1557,6 +1620,7 @@ function renderInner(){
       case 'hwreview': html+=renderHomeworkReview(); break;
       case 'qna': html+=renderQnaDirector(); break;
       case 'feedback': html+=renderFeedback(); break;
+      case 'monthlyReport': html+=renderMonthlyReports(); break;
       case 'audit': html+=renderFinalAudit(); break;
       case 'backup': html+=renderBackup(); break;
       default: html+=renderDashboard();
@@ -1939,7 +2003,7 @@ function renderClassDetail(cls){
   const loadKey=cls.id+'_'+date;
   if(!currentSubState._classDateLoaded[loadKey]){
     currentSubState._classDateLoaded[loadKey]=true;
-    setTimeout(()=>ensureClassDateData(cls.id,date),0);
+    setTimeout(()=>ensureClassDateData(cls.id,date,true),0);
   }
   const dayGroupLabel = cls.dayGroup==='mon-wed' ? '월수반' : '화목반';
   const students = (cls.studentIds||[]).map(studentById).filter(Boolean);
@@ -1965,6 +2029,7 @@ function renderClassDetail(cls){
   Object.values(db.classRecords).forEach(obj=>{ Object.values(obj).forEach(r=>{ if(r.practiceBook) bookNames.add(r.practiceBook); }); });
 
   return `
+  ${currentSubState.classLoadError?`<div style="padding:10px 12px;margin-bottom:12px;border-radius:9px;background:#fff3f1;color:#a83b32;font-size:12px;">${currentSubState.classLoadError}</div>`:''}
   <div class="card">
     <div class="row between">
       <div><h3 style="margin:0;">${cls.name} <span class="badge gray">${dayGroupLabel}</span></h3></div>
@@ -1987,8 +2052,8 @@ function renderClassDetail(cls){
     <h3 style="margin-top:0;">일괄 적용 (반 전체)</h3>
     <div class="row">
       <select id="bulkAtt"><option value="">출석</option><option>출석</option><option>지각</option><option>결석</option></select>
-      <select id="bulkStepType"><option value="개념">개념학습</option><option value="유형">유형학습</option></select>
-      <select id="bulkCourseSel" onchange="onBulkCourseChange()"><option value="">학년학기</option>${sortedCourses().map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
+      <select id="bulkStepType"><option value="">개념/유형 (변경 안 함)</option><option value="개념">개념학습</option><option value="유형">유형학습</option></select>
+      <select id="bulkCourseSel" onchange="onBulkCourseChange()"><option value="">학년학기</option>${sortedCourses().map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}<option value="${STEP_ETC_ID}">${STEP_ETC_LABEL}</option></select>
       <select id="bulkStep"><option value="">STEP (학년학기 먼저 선택)</option></select>
       <select id="bulkHwComp"><option value="">숙제완성도</option><option>상</option><option>중</option><option>하</option></select>
       <select id="bulkStudyComp"><option value="">학습완성도</option><option>상</option><option>중</option><option>하</option></select>
@@ -2036,7 +2101,7 @@ function renderClassDetail(cls){
     <p style="font-size:12px;color:#8a8674;margin:0 0 10px;">위 수업 기록 표에 입력하신 내용을 바탕으로, 바로 카톡에 보낼 수 있는 문구가 자동으로 만들어져요.</p>
     ${students.length ? students.map(s=>{
       const r = rec[s.id] || {};
-      const text = buildDailyReportText(s, date, r, cls.dayGroup);
+      const text = buildDailyReportText(s, date, r, cls.dayGroup, cls.id);
       return `<div style="padding:10px 0;border-bottom:1px solid var(--line);">
         <div class="row between"><b>${s.name}</b><button class="btn sm outline" onclick="copyText(this)" data-text="${encodeURIComponent(text)}">복사하기</button></div>
         <pre style="white-space:pre-wrap;font-family:inherit;font-size:12px;line-height:1.6;margin:6px 0 0;color:#4a4636;">${text}</pre>
@@ -2055,7 +2120,7 @@ function renderClassDetail(cls){
   </div>
   `;
 }
-function buildDailyReportText(s, date, r, dayGroup){
+function buildDailyReportText(s, date, r, dayGroup, clsId){
   const trafficEmoji = {green:'🟢',yellow:'🟡',red:'🔴'}[dailyTrafficForStudentDate(s.id, date)] || '⚪';
   const stepTxt = r.stepId ? (stepShortLabel(r.stepId)||stepLabel(r.stepId)||r.stepLabelSnapshot||'-') : (r.stepLabelSnapshot||'-');
   const extraStepsTxt = (r.extraSteps&&r.extraSteps.length)
@@ -2063,18 +2128,21 @@ function buildDailyReportText(s, date, r, dayGroup){
     : ((r.extraStepLabelSnapshots&&r.extraStepLabelSnapshots.length) ? ' + '+r.extraStepLabelSnapshots.filter(Boolean).join(', ') : '');
   // 숙제완성도는 수업기록의 수기 등급이 아니라 실제 submissions 인증 기록으로 계산.
   const hwDates = homeworkDateRangeDates(dayGroup, date);
-  const hwApproved = hwDates.filter(d=>homeworkCountsAsCompleted(db.submissions[s.id+'_'+d],d));
-  const hwPending = hwDates.filter(d=>submissionIsPending(db.submissions[s.id+'_'+d],d));
+  const subOf = d => clsId ? subForClass(s.id,clsId,d) : db.submissions[s.id+'_'+d];
+  const hwApproved = hwDates.filter(d=>homeworkCountsAsCompleted(subOf(d),d));
+  const hwPending = hwDates.filter(d=>submissionIsPending(subOf(d),d));
   const hwMissing = hwDates.filter(d=>{
-    const sub=db.submissions[s.id+'_'+d];
+    const sub=subOf(d);
     return !sub || submissionIsRejected(sub,d);
   });
   const hwCompletionText = hwDates.length
-    ? `${hwApproved.length}/${hwDates.length} 인정${hwPending.length ? ` · 검토대기 ${hwPending.map(d=>d.slice(5).replace('-','/')).join(', ')}` : ''}${hwMissing.length ? ` · 미인증/불합격 ${hwMissing.map(d=>d.slice(5).replace('-','/')).join(', ')}` : (hwApproved.length===hwDates.length ? ' · 전체 인정' : '')}`
+    ? `${hwApproved.length}/${hwDates.length} 제출${hwPending.length ? ` · 검토대기 ${hwPending.map(d=>d.slice(5).replace('-','/')).join(', ')}` : ''}${hwMissing.length ? ` · 미제출·재제출 필요 ${hwMissing.map(d=>d.slice(5).replace('-','/')).join(', ')}` : (hwApproved.length===hwDates.length ? ' · 전체 제출' : '')}`
     : '확인할 숙제 날짜 없음';
 
-  const hwLevel = r.homeworkCompletionLevel || suggestedHomeworkLevel(s.id, dayGroup, date);
-  const hwTxt = hwLevel ? `${hwLevel} — ${homeworkLevelPhrase(hwLevel)}` : '-';
+  // v97: 완성도는 수업 중 원장이 기록한 값만 사용한다(제출 비율로 자동 추정하지 않음).
+  const hwQualityTxt = HW_QUALITY_GUIDE[r.homeworkCompletionLevel] ? `${r.homeworkCompletionLevel} — ${HW_QUALITY_GUIDE[r.homeworkCompletionLevel]}` : '미평가';
+  const lessonDetailTxt = String(r.lessonDetail||'').replace(/\s*\n+\s*/g,' ').trim();
+  const lessonDetailLine = lessonDetailTxt ? `\n· 수업 상세: ${lessonDetailTxt}` : '';
   const todayKmm = db.kmm.find(k=>k.studentId===s.id && k.date===date);
   const hasScore = r.dailyTestScore!==undefined && r.dailyTestScore!=='' && r.dailyTestScore!==null;
   let examLine;
@@ -2100,19 +2168,25 @@ function buildDailyReportText(s, date, r, dayGroup){
   return `[M&m 수학훈련소] ${s.name} 학생 오늘의 학습 리포트 · ${fmtDate(date)}
 ${trafficEmoji} 출석: ${r.attendance||'-'}
 ${examLine}${kmmMakeupTxt}
-· 오늘 ${r.stepType==='유형'?'유형학습':'개념학습'}: ${stepTxt}${extraStepsTxt}
+· 오늘 ${r.stepType==='유형'?'유형학습':'개념학습'}: ${stepTxt}${extraStepsTxt}${lessonDetailLine}
 ${r.practiceBook? `· 문제 적용: ${r.practiceBook}${r.practiceRange? ' '+r.practiceRange : ''}${(r.extraPractice&&r.extraPractice.length)? ', '+r.extraPractice.map(e=>`${e.book}${e.range?' '+e.range:''}`).join(', ') : ''}` : ((r.extraPractice&&r.extraPractice.length)? `· 문제 적용: ${r.extraPractice.map(e=>`${e.book}${e.range?' '+e.range:''}`).join(', ')}` : '')}
-· 숙제완성도: ${hwCompletionText}
+· 숙제 제출 이행: ${hwCompletionText}
+· 숙제 완성도: ${hwQualityTxt}
 ${r.note? `· 특이사항: ${r.note}` : ''}${warnTxt}${bookDoneTxt}`;
 }
 function allStepOptions(){
   let opts=''; db.courses.forEach(c=>{ c.steps.forEach(st=>{ opts+=`<option value="${st.id}">[${c.name}] ${st.name}</option>`; }); }); return opts;
 }
+// v97: 표준 STEP에 맞는 항목이 없을 때 쓰는 통계용 표준값. 구체 내용은 lessonDetail에 따로 저장한다.
+const STEP_ETC_ID='__etc__', STEP_ETC_LABEL='기타·직접입력';
+const HW_QUALITY_GUIDE={'상':'지정 범위를 대부분 완료했고 풀이 과정과 오답 정리가 충실함','중':'일부 누락이 있거나 풀이·오답 정리가 충분하지 않음','하':'미완성 범위가 많거나 풀이 흔적이 부족함'};
 function stepLabel(stepId){
+  if(stepId===STEP_ETC_ID) return STEP_ETC_LABEL;
   for(const c of db.courses){ const st=(c.steps||[]).find(x=>x.id===stepId); if(st) return `[${c.name}] ${st.name}`; }
   return '';
 }
 function stepShortLabel(stepId){
+  if(stepId===STEP_ETC_ID) return STEP_ETC_LABEL;
   for(const c of db.courses){
     const st = (c.steps||[]).find(x=>x.id===stepId);
     if(st){
@@ -2145,7 +2219,7 @@ function renderStepCascadeSelect(clsId, date, stuId, currentStepId){
   currentSubState._stepCourseSel = currentSubState._stepCourseSel || {};
   let selCourseId = currentSubState._stepCourseSel[rowKey];
   if(selCourseId===undefined){
-    selCourseId = courseIdForStep(currentStepId) || '';
+    selCourseId = currentStepId===STEP_ETC_ID ? STEP_ETC_ID : (courseIdForStep(currentStepId) || '');
     if(!selCourseId){
       const last = lastRecordedStep(stuId, date);
       if(last) selCourseId = courseIdForStep(last.stepId) || '';
@@ -2154,14 +2228,27 @@ function renderStepCascadeSelect(clsId, date, stuId, currentStepId){
   const course = courseById(selCourseId);
   const steps = course ? (course.steps||[]) : [];
   return `
-  <select style="max-width:150px;font-size:11px;" onchange="currentSubState._stepCourseSel['${rowKey}']=this.value;render();">
+  <select style="max-width:150px;font-size:11px;" onchange="onStepCourseChange('${clsId}','${date}','${stuId}','${rowKey}',this.value)">
     <option value="">학년학기 선택</option>
     ${sortedCourses().map(c=>`<option value="${c.id}" ${c.id===selCourseId?'selected':''}>${c.name}</option>`).join('')}
+    <option value="${STEP_ETC_ID}" ${selCourseId===STEP_ETC_ID?'selected':''}>${STEP_ETC_LABEL}</option>
   </select>
   <select style="max-width:150px;font-size:11px;margin-top:4px;" onchange="updateClassRec('${clsId}','${date}','${stuId}','stepId',this.value)" ${!course?'disabled':''}>
     <option value="">${course?'STEP 선택':'학년학기 먼저 선택'}</option>
     ${steps.map(st=>`<option value="${st.id}" ${currentStepId===st.id?'selected':''}>${st.name}</option>`).join('')}
   </select>`;
+}
+function onStepCourseChange(clsId,date,stuId,rowKey,val){
+  currentSubState._stepCourseSel = currentSubState._stepCourseSel || {};
+  currentSubState._stepCourseSel[rowKey]=val;
+  if(val===STEP_ETC_ID){ updateClassRec(clsId,date,stuId,'stepId',STEP_ETC_ID); return; }
+  render();
+}
+function renderLessonDetailInput(clsId,date,stuId,r){
+  return `<div style="margin-top:6px;">
+    <label style="font-size:10px;color:#8a8674;display:block;margin-bottom:2px;">수업 상세 <span style="color:#b08a2e;">(일일리포트에 표시)</span></label>
+    <textarea rows="2" maxlength="300" placeholder="예: 외심 작도 복습, 교재 82쪽 3~7번" style="font-size:11px;width:100%;box-sizing:border-box;" onchange="updateClassRec('${clsId}','${date}','${stuId}','lessonDetail',this.value.trim())">${escapeHtml(r.lessonDetail||'')}</textarea>
+  </div>`;
 }
 function renderExtraSteps(clsId, date, stuId, extraSteps){
   const rowKey = `${clsId}_${date}_${stuId}`;
@@ -2484,15 +2571,15 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames, focusRecommended=f
   const videoTotal = (r.videoAssignments||[]).length;
   const hwDateRange = homeworkDateRangeDates(cls.dayGroup, date);
   const dayChecklist = hwDateRange.map(d=>{
-    const daySub = db.submissions[s.id+'_'+d];
+    const daySub = subForClass(s.id,cls.id,d);
     const dowKey = DAY_KEYS[new Date(d+'T00:00:00').getDay()];
     const st = submissionReviewState(daySub,d,s.id);
     const cls2 = st==='approved' ? 'green' : st==='pending' ? 'yellow' : st==='unknown' ? 'gray' : 'red';
     return `<span class="badge ${cls2}" title="${homeworkReviewLabel(daySub,d,s.id)}" style="margin:2px 3px 0 0;font-size:9px;padding:2px 6px;">${DAY_LABEL[dowKey]} ${homeworkReviewMark(daySub,d,s.id)}</span>`;
   }).join('');
-  const submittedCount = hwDateRange.filter(d=>homeworkCountsAsCompleted(db.submissions[s.id+'_'+d],d)).length;
+  const submittedCount = hwDateRange.filter(d=>homeworkCountsAsCompleted(subForClass(s.id,cls.id,d),d)).length;
   const totalRangeDays = hwDateRange.length;
-  const hwLevel = r.homeworkCompletionLevel || suggestedHomeworkLevel(s.id, cls.dayGroup, date);
+  const hwLevel = r.homeworkCompletionLevel || '';
   const status = studentStatus(s.id);
   const nameBg = status==='STOP' ? '#fbe6e2' : status==='SLOW' ? '#fdf2df' : '';
   const warnCount = verifiedWarnings(s).length;
@@ -2503,12 +2590,12 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames, focusRecommended=f
   const conceptHtml = (()=>{
     const last = lastRecordedStep(s.id, date);
     const hint = last ? `<div style="font-size:10px;color:#8a8674;margin-bottom:5px;">지난 시간(${fmtDate(last.date)}): ${stepShortLabel(last.stepId)}</div>` : '';
-    const memoBox = `<textarea placeholder="📝 다음 시간 메모 (나만 보임)" rows="2" style="font-size:11px;width:100%;margin-bottom:6px;background:#fffbea;box-sizing:border-box;" onchange="fsUpdate('students','${s.id}',{conceptMemo:this.value})">${s.conceptMemo||''}</textarea>`;
+    const memoBox = `<textarea placeholder="📝 다음 시간 메모 (나만 보임 · 리포트에 안 나가요)" rows="2" style="font-size:11px;width:100%;margin-bottom:6px;background:#fffbea;box-sizing:border-box;" onchange="fsUpdate('students','${s.id}',{conceptMemo:this.value})">${s.conceptMemo||''}</textarea>`;
     const typeSelect = `<select style="width:100%;font-size:11px;margin-bottom:6px;" onchange="updateClassRec('${cls.id}','${date}','${s.id}','stepType',this.value)">
       <option value="개념" ${(r.stepType||'개념')==='개념'?'selected':''}>오늘: 개념학습</option>
       <option value="유형" ${r.stepType==='유형'?'selected':''}>오늘: 유형학습</option>
     </select>`;
-    return hint + memoBox + typeSelect + renderStepCascadeSelect(cls.id, date, s.id, r.stepId) + renderExtraSteps(cls.id, date, s.id, r.extraSteps);
+    return hint + memoBox + typeSelect + renderStepCascadeSelect(cls.id, date, s.id, r.stepId) + renderLessonDetailInput(cls.id, date, s.id, r) + renderExtraSteps(cls.id, date, s.id, r.extraSteps);
   })();
 
   return `<div class="class-student-card" style="${nameBg?`border-left:5px solid ${status==='STOP'?'var(--red)':'var(--gold)'};`:''}">
@@ -2560,9 +2647,10 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames, focusRecommended=f
         <div style="font-size:11px;color:#6b6858;line-height:1.5;">${hwText||'-'}</div>
         ${totalRangeDays? `<div style="margin-top:7px;">${dayChecklist}</div><div style="font-size:10px;color:#8a8674;margin-top:4px;">${submittedCount}/${totalRangeDays} 제출</div>` : ''}
         <div class="class-mini-grid" style="grid-template-columns:1fr 1fr;margin-top:9px;">
-          <div class="class-field"><label>숙제완성도</label><select onchange="updateClassRec('${cls.id}','${date}','${s.id}','homeworkCompletionLevel',this.value)"><option value="">-</option>${['상','중','하'].map(o=>`<option ${hwLevel===o?'selected':''}>${o}</option>`).join('')}</select></div>
+          <div class="class-field"><label title="상: ${HW_QUALITY_GUIDE['상']}&#10;중: ${HW_QUALITY_GUIDE['중']}&#10;하: ${HW_QUALITY_GUIDE['하']}">숙제 완성도 ⓘ</label><select onchange="updateClassRec('${cls.id}','${date}','${s.id}','homeworkCompletionLevel',this.value)"><option value="">미평가</option>${['상','중','하'].map(o=>`<option ${hwLevel===o?'selected':''}>${o}</option>`).join('')}</select></div>
           <div class="class-field"><label>학습완성도</label><select onchange="updateClassRec('${cls.id}','${date}','${s.id}','studyCompletionLevel',this.value)"><option value="">-</option>${['상','중','하'].map(o=>`<option ${r.studyCompletionLevel===o?'selected':''}>${o}</option>`).join('')}</select></div>
         </div>
+        <div style="font-size:9.5px;color:#8a8674;margin-top:5px;line-height:1.5;">완성도는 제출 여부와 별개로 수업 중 직접 기록해요. 상: 대부분 완료·풀이/오답정리 충실 · 중: 일부 누락 또는 정리 부족 · 하: 미완성 많음·풀이 흔적 부족</div>
       </div>
 
       <div class="class-record-box class-note">
@@ -2685,7 +2773,10 @@ async function assignStudent(clsId){
   const cls=classById(clsId);
   const newIds = [...(cls.studentIds||[]), sel.value];
   await fsSet('classes', clsId, {studentIds:newIds});
-  await fsUpdate('students', sel.value, {classId:clsId});
+  // v97: 이미 대표 반이 있는 학생(복수 반 수강)의 classId는 바꾸지 않는다. 대표 반이 없을 때만 지정.
+  const stu=studentById(sel.value);
+  const stillIn=stu&&stu.classId&&(classById(stu.classId)?.studentIds||[]).includes(stu.id);
+  if(!stillIn) await fsUpdate('students', sel.value, {classId:clsId});
 }
 async function unassignStudent(clsId,stuId){
   const cls=classById(clsId);
@@ -2705,6 +2796,7 @@ function onBulkCourseChange(){
   const courseId = document.getElementById('bulkCourseSel').value;
   const course = courseById(courseId);
   const sel = document.getElementById('bulkStep');
+  if(courseId===STEP_ETC_ID){ sel.innerHTML = `<option value="${STEP_ETC_ID}" selected>${STEP_ETC_LABEL}</option>`; return; }
   sel.innerHTML = `<option value="">${course?'STEP 선택':'STEP (학년학기 먼저 선택)'}</option>` + (course ? (course.steps||[]).map(st=>`<option value="${st.id}">${st.name}</option>`).join('') : '');
 }
 function courseGradeLevel(courseId){
@@ -2769,12 +2861,25 @@ async function applyBulk(clsId,date){
   (cls.studentIds||[]).forEach(stuId=>{
     const patch = {};
     if(att) patch.attendance=att;
-    if(step){ patch.stepId=step; patch.stepType=stepType; }
+    if(stepType) patch.stepType=stepType;
+    if(step){ patch.stepId=step; if(!stepType) patch.stepType='개념'; patch.stepLabelSnapshot=stepShortLabel(step)||stepLabel(step)||''; }
     if(hw) patch.homeworkCompletionLevel=hw;
     if(study) patch.studyCompletionLevel=study;
-    upd[stuId]=patch;
+    if(Object.keys(patch).length) upd[stuId]=patch;
   });
-  await fsSet('classRecords', key, upd);
+  if(!Object.keys(upd).length){ alert('적용할 항목을 먼저 선택해주세요. (STEP은 학년학기를 고른 뒤 STEP까지 선택해야 해요. 개념/유형만 바꾸려면 그것만 골라도 돼요)'); return; }
+  // 수업기록은 최근 7일만 1회 읽어 오므로, 저장 성공 뒤 화면용 데이터(db)에도 직접 반영해야 바로 보인다.
+  const before=db.classRecords[key]?JSON.parse(JSON.stringify(db.classRecords[key])):null;
+  const merged={...(db.classRecords[key]||{})};
+  Object.keys(upd).forEach(id=>{ merged[id]={...(merged[id]||{}),...upd[id]}; });
+  db.classRecords[key]=merged;
+  render();
+  const ok=await fsSet('classRecords', key, upd);
+  if(!ok){
+    if(before) db.classRecords[key]=before; else delete db.classRecords[key];
+    render();
+    alert('일괄 적용을 저장하지 못했어요. 기존 기록은 바뀌지 않았습니다. 다시 시도해주세요.');
+  }
 }
 
 function renderWeeklyPlan(cls, date){
@@ -4176,7 +4281,6 @@ function renderStudentDetail(stuId, directorView){
   });
 
   const wk = weekStartISO(todayISO());
-  const myWeekPlan = s.classId ? (db.weeklyPlans[s.classId+'_'+wk] || {})[stuId] || {} : {};
 
   return `
   ${directorView? `<button class="btn sm outline" style="margin-bottom:14px;" onclick="currentSubState.studentDetail=null;render();">← 목록으로</button>` : ''}
@@ -4186,7 +4290,7 @@ function renderStudentDetail(stuId, directorView){
     <div class="row between">
       <div>
         <h2 style="margin:0 0 4px;">${s.name} <span style="font-size:14px;color:#9c9880;">(${s.grade})</span> ${s.status==='withdrawn'?'<span class="badge gray">퇴원생</span>':''}</h2>
-        <span class="studentcode">${s.code}</span> · ${cls? cls.name : '미배정'} · ${statusBadge(status)} ${warningCountBadge(verifiedWarnings(s).length)}
+        <span class="studentcode">${s.code}</span> · ${escapeHtml(classNamesForStudent(stuId))} · ${statusBadge(status)} ${warningCountBadge(verifiedWarnings(s).length)}
       </div>
       ${directorView? `<div class="row">
         <button class="btn sm ${currentSubState.previewAsStudent?'gold':'outline'}" onclick="currentSubState.previewAsStudent=!currentSubState.previewAsStudent;render();">${currentSubState.previewAsStudent?'✓ 학생 화면 미리보기 중':'🔍 학생 화면 그대로 보기'}</button>
@@ -4226,7 +4330,7 @@ function renderStudentDetail(stuId, directorView){
     ${histRows.length? `<table><tr><th>날짜</th><th>출석</th><th>일일테스트</th><th>진도</th><th>숙제완성도</th><th>학습완성도</th><th>특이사항</th></tr>
       ${histRows.slice(0,30).map(h=>`<tr><td>${fmtDate(h.date)}</td><td>${h.attendance||'-'}</td>
       <td>${h.dailyTestScore!==undefined && h.dailyTestScore!=='' ? h.dailyTestScore + (Number(h.dailyTestScore)>=80?' <span class="badge green">PASS</span>':' <span class="badge red">FAIL</span>') : '-'}</td>
-      <td>${stepLabel(h.stepId)||'-'}${(h.extraSteps&&h.extraSteps.length)? '<br><span style="color:#9c9880;">+ '+h.extraSteps.map(id=>stepLabel(id)).filter(Boolean).join(', ')+'</span>':''}</td><td>${h.homeworkCompletionLevel||'-'}</td><td>${h.studyCompletionLevel||'-'}</td><td>${h.note||'-'}</td></tr>`).join('')}
+      <td>${stepLabel(h.stepId)||'-'}${h.lessonDetail?'<br><span style="color:#6f6958;">'+escapeHtml(h.lessonDetail)+'</span>':''}${(h.extraSteps&&h.extraSteps.length)? '<br><span style="color:#9c9880;">+ '+h.extraSteps.map(id=>stepLabel(id)).filter(Boolean).join(', ')+'</span>':''}</td><td>${h.homeworkCompletionLevel||'-'}</td><td>${h.studyCompletionLevel||'-'}</td><td>${h.note||'-'}</td></tr>`).join('')}
       </table>` : `<div class="empty">기록이 없어요.</div>`}
   </div>
 
@@ -4257,13 +4361,7 @@ function renderStudentDetail(stuId, directorView){
     </div>`).join('') : `<div class="empty">부여된 영상 과제가 없어요.</div>`}
   </div>
 
-  <div class="card">
-    <h3 style="margin-top:0;">이번 주 숙제 계획</h3>
-    <div class="weekgrid" style="grid-template-columns:70px repeat(7,1fr);">
-      <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div class="hd">${DAY_LABEL[k]}</div>`).join('')}
-      <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div style="font-size:11px;padding:4px;border:1px solid var(--line);border-radius:6px;min-height:44px;">${myWeekPlan[k]||''}</div>`).join('')}
-    </div>
-  </div>
+    ${renderWeekPlanGrids(stuId,'이번 주 숙제 계획')}
 
   ${directorView ? renderHomeworkGlanceForWarning(stuId) : ''}
   ${renderWarningsCard(stuId, directorView)}
@@ -4346,10 +4444,10 @@ function renderHomeworkReview(){
   ${rows.length? rows.map(r=>{
     const s = studentById(r.studentId);
     const cls = s ? classForStudent(r.studentId) : null;
-    const hwContent = s ? homeworkContentForDate(r.studentId, cls?.id||s.classId, r.date) : '';
+    const hwContent = s ? homeworkContentForDate(baseStudentId(r.studentId), (r.classId||cls?.id||s.classId), r.date) : '';
     return `<div class="card">
       <div class="row between">
-        <div><b>${s? s.name : '(삭제된 학생)'}</b> <span style="color:#9c9880;font-size:12px;">${cls? cls.name+' · ':''}${fmtDate(r.date)}</span>
+        <div><b>${s? s.name : '(삭제된 학생)'}</b> <span style="color:#9c9880;font-size:12px;">${(r.classId&&classById(r.classId)?classById(r.classId).name:cls?.name)? (r.classId&&classById(r.classId)?classById(r.classId).name:cls.name)+' · ':''}${fmtDate(r.date)}</span>
           ${hwContent? `<div style="font-size:12px;color:#6b6858;margin-top:2px;">📖 그날 숙제: ${hwContent}</div>` : ''}
         </div>
         <div class="row">
@@ -4362,9 +4460,9 @@ function renderHomeworkReview(){
             ? `<span class="badge">🔒 과거 기록 · 조회 전용</span>`
             : `${submissionIsFinalRejected(r)
                 ? `<span class="badge red">최종 불합격</span>`
-                : `${submissionReviewState(r,r.date)!=='approved' ? `<button class="btn sm gold" onclick="confirmSubmission('${r.studentId}','${r.date}',this)">✓ 숙제 인정</button>` : ''}
+                : `${submissionReviewState(r,r.date)!=='approved' && !submissionIsAutoSubmitted(r) ? `<button class="btn sm gold" onclick="confirmSubmission('${r.studentId}','${r.date}',this)">✓ 숙제 인정</button>` : ''}
                    ${submissionReviewState(r,r.date)!=='rejected' ? `<button class="btn sm danger" onclick="rejectSubmission('${r.studentId}','${r.date}')">✕ 불합격</button>` : ''}`}`}
-          ${s ? `<button class="btn sm outline" onclick="goto('students');currentSubState.studentDetail='${r.studentId}';render();">학생 페이지</button>` : ''}
+          ${s ? `<button class="btn sm outline" onclick="goto('students');currentSubState.studentDetail='${baseStudentId(r.studentId)}';render();">학생 페이지</button>` : ''}
         </div>
       </div>
       <div style="margin-top:8px;font-size:12px;color:#8a8674;">
@@ -4388,6 +4486,19 @@ function renderHomeworkReview(){
 function renderSubmissionCard(stuId, directorView, previewAsStudent){
   const asStudent = session.mode==='student' || previewAsStudent;
   const date = currentSubState.subDate || (asStudent ? academicTodayISO() : todayISO());
+  // v97 복수 반: 같은 날 숙제가 있는 반이 둘 이상이면 반을 고르게 하고, 선택한 반의 슬롯 ID로 제출/임시저장/타이머를 분리한다.
+  let classPicker='';
+  if(asStudent && classesForStudent(stuId).length>1){
+    const opts=homeworkClassesForDate(stuId,date);
+    if(opts.length>1){
+      const sel=opts.some(c=>c.id===currentSubState.subClassId)?currentSubState.subClassId:opts[0].id;
+      classPicker=`<div style="margin:8px 0 12px;"><div style="font-size:12px;color:#8a8674;margin-bottom:5px;">어느 반 숙제를 제출할까요?</div>
+        <div class="tabs2">${opts.map(c=>`<button class="${c.id===sel?'active':''}" onclick="selectSubmissionClass('${c.id}')">${escapeHtml(c.name)}</button>`).join('')}</div></div>`;
+      stuId=hwSlotId(baseStudentId(stuId),sel);
+    }else if(opts.length===1){
+      stuId=hwSlotId(baseStudentId(stuId),opts[0].id);
+    }
+  }
   const key = stuId+'_'+date;
   const sub = db.submissions[key];
   // 학생/학생 미리보기에서는 선생님 코멘트를 숙제 화면의 최상단에 먼저 노출한다.
@@ -4404,7 +4515,7 @@ function renderSubmissionCard(stuId, directorView, previewAsStudent){
     const msg=submissionIsFinalRejected(sub)
       ? `최종 불합격입니다. 숙제 검사 3회를 모두 사용했습니다.${sub.reviewReason? ' 사유: '+sub.reviewReason : ''}`
       : st==='approved'
-        ? '선생님 확인 완료 — 숙제로 인정됐어요.'
+        ? (submissionIsAutoSubmitted(sub) ? '제출 완료 — 사진이 정상적으로 접수됐어요. 숙제 완성도는 수업 시간에 선생님이 확인해요.' : '선생님 확인 완료 — 숙제로 인정됐어요.')
         : st==='pending'
           ? '선생님 검토 대기 중이에요.'
           : `숙제 수정이 필요합니다.${sub.reviewReason? ' 사유: '+sub.reviewReason : ''}`;
@@ -4416,6 +4527,7 @@ function renderSubmissionCard(stuId, directorView, previewAsStudent){
   return `
   <div class="card">
     <div class="row between"><h3 style="margin:0;">📸 숙제 인증${previewAsStudent?' <span style="font-size:11px;color:var(--gold);">(미리보기)</span>':''}</h3><input type="date" value="${date}" onchange="currentSubState.subDate=this.value;render();"></div>
+    ${classPicker}
     ${teacherCommentBanner}
     ${statusBanner}
     ${asStudent ? renderSubmissionForm(stuId,date,sub) : (sub? renderSubmissionReadonly(sub,stuId,date) : `<div class="empty">이 날짜에 제출된 인증이 없어요.</div>`)}
@@ -4435,7 +4547,9 @@ function renderSubmissionReadonly(sub,stuId,date){
         : `${submissionIsFinalRejected(sub)
             ? `<span class="badge red">최종 불합격</span>
                <button class="btn sm outline" onclick="resetSubmissionReview('${stuId}','${date}')">↩ 판정 수정</button>`
-            : `${submissionIsApproved(sub,date)
+            : `${submissionIsAutoSubmitted(sub)
+                ? `<button class="btn sm danger" onclick="rejectSubmission('${stuId}','${date}')" title="사진이 부적합할 때만 사용하세요">✕ 다시 제출 요청</button>`
+                : submissionIsApproved(sub,date)
                 ? `<button class="btn sm outline" onclick="resetSubmissionReview('${stuId}','${date}')">↩ 판정 수정</button>`
                 : submissionIsRejected(sub,date)
                   ? `<button class="btn sm gold" onclick="confirmSubmission('${stuId}','${date}',this)">✓ 재제출 인정</button>
@@ -4712,7 +4826,7 @@ function renderSubmissionForm(stuId,date,sub){
     <label style="font-size:12px;font-weight:700;">메모 <span style="font-weight:400;color:#8a8674;">(필요할 때만 작성)</span></label>
     <textarea style="width:100%;margin-top:5px;min-height:64px;" placeholder="예: 오늘 숙제 없음 / 학원에서 완료함 / 기타 특이사항"
       oninput="currentSubState._draftSub.memo=this.value;saveDraftLocal('${stuId}','${date}')">${draft.memo||''}</textarea>
-    <div style="font-size:11px;color:#8a8674;margin-top:4px;">메모는 상황 설명용입니다. 선생님이 확인하고 인정해야 숙제 완료가 됩니다.</div>
+    <div style="font-size:11px;color:#8a8674;margin-top:4px;">메모는 상황 설명용입니다. 사진과 함께 제출하면 바로 ‘제출 완료’로 접수돼요. 숙제 완성도는 수업 시간에 선생님이 확인해요.</div>
   </div>
   ${renderDraftSizeIndicator(draft)}
   <button class="btn gold" style="width:100%;margin-top:10px;opacity:${homeworkUploadState.active?'.55':'1'};" ${homeworkUploadState.active?'disabled':''} onclick="submitHomework('${stuId}','${date}')">${homeworkUploadState.active?'사진 업로드 중...':(hasExisting ? '수정한 내용 다시 제출하기' : '숙제 인증 제출하기')}</button>
@@ -4898,6 +5012,10 @@ async function compactSubmissionLegacyPhotos(payload){
   }
   return copy;
 }
+function selectSubmissionClass(clsId){
+  if(currentSubState._draftSub && !confirm('작성 중인 내용은 반별로 따로 저장돼요. 반을 바꿀까요?')) return;
+  currentSubState.subClassId=clsId; currentSubState._draftSub=null; currentSubState._draftSubKey=null; render();
+}
 async function submitHomework(stuId,date){
   const draft = currentSubState._draftSub;
   const existingSubmission = db.submissions[stuId+'_'+date] || null;
@@ -4924,9 +5042,11 @@ async function submitHomework(stuId,date){
   const {errorTypes: _legacyErrorTypes, ...submissionDraft} = draft || {};
   const payload = {
     ...submissionDraft,
-    studentId:stuId,
+    studentId:baseStudentId(stuId),
+    // v97: 신규 제출에만 어느 반 숙제인지 기록(과거 문서는 변환하지 않음)
+    classId:(hwSlotParts(stuId)?.clsId)||primaryClassId(baseStudentId(stuId))||'',
     date:date,
-    status:'대기',
+    status:HW_AUTO_SUBMITTED,
     reviewCount:homeworkReviewCount(existing),
     reviewReason:'',
     reviewedAt:null,
@@ -4987,8 +5107,9 @@ async function updateStudentField(stuId,field,val){ await fsUpdate('students', s
 /* ---------------- 경고 기록 ---------------- */
 /* ---------------- 경고 판단용: 날짜별 숙제 제출 현황 한눈에 보기 (읽기 전용) ---------------- */
 function homeworkContentForDate(stuId, clsId, date){
+  const memberOfGiven = clsId && classesForStudent(stuId).some(c=>c.id===clsId);
   const actual=classForStudent(stuId);
-  const effectiveClsId=actual?.id || clsId || '';
+  const effectiveClsId=memberOfGiven ? clsId : (actual?.id || clsId || '');
   if(!effectiveClsId) return '';
   const wk = weekStartISO(date);
   const plan = db.weeklyPlans[effectiveClsId+'_'+wk];
@@ -5033,8 +5154,12 @@ function homeworkGlanceRowsForStudent(stuId, limitDays){
   const byDate=new Map();
   for(const l of lessons){
     for(const d of homeworkDateRangeDates(l.dayGroup,l.date)){
-      const sub = db.submissions[stuId+'_'+d];
-      byDate.set(d, {state: homeworkEffectiveState(sub, d, stuId), clsId: l.clsId});
+      const sub = subForClass(stuId,l.clsId,d);
+      const st = homeworkEffectiveState(sub, d, stuId);
+      const prev = byDate.get(d);
+      // 같은 날짜에 두 반 숙제가 있으면 더 나쁜 상태를 대표로 보여준다(미제출이 인정으로 가려지지 않게).
+      const rank = {missing:6,finalRejected:6,rejected:5,pending:4,unknown:3,open:2,approved:1};
+      if(!prev || (rank[st]||0) > (rank[prev.state]||0)) byDate.set(d, {state: st, clsId: l.clsId});
     }
   }
   const dates = [...byDate.keys()].sort();
@@ -6487,7 +6612,7 @@ function renderFeedbackPreview(stuId,type,traffic,comment,dailyDate){
     if(!s) return '<div class="empty">학생 정보를 찾을 수 없어요.</div>';
     const ctx=classRecordContextForStudentDate(stuId,date);
     const cls=ctx.cls||classForStudent(stuId);
-    const text=buildDailyReportText(s,date,ctx.record||{},cls?.dayGroup||'');
+    const text=buildDailyReportText(s,date,ctx.record||{},cls?.dayGroup||'',cls?.id||'');
     return `<div style="margin-bottom:8px;font-size:11px;color:#8a8674;">선택한 날짜의 출석·일일TEST·오늘 진도·문제 적용·숙제 현황을 그대로 읽어옵니다.</div><pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.7;margin:0;">${text}</pre><button class="btn sm outline" style="margin-top:10px;" onclick="copyText(this)" data-text="${encodeURIComponent(text)}">텍스트 복사하기</button>`;
   }
   const s = studentById(stuId);
@@ -6737,6 +6862,21 @@ async function downloadBackup(){
 }
 
 /* ---------------- STUDENT HOME ---------------- */
+function renderWeekPlanGrids(stuId,title){
+  const wk=weekStartISO(todayISO());
+  const classes=classesForStudent(stuId);
+  const many=classes.length>1;
+  const list=classes.length?classes:[null];
+  return list.map(c=>{
+    const plan=c?((db.weeklyPlans[c.id+'_'+wk]||{})[stuId]||{}):{};
+    return `<div class="card">
+    <h3 style="margin-top:0;">${title}${many?` · <span style="color:var(--navy2);">${escapeHtml(c.name)}</span>`:''}</h3>
+    <div class="weekgrid" style="grid-template-columns:70px repeat(7,1fr);">
+      <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div class="hd">${DAY_LABEL[k]}</div>`).join('')}
+      <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div style="font-size:11px;padding:4px;border:1px solid var(--line);border-radius:6px;min-height:44px;">${plan[k]||''}</div>`).join('')}
+    </div>
+  </div>`;}).join('');
+}
 function renderStudentHome(){
   const stuId = session.studentId;
   const s = studentById(stuId);
@@ -6745,7 +6885,7 @@ function renderStudentHome(){
   return `
     <div class="card">
       <h2 style="margin:0 0 4px;">${s.name} <span style="font-size:14px;color:#9c9880;">(${s.grade})</span></h2>
-      <span class="studentcode">${s.code}</span> · ${cls?cls.name:'미배정'}
+      <span class="studentcode">${s.code}</span> · ${escapeHtml(classNamesForStudent(stuId))}
     </div>
     ${renderStudentHomeworkSummary(stuId)}
     ${renderStudentQuestionSummary(stuId)}
@@ -6856,7 +6996,7 @@ function renderStudentProgressPage(){
       <div class="row between">
         <div>
           <h2 style="margin:0 0 4px;">🚦 학습현황</h2>
-          <div style="font-size:13px;color:#8a8674;">${s.name} · ${cls?cls.name:'미배정'}</div>
+          <div style="font-size:13px;color:#8a8674;">${s.name} · ${escapeHtml(classNamesForStudent(stuId))}</div>
         </div>
         <div style="text-align:center;min-width:105px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;">
           <div style="font-size:30px;line-height:1;">${trafficIcon}</div>
@@ -6868,7 +7008,7 @@ function renderStudentProgressPage(){
     <div class="card" style="overflow-x:auto;">
       <h3 style="margin-top:0;">1. 출석·진도 이력</h3>
       ${histRows.length? `<table><tr><th>날짜</th><th>출석</th><th>일일테스트</th><th>진도</th><th>숙제완성도</th><th>학습완성도</th><th>특이사항</th></tr>
-        ${histRows.slice(0,30).map(h=>`<tr><td>${fmtDate(h.date)}</td><td>${h.attendance||'-'}</td><td>${h.dailyTestScore!==undefined&&h.dailyTestScore!==''?h.dailyTestScore:'-'}</td><td>${stepLabel(h.stepId)||'-'}${(h.extraSteps&&h.extraSteps.length)?'<br><span style="color:#9c9880;">+ '+h.extraSteps.map(id=>stepLabel(id)).filter(Boolean).join(', ')+'</span>':''}</td><td>${h.homeworkCompletionLevel||'-'}</td><td>${h.studyCompletionLevel||'-'}</td><td>${h.note||'-'}</td></tr>`).join('')}
+        ${histRows.slice(0,30).map(h=>`<tr><td>${fmtDate(h.date)}</td><td>${h.attendance||'-'}</td><td>${h.dailyTestScore!==undefined&&h.dailyTestScore!==''?h.dailyTestScore:'-'}</td><td>${stepLabel(h.stepId)||'-'}${h.lessonDetail?'<br><span style="color:#6f6958;">'+escapeHtml(h.lessonDetail)+'</span>':''}${(h.extraSteps&&h.extraSteps.length)?'<br><span style="color:#9c9880;">+ '+h.extraSteps.map(id=>stepLabel(id)).filter(Boolean).join(', ')+'</span>':''}</td><td>${h.homeworkCompletionLevel||'-'}</td><td>${h.studyCompletionLevel||'-'}</td><td>${h.note||'-'}</td></tr>`).join('')}
         </table>`:`<div class="empty">기록이 없어요.</div>`}
     </div>
 
@@ -8694,7 +8834,6 @@ function renderStudentHomeworkPage(){
   const cls = classForStudent(stuId);
   const clsId = cls?.id || s.classId || '';
   const wk = weekStartISO(todayISO());
-  const myWeekPlan = clsId ? (db.weeklyPlans[clsId+'_'+wk] || {})[stuId] || {} : {};
 
   const videoAssignFlat = [];
   Object.entries(db.classRecords).forEach(([key,obj])=>{
@@ -8707,16 +8846,10 @@ function renderStudentHomeworkPage(){
   return `
     <div class="card">
       <h2 style="margin:0 0 4px;">✏️ 오늘의 숙제</h2>
-      <div style="font-size:13px;color:#8a8674;">${s.name} · ${cls?cls.name:'미배정'}</div>
+      <div style="font-size:13px;color:#8a8674;">${s.name} · ${escapeHtml(classNamesForStudent(stuId))}</div>
     </div>
 
-    <div class="card">
-      <h3 style="margin-top:0;">이번 주 숙제</h3>
-      <div class="weekgrid" style="grid-template-columns:70px repeat(7,1fr);">
-        <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div class="hd">${DAY_LABEL[k]}</div>`).join('')}
-        <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div style="font-size:11px;padding:4px;border:1px solid var(--line);border-radius:6px;min-height:44px;">${myWeekPlan[k]||''}</div>`).join('')}
-      </div>
-    </div>
+    ${renderWeekPlanGrids(stuId,'이번 주 숙제')}
 
     <div class="card">
       <h3 style="margin-top:0;">개념동영상학습</h3>
@@ -8752,6 +8885,437 @@ async function markCommentSeen(key){
   const ok = await fsUpdate('submissions', key, {commentSeen: true});
   if(ok && db.submissions[key]){ db.submissions[key].commentSeen = true; render(); }
 }
+
+/* MONTHLY_CORE_START */
+/* MNM monthly report core v1
+ * 월말 학습 리포트 초안 생성 로직. Firestore/DOM에 접근하지 않는 순수 함수 모음이다.
+ * - 앱(index.html)과 Cloud Functions(functions/index.js)가 이 파일의 동일한 코드를 사용한다.
+ *   index.html 안의 MONTHLY_CORE_START ~ MONTHLY_CORE_END 사이 내용은 이 파일과 항상 같아야 하며,
+ *   `node scripts/check-monthly-core-sync.js` 로 확인한다.
+ * - 기록에 실제로 있는 정보만 쓰고, 없으면 '기록 없음'으로 둔다. 내부 전용 메모(conceptMemo 등)는 입력으로 받지 않는다.
+ */
+var MR_VERSION = 1;
+var MR_CUTOVER = '2026-09-07'; // 숙제 리스타트 기준일: 이전 날짜는 제출 집계에서 제외
+var MR_NONE = '기록 없음';
+var MR_DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+function mrPad(n) { return String(n).padStart(2, '0'); }
+function mrMonthRange(ym) {
+  var p = String(ym).split('-'), y = Number(p[0]), m = Number(p[1]);
+  var ny = m === 12 ? y + 1 : y, nm = m === 12 ? 1 : m + 1;
+  var last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return { start: y + '-' + mrPad(m) + '-01', endEx: ny + '-' + mrPad(nm) + '-01', end: y + '-' + mrPad(m) + '-' + mrPad(last) };
+}
+// 'YYYY-MM-DD' 날짜가 속한 달의 직전 달 'YYYY-MM'
+function mrPrevMonthOf(dateISO) {
+  var y = Number(dateISO.slice(0, 4)), m = Number(dateISO.slice(5, 7));
+  m -= 1; if (m === 0) { m = 12; y -= 1; }
+  return y + '-' + mrPad(m);
+}
+function mrAddDays(dateISO, n) {
+  var d = new Date(dateISO + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n);
+  return d.getUTCFullYear() + '-' + mrPad(d.getUTCMonth() + 1) + '-' + mrPad(d.getUTCDate());
+}
+function mrWeekStart(dateISO) {
+  var dow = new Date(dateISO + 'T00:00:00Z').getUTCDay();
+  return mrAddDays(dateISO, dow === 0 ? -6 : 1 - dow);
+}
+// 월에 걸친 모든 주의 월요일 목록 (weeklyPlans 문서 ID: 반ID_주시작일)
+function mrWeekStartsOfMonth(ym) {
+  var r = mrMonthRange(ym), out = [], w = mrWeekStart(r.start);
+  while (w < r.endEx) { out.push(w); w = mrAddDays(w, 7); }
+  return out;
+}
+function mrHash(str) {
+  var h = 5381;
+  for (var i = 0; i < str.length; i++) { h = ((h << 5) + h + str.charCodeAt(i)) | 0; }
+  return (h >>> 0).toString(16);
+}
+function mrMd(dateISO) { return Number(dateISO.slice(5, 7)) + '/' + Number(dateISO.slice(8, 10)); }
+function mrHasText(v) { return v !== undefined && v !== null && String(v).trim() !== ''; }
+
+// 제출 문서 상태 분류: submitted(제출 완료·인정·레거시) / pending(과거 방식 검토대기) / rejected(불합격·재제출 필요)
+function mrSubmissionKind(sub) {
+  var st = String((sub && sub.status) || '').trim();
+  if (st === '' || st === '확인' || st === 'approved' || st === '제출완료') return 'submitted';
+  if (st === '불합격' || st === '최종불합격' || st === 'rejected') return 'rejected';
+  return 'pending';
+}
+
+/* input:
+ *  month 'YYYY-MM', today 'YYYY-MM-DD'
+ *  student {id,name,grade}
+ *  classes [{id,name}]            이 달에 기록이 있거나 현재 소속인 반
+ *  records [{clsId,date,rec}]     classRecords[반_날짜][학생ID]
+ *  plans   [{clsId,weekStart,plan}] weeklyPlans[반_주시작일] 문서 데이터
+ *  submissions [{date,classId,sub}] 해당 학생의 이 달 제출 문서 (classId는 문서의 classId, 없으면 '')
+ *  kmm [{date,score,range}]
+ *  stepLabelOf(stepId, rec) → 표시용 STEP 이름 (없으면 스냅샷 사용)
+ */
+function mrBuildMonthlyReport(input) {
+  var range = mrMonthRange(input.month);
+  var today = input.today || range.end;
+  var stepLabelOf = input.stepLabelOf || function (id, rec) { return (rec && rec.stepLabelSnapshot) || ''; };
+  var classes = input.classes || [];
+  var clsName = {}; classes.forEach(function (c) { clsName[c.id] = c.name; });
+  var records = (input.records || []).filter(function (r) { return r.date >= range.start && r.date < range.endEx; })
+    .sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : (a.clsId < b.clsId ? -1 : 1); });
+
+  // 1) 출결
+  var att = { lessons: records.length, present: 0, late: 0, absent: 0, other: 0, abnormal: [] };
+  records.forEach(function (r) {
+    var a = (r.rec && r.rec.attendance) || '';
+    if (a === '출석') att.present++; else if (a === '지각') { att.late++; att.abnormal.push(mrMd(r.date) + ' 지각'); }
+    else if (a === '결석') { att.absent++; att.abnormal.push(mrMd(r.date) + ' 결석'); } else att.other++;
+  });
+
+  // 2) 진도 + 수업 상세
+  var progress = [];
+  records.forEach(function (r) {
+    var rec = r.rec || {};
+    var step = rec.stepId ? (stepLabelOf(rec.stepId, rec) || rec.stepLabelSnapshot || '') : (rec.stepLabelSnapshot || '');
+    var extras = (rec.extraSteps || []).map(function (id, i) { return stepLabelOf(id, rec) || (rec.extraStepLabelSnapshots || [])[i] || ''; }).filter(Boolean);
+    var detail = mrHasText(rec.lessonDetail) ? String(rec.lessonDetail).replace(/\s*\n+\s*/g, ' ').trim() : '';
+    if (!step && !extras.length && !detail) return;
+    progress.push({ date: r.date, clsId: r.clsId, step: step, extras: extras, detail: detail });
+  });
+
+  // 3) 숙제 제출 이행: 주간계획에 숙제가 적힌 날(리스타트 기준일 이후, 오늘까지)을 기준으로 반별 집계
+  var perClassHw = {};
+  classes.forEach(function (c) { perClassHw[c.id] = { planned: 0, submitted: 0, pending: 0, rejected: 0, missing: 0, missingDates: [], hasPlan: false }; });
+  var subsByDate = {};
+  (input.submissions || []).forEach(function (s) { if (s.date >= range.start && s.date < range.endEx) { (subsByDate[s.date] = subsByDate[s.date] || []).push(s); } });
+  (input.plans || []).forEach(function (pl) {
+    var h = perClassHw[pl.clsId]; if (!h) return;
+    var per = (pl.plan && pl.plan[input.student.id]) || {};
+    h.hasPlan = true;
+    for (var off = 0; off < 7; off++) {
+      var date = mrAddDays(pl.weekStart, off);
+      if (date < range.start || date >= range.endEx || date > today || date < MR_CUTOVER) continue;
+      var cell = per[MR_DAY_KEYS[new Date(date + 'T00:00:00Z').getUTCDay()]];
+      if (!mrHasText(cell)) continue;
+      h.planned++;
+      var cands = (subsByDate[date] || []).filter(function (s) { return !s.classId || s.classId === pl.clsId; });
+      var best = cands.find(function (s) { return s.classId === pl.clsId; }) || cands[0];
+      if (!best) { h.missing++; h.missingDates.push(date); continue; }
+      var k = mrSubmissionKind(best.sub);
+      if (k === 'submitted') h.submitted++; else if (k === 'pending') h.pending++; else h.rejected++;
+    }
+  });
+  var hwTotals = { planned: 0, submitted: 0, pending: 0, rejected: 0, missing: 0 };
+  Object.keys(perClassHw).forEach(function (id) { ['planned', 'submitted', 'pending', 'rejected', 'missing'].forEach(function (k) { hwTotals[k] += perClassHw[id][k]; }); });
+  var hwHasPlan = Object.keys(perClassHw).some(function (id) { return perClassHw[id].hasPlan; });
+  var submittedDays = {}; (input.submissions || []).forEach(function (s) { if (mrSubmissionKind(s.sub) === 'submitted') submittedDays[s.date] = true; });
+
+  // 4) 숙제 완성도 (수업 중 기록한 값만, 미기록은 미평가)
+  var comp = { '상': 0, '중': 0, '하': 0, unrated: 0, perClass: {} };
+  classes.forEach(function (c) { comp.perClass[c.id] = { '상': 0, '중': 0, '하': 0, unrated: 0 }; });
+  records.forEach(function (r) {
+    var lv = r.rec && r.rec.homeworkCompletionLevel;
+    var pc = comp.perClass[r.clsId] || (comp.perClass[r.clsId] = { '상': 0, '중': 0, '하': 0, unrated: 0 });
+    if (lv === '상' || lv === '중' || lv === '하') { comp[lv]++; pc[lv]++; } else { comp.unrated++; pc.unrated++; }
+  });
+
+  // 5) 점수
+  var tests = [];
+  records.forEach(function (r) {
+    var v = r.rec && r.rec.dailyTestScore;
+    if (v !== undefined && v !== null && v !== '' && !isNaN(Number(v))) tests.push({ date: r.date, score: Number(v) });
+  });
+  var kmm = (input.kmm || []).filter(function (k) { return k.date >= range.start && k.date < range.endEx && k.score !== undefined && k.score !== '' && !isNaN(Number(k.score)); })
+    .map(function (k) { return { date: k.date, score: Number(k.score), range: k.range || '' }; })
+    .sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+  var avg = tests.length ? Math.round(tests.reduce(function (a, b) { return a + b.score; }, 0) / tests.length) : null;
+
+  // 6) 특이사항
+  var notes = [];
+  records.forEach(function (r) { if (r.rec && mrHasText(r.rec.note)) notes.push({ date: r.date, clsId: r.clsId, note: String(r.rec.note).replace(/\s*\n+\s*/g, ' ').trim() }); });
+
+  // 7) 다음 달 방향 초안 (기록 기반 문장만. 원장 검토 전제)
+  var dir = [];
+  if (progress.length) {
+    var last = progress[progress.length - 1];
+    var lastTxt = last.step || last.detail;
+    if (lastTxt) dir.push('이번 달 마지막 진도(' + lastTxt + ')에 이어 다음 단계를 진행할 예정입니다.');
+  }
+  if (tests.length >= 2 && tests[tests.length - 1].score < tests[0].score - 5) dir.push('일일테스트 점수가 월초보다 내려가 있어 취약 단원 점검과 복습을 병행하겠습니다.');
+  else if (avg !== null && avg < 70) dir.push('일일테스트 평균이 ' + avg + '점으로, 기본 개념 정리와 반복 확인에 비중을 두겠습니다.');
+  if (comp['하'] >= 2 || (comp['하'] >= 1 && comp['하'] >= comp['상'] + comp['중'])) dir.push('숙제 완성도 ‘하’가 반복되어, 분량 조절과 풀이·오답 정리 습관 점검을 함께 하겠습니다.');
+  if (att.absent >= 2) dir.push('결석이 있었던 부분은 보강 여부를 확인하겠습니다.');
+  if (hwHasPlan && hwTotals.missing >= 2) dir.push('숙제 미제출이 있었던 날이 있어 제출 습관을 함께 점검하겠습니다.');
+
+  var multi = classes.length > 1;
+  var perClass = classes.map(function (c) {
+    var recs = records.filter(function (r) { return r.clsId === c.id; });
+    var lastP = progress.filter(function (p) { return p.clsId === c.id; }).pop();
+    return {
+      clsId: c.id, name: c.name, lessons: recs.length,
+      present: recs.filter(function (r) { return r.rec && r.rec.attendance === '출석'; }).length,
+      lastProgress: lastP ? (lastP.step || lastP.detail || '') : '',
+      homework: perClassHw[c.id], completeness: comp.perClass[c.id]
+    };
+  });
+
+  var data = {
+    version: MR_VERSION, month: input.month, studentId: input.student.id,
+    attendance: att, progress: progress, homework: { totals: hwTotals, hasPlan: hwHasPlan, perClass: perClassHw, submittedDays: Object.keys(submittedDays).length },
+    completeness: { '상': comp['상'], '중': comp['중'], '하': comp['하'], unrated: comp.unrated },
+    scores: { dailyTests: tests, average: avg, kmm: kmm }, notes: notes, nextDirection: dir,
+    perClass: multi ? perClass : []
+  };
+  return { data: data, text: mrRenderText(input.student, data, clsName, multi), sig: mrHash(JSON.stringify(data)) };
+}
+
+function mrRenderText(student, d, clsName, multi) {
+  var m = Number(d.month.slice(5, 7));
+  var L = [];
+  L.push('[M&m 수학훈련소] ' + student.name + ' 학생 ' + m + '월 학습 리포트');
+  L.push('');
+  L.push('1. 출결·수업 참여');
+  if (!d.attendance.lessons) L.push('· ' + MR_NONE);
+  else {
+    L.push('· 수업 ' + d.attendance.lessons + '회 (출석 ' + d.attendance.present + ' · 지각 ' + d.attendance.late + ' · 결석 ' + d.attendance.absent + ')');
+    if (d.attendance.abnormal.length) L.push('· 지각·결석: ' + d.attendance.abnormal.join(', '));
+  }
+  L.push('');
+  L.push('2. 진도와 수업 내용');
+  if (!d.progress.length) L.push('· ' + MR_NONE);
+  d.progress.forEach(function (p) {
+    var head = (multi && clsName[p.clsId] ? '[' + clsName[p.clsId] + '] ' : '') + (p.step || '');
+    if (p.extras.length) head += (head ? ' + ' : '') + p.extras.join(', ');
+    L.push('· ' + mrMd(p.date) + ' ' + head + (p.detail ? (head ? ' — ' : '') + p.detail : ''));
+  });
+  L.push('');
+  L.push('3. 숙제 제출 이행');
+  if (d.homework.hasPlan) {
+    var t = d.homework.totals;
+    if (!t.planned) L.push('· ' + MR_NONE);
+    else {
+      L.push('· 숙제가 있었던 ' + t.planned + '일 중 제출 완료 ' + t.submitted + '일' + (t.pending ? ' · 확인 대기 ' + t.pending + '일' : '') + (t.rejected ? ' · 재제출 필요 ' + t.rejected + '일' : '') + (t.missing ? ' · 미제출 ' + t.missing + '일' : ''));
+    }
+  } else if (d.homework.submittedDays) {
+    L.push('· 제출 완료 ' + d.homework.submittedDays + '일 (주간 숙제 계획 기록 없음)');
+  } else L.push('· ' + MR_NONE);
+  L.push('');
+  L.push('4. 숙제 완성도 (수업 시간 확인)');
+  var c = d.completeness, ratedN = c['상'] + c['중'] + c['하'];
+  if (!ratedN && !c.unrated) L.push('· ' + MR_NONE);
+  else L.push('· 상 ' + c['상'] + ' · 중 ' + c['중'] + ' · 하 ' + c['하'] + ' · 미평가 ' + c.unrated);
+  L.push('');
+  L.push('5. 점수');
+  if (!d.scores.dailyTests.length && !d.scores.kmm.length) L.push('· ' + MR_NONE);
+  if (d.scores.dailyTests.length) {
+    var ts = d.scores.dailyTests, f = ts[0], l = ts[ts.length - 1];
+    L.push('· 일일테스트 ' + ts.length + '회 평균 ' + d.scores.average + '점' + (ts.length > 1 ? ' (' + mrMd(f.date) + ' ' + f.score + '점 → ' + mrMd(l.date) + ' ' + l.score + '점)' : ''));
+  }
+  d.scores.kmm.forEach(function (k) { L.push('· KMM ' + mrMd(k.date) + ' ' + k.score + '점' + (k.range ? ' (' + k.range + ')' : '') + ' ' + (k.score >= 80 ? 'PASS' : 'FAIL')); });
+  L.push('');
+  L.push('6. 특이사항');
+  if (!d.notes.length) L.push('· ' + MR_NONE);
+  d.notes.forEach(function (n) { L.push('· ' + mrMd(n.date) + (multi && clsName[n.clsId] ? ' [' + clsName[n.clsId] + ']' : '') + ' ' + n.note); });
+  if (multi && d.perClass.length) {
+    L.push('');
+    L.push('[반별 요약]');
+    d.perClass.forEach(function (p) {
+      var hw = p.homework || {}, cp = p.completeness || {};
+      L.push('· ' + p.name + ': 수업 ' + p.lessons + '회' + (p.lastProgress ? ' · 최근 진도 ' + p.lastProgress : '') +
+        (hw.planned ? ' · 숙제 제출 ' + hw.submitted + '/' + hw.planned + '일' : '') +
+        ' · 완성도 상 ' + (cp['상'] || 0) + ' 중 ' + (cp['중'] || 0) + ' 하 ' + (cp['하'] || 0) + ' 미평가 ' + (cp.unrated || 0));
+    });
+  }
+  L.push('');
+  L.push('7. 다음 달 학습 방향');
+  if (!d.nextDirection.length) L.push('· ' + MR_NONE);
+  d.nextDirection.forEach(function (x) { L.push('· ' + x); });
+  return L.join('\n');
+}
+
+/* 재생성 시 문서 갱신 규칙 (앱·함수 공통).
+ * existing: 기존 monthlyReports 문서 데이터 또는 null, built: mrBuildMonthlyReport 결과, nowISO: 생성 시각
+ * 반환: { action: 'create'|'skip'|'update'|'newer', doc } — doc은 저장할 전체 문서(create/update) 또는 변경 필드(newer)
+ * 원칙: 원장 수정본(edited)은 절대 덮어쓰지 않는다. 수정본이 있으면 새 초안은 versions에만 쌓고 hasNewerDraft로 알린다. */
+function mrApplyGenerated(existing, built, nowISO, studentName) {
+  var entry = { version: 1, generatedAt: nowISO, sig: built.sig, text: built.text };
+  if (!existing) {
+    return { action: 'create', doc: { month: built.data.month, studentId: built.data.studentId, studentName: studentName || '', status: 'draft',
+      generated: { version: 1, generatedAt: nowISO, sig: built.sig, text: built.text, data: built.data }, versions: [entry], edited: null, hasNewerDraft: false, createdAt: nowISO } };
+  }
+  var cur = existing.generated || {};
+  if (cur.sig === built.sig) return { action: 'skip', doc: {} };
+  var versions = (existing.versions || []).slice();
+  var nextVersion = (versions.length ? Math.max.apply(null, versions.map(function (v) { return v.version || 0; })) : (cur.version || 0)) + 1;
+  entry.version = nextVersion;
+  versions.push(entry);
+  if (versions.length > 8) versions = versions.slice(versions.length - 8);
+  if ((existing.edited && mrHasText(existing.edited.text)) || existing.status === 'reviewed' || existing.status === 'edited') {
+    // 수정본 보존: generated는 최신 자동 초안으로 갱신하되 edited는 그대로 두고 알림만 켠다.
+    return { action: 'newer', doc: { generated: { version: nextVersion, generatedAt: nowISO, sig: built.sig, text: built.text, data: built.data }, versions: versions, hasNewerDraft: true, updatedAt: nowISO } };
+  }
+  return { action: 'update', doc: { generated: { version: nextVersion, generatedAt: nowISO, sig: built.sig, text: built.text, data: built.data }, versions: versions, hasNewerDraft: false, status: 'draft', updatedAt: nowISO } };
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { MR_VERSION: MR_VERSION, mrMonthRange: mrMonthRange, mrPrevMonthOf: mrPrevMonthOf, mrWeekStartsOfMonth: mrWeekStartsOfMonth, mrBuildMonthlyReport: mrBuildMonthlyReport, mrApplyGenerated: mrApplyGenerated, mrSubmissionKind: mrSubmissionKind, mrAddDays: mrAddDays };
+}
+/* MONTHLY_CORE_END */
+
+/* MONTHLY_UI_START */
+/* ---------------- 월말 리포트 초안 (v97) ----------------
+   - 생성 로직은 위 MONTHLY_CORE(순수 함수)를 쓴다. 이 화면은 데이터 조회·저장·검토 UI만 담당한다.
+   - 저장: monthlyReports/{YYYY-MM}_{학생ID}. 자동 초안(generated)과 원장 수정본(edited)을 따로 보관하고,
+     수정본이 있으면 재생성이 덮어쓰지 않는다(새 초안은 versions에 쌓고 알림만 켠다).
+   - 자동 발송 없음. 원장이 검토·수정한 뒤 복사해서 전달한다. */
+function mrState(){ currentSubState.mr = currentSubState.mr || {month:mrPrevMonthOf(todayISO()), docs:null, loading:false, busy:'', open:'', text:'', showNew:false, msg:''}; return currentSubState.mr; }
+function mrDocId(ym,stuId){ return ym+'_'+stuId; }
+async function mrLoadDocs(ym){
+  const st=mrState(); st.loading=true; st.docs=null; scheduleRender();
+  try{
+    const snap=await fsdb.collection('monthlyReports').where('month','==',ym).get();
+    const m={}; snap.docs.forEach(d=>{ m[d.data().studentId]={id:d.id,...d.data()}; });
+    st.docs=m;
+  }catch(e){ console.error('[월말 리포트 조회]',e); st.docs={}; st.msg='월말 리포트 목록을 불러오지 못했어요. 새로고침 후 다시 시도해주세요.'; }
+  st.loading=false; scheduleRender();
+}
+function mrSetMonth(ym){ if(!/^\d{4}-\d{2}$/.test(ym)) return; const st=mrState(); st.month=ym; st.open=''; st.msg=''; mrLoadDocs(ym); }
+// 선택한 달의 원자료를 한 번에 읽는다 (반별 수업기록 범위 조회 + 주간계획 문서 + 해당 월 제출 날짜 범위 조회)
+async function mrFetchMonthData(ym){
+  const r=mrMonthRange(ym), fp=firebase.firestore.FieldPath.documentId();
+  const classes=db.classes||[], weeks=mrWeekStartsOfMonth(ym);
+  const recs={}, plans=[];
+  await Promise.all(classes.map(async c=>{
+    const snap=await fsdb.collection('classRecords').where(fp,'>=',c.id+'_'+r.start).where(fp,'<',c.id+'_'+r.endEx).get();
+    recs[c.id]=snap.docs.map(d=>({date:d.id.slice(-10),data:d.data()}));
+    await Promise.all(weeks.map(async w=>{ const doc=await fsdb.collection('weeklyPlans').doc(c.id+'_'+w).get(); if(doc.exists) plans.push({clsId:c.id,weekStart:w,plan:doc.data()}); }));
+  }));
+  const ss=await fsdb.collection('submissions').where('date','>=',r.start).where('date','<',r.endEx).get();
+  const subs=ss.docs.map(d=>({key:d.id,date:d.data().date||d.id.slice(-10),...d.data()}));
+  return {recs,plans,subs};
+}
+function mrInputForStudent(s,ym,raw){
+  const classIds=new Set(classesForStudent(s.id).map(c=>c.id));
+  const records=[];
+  Object.keys(raw.recs).forEach(cid=>raw.recs[cid].forEach(x=>{ if(x.data&&x.data[s.id]){ classIds.add(cid); records.push({clsId:cid,date:x.date,rec:x.data[s.id]}); } }));
+  const classes=[...classIds].map(classById).filter(Boolean).map(c=>({id:c.id,name:c.name}));
+  const submissions=raw.subs.filter(x=>{
+    const sid=x.studentId||'';
+    return sid===s.id || (!sid && x.key.startsWith(s.id+'_'));
+  }).map(x=>({date:x.date,classId:x.classId||'',sub:x}));
+  return {month:ym,today:todayISO(),student:{id:s.id,name:s.name,grade:s.grade},classes,records,
+    plans:raw.plans.filter(p=>classIds.has(p.clsId)),submissions,
+    kmm:(db.kmm||[]).filter(k=>k.studentId===s.id).map(k=>({date:k.date,score:k.score,range:k.range||''})),
+    stepLabelOf:(id,rec)=>stepShortLabel(id)||stepLabel(id)||(rec&&rec.stepLabelSnapshot)||''};
+}
+// 한 학생 문서를 트랜잭션으로 생성/갱신 → 중복 실행돼도 문서는 월·학생당 1개, 같은 자료면 변경 없음
+async function mrWriteOne(s,ym,raw){
+  const built=mrBuildMonthlyReport(mrInputForStudent(s,ym,raw));
+  const ref=fsdb.collection('monthlyReports').doc(mrDocId(ym,s.id));
+  const nowISO=new Date().toISOString();
+  return fsdb.runTransaction(async tx=>{
+    const snap=await tx.get(ref);
+    const res=mrApplyGenerated(snap.exists?snap.data():null,built,nowISO,s.name);
+    if(res.action==='create') tx.set(ref,res.doc);
+    else if(res.action==='update'||res.action==='newer') tx.update(ref,res.doc);
+    return res.action;
+  });
+}
+async function mrGenerate(onlyStuId){
+  const st=mrState(); if(st.busy) return;
+  const ym=st.month;
+  if(ym>=todayISO().slice(0,7) && !confirm('아직 끝나지 않은 달이에요. 지금까지의 기록으로 초안을 만들까요?')) return;
+  st.busy=onlyStuId?'one':'all'; st.msg=''; scheduleRender();
+  try{
+    const raw=await mrFetchMonthData(ym);
+    const targets=(db.students||[]).filter(s=>s.status!=='withdrawn' && (!onlyStuId||s.id===onlyStuId));
+    const count={create:0,update:0,newer:0,skip:0};
+    for(const s of targets){ const a=await mrWriteOne(s,ym,raw); count[a]=(count[a]||0)+1; }
+    st.msg=`완료 · 새로 ${count.create}명 · 갱신 ${count.update}명 · 수정본 보존+새 초안 알림 ${count.newer}명 · 변화 없음 ${count.skip}명`;
+  }catch(e){ console.error('[월말 리포트 생성]',e); st.msg='월말 리포트를 만들지 못했어요. 기존 기록은 바뀌지 않았습니다. 다시 시도해주세요.'; }
+  st.busy=''; await mrLoadDocs(ym);
+}
+function mrCurrentText(doc){ return (doc.edited&&doc.edited.text)||(doc.generated&&doc.generated.text)||''; }
+function mrOpen(stuId){ const st=mrState(); st.open=stuId; st.showNew=false; const d=st.docs&&st.docs[stuId]; st.text=d?mrCurrentText(d):''; scheduleRender(); }
+async function mrSaveEdit(stuId){
+  const st=mrState(), d=st.docs&&st.docs[stuId]; if(!d) return;
+  const text=(document.getElementById('mrText')||{}).value??st.text;
+  const ok=await fsSet('monthlyReports',d.id,{edited:{text,editedAt:new Date().toISOString(),basedOnVersion:(d.generated&&d.generated.version)||1},status:'edited'});
+  if(ok){ d.edited={text,editedAt:new Date().toISOString(),basedOnVersion:(d.generated&&d.generated.version)||1}; d.status='edited'; st.text=text; st.msg='수정본을 저장했어요.'; } else st.msg='저장하지 못했어요. 다시 시도해주세요.';
+  scheduleRender();
+}
+async function mrMarkReviewed(stuId){
+  const st=mrState(), d=st.docs&&st.docs[stuId]; if(!d) return;
+  const next=d.status==='reviewed'?(d.edited?'edited':'draft'):'reviewed';
+  const ok=await fsSet('monthlyReports',d.id,{status:next}); if(ok){ d.status=next; scheduleRender(); }
+}
+async function mrAdoptNewDraft(stuId){
+  const st=mrState(), d=st.docs&&st.docs[stuId]; if(!d||!d.generated) return;
+  if(!confirm('새 초안으로 바꿀까요? 지금 수정본은 버전 기록에 보관돼요.')) return;
+  const versions=(d.versions||[]).slice();
+  if(d.edited&&d.edited.text) versions.push({version:'edited-'+Date.now(),kind:'edited',generatedAt:d.edited.editedAt||'',text:d.edited.text});
+  const patch={edited:null,versions:versions.slice(-8),hasNewerDraft:false,status:'draft'};
+  const ok=await fsSet('monthlyReports',d.id,patch);
+  if(ok){ Object.assign(d,patch); st.text=mrCurrentText(d); st.showNew=false; st.msg='새 초안을 적용했어요.'; scheduleRender(); }
+}
+async function mrKeepEdited(stuId){
+  const st=mrState(), d=st.docs&&st.docs[stuId]; if(!d) return;
+  const ok=await fsSet('monthlyReports',d.id,{hasNewerDraft:false}); if(ok){ d.hasNewerDraft=false; st.showNew=false; scheduleRender(); }
+}
+function mrCopy(btn){
+  const ta=document.getElementById('mrText'); if(!ta||!ta.value) return;
+  btn.setAttribute('data-text',encodeURIComponent(ta.value)); copyText(btn);
+}
+function mrStatusBadge(d){
+  if(!d) return '<span class="badge gray">초안 없음</span>';
+  if(d.hasNewerDraft) return '<span class="badge yellow">새 초안 있음</span>';
+  if(d.status==='reviewed') return '<span class="badge green">확인 완료</span>';
+  if(d.edited) return '<span class="badge" style="background:#e8eefc;color:#32508f;">수정본</span>';
+  return '<span class="badge gray">초안</span>';
+}
+function renderMonthlyReports(){
+  const st=mrState();
+  if(st.docs===null && !st.loading) setTimeout(()=>mrLoadDocs(st.month),0);
+  const students=(db.students||[]).filter(s=>s.status!=='withdrawn').sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));
+  const open=st.open&&st.docs?st.docs[st.open]:null, openStu=st.open?studentById(st.open):null;
+  const nextRun=(()=>{ const t=todayISO(); const y=Number(t.slice(0,4)), m=Number(t.slice(5,7)); const ny=m===12?y+1:y, nm=m===12?1:m+1; return `${ny}-${String(nm).padStart(2,'0')}-01 00:10`; })();
+  return `
+  <h1 class="page-title">월말 리포트 초안</h1>
+  <p class="page-sub">수업·숙제·점수 기록을 모아 학생별 월말 리포트 초안을 만들어요. 자동 발송은 없고, 검토·수정 후 복사해서 전달합니다. 예약 자동 생성은 설정 시 매월 1일 00:10(한국시간)에 직전 달 초안이 만들어져요 (다음 예정: ${nextRun}).</p>
+  <div class="card" style="padding:12px 16px;">
+    <div class="row between" style="gap:10px;flex-wrap:wrap;">
+      <div class="row" style="gap:8px;"><b>대상 월</b><input type="month" value="${escapeHtml(st.month)}" onchange="mrSetMonth(this.value)"></div>
+      <div class="row" style="gap:6px;">
+        <button class="btn sm gold" ${st.busy?'disabled':''} onclick="mrGenerate()">${st.busy==='all'?'만드는 중…':'이 달 초안 만들기 · 새 자료 반영'}</button>
+      </div>
+    </div>
+    <div style="font-size:11px;color:#8a8674;margin-top:6px;">이미 수정한 리포트는 덮어쓰지 않고, 새 초안을 따로 보관한 뒤 알려드려요. 같은 자료로 다시 눌러도 변화 없이 넘어갑니다.</div>
+    ${st.msg?`<div style="margin-top:8px;font-size:12px;color:var(--navy2);font-weight:700;">${escapeHtml(st.msg)}</div>`:''}
+  </div>
+  ${st.loading?'<div class="empty">불러오는 중…</div>':''}
+  <div style="display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:14px;align-items:start;">
+    <div class="card" style="padding:8px 10px;max-height:70vh;overflow:auto;">
+      ${students.map(s=>{ const d=st.docs&&st.docs[s.id]; return `<div class="row between" style="padding:7px 4px;border-bottom:1px solid var(--line);cursor:pointer;${st.open===s.id?'background:#f7f4ea;':''}" onclick="mrOpen('${s.id}')">
+        <div><b>${escapeHtml(s.name)}</b> <span style="color:#9c9880;font-size:11px;">${escapeHtml(classNamesForStudent(s.id))}</span></div>${mrStatusBadge(d)}</div>`; }).join('') || '<div class="empty">학생이 없어요.</div>'}
+    </div>
+    <div class="card">
+      ${!st.open?'<div class="empty">왼쪽에서 학생을 선택하세요.</div>':!open?`<div class="empty">${openStu?escapeHtml(openStu.name):''} 학생의 ${escapeHtml(st.month)} 초안이 아직 없어요.<br><button class="btn sm gold" style="margin-top:10px;" ${st.busy?'disabled':''} onclick="mrGenerate('${st.open}')">이 학생 초안 만들기</button></div>`:`
+        <div class="row between" style="gap:8px;flex-wrap:wrap;"><h3 style="margin:0;">${escapeHtml(openStu?openStu.name:'')} · ${escapeHtml(st.month)} ${mrStatusBadge(open)}</h3>
+          <div style="font-size:11px;color:#8a8674;">자동 초안 v${(open.generated&&open.generated.version)||1} · ${escapeHtml(((open.generated&&open.generated.generatedAt)||'').slice(0,16).replace('T',' '))}${open.edited?` · 수정 ${escapeHtml((open.edited.editedAt||'').slice(0,16).replace('T',' '))}`:''}</div></div>
+        ${open.hasNewerDraft?`<div style="margin:10px 0;padding:10px 12px;border-radius:9px;background:#fff9e8;border:1px solid #ead89a;font-size:12px;">📌 새 기록이 반영된 새 초안이 있어요. <b>내 수정본은 그대로 보존</b>돼 있습니다.
+          <div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap;"><button class="btn sm outline" onclick="mrState().showNew=!mrState().showNew;scheduleRender();">${st.showNew?'새 초안 닫기':'새 초안 보기'}</button>
+          <button class="btn sm gold" onclick="mrAdoptNewDraft('${st.open}')">새 초안으로 바꾸기 (수정본은 보관)</button>
+          <button class="btn sm outline" onclick="mrKeepEdited('${st.open}')">내 수정본 유지 (알림 닫기)</button></div>
+          ${st.showNew?`<pre style="white-space:pre-wrap;font-family:inherit;font-size:12px;line-height:1.6;margin:10px 0 0;padding:10px;background:#fff;border-radius:8px;">${escapeHtml((open.generated&&open.generated.text)||'')}</pre>`:''}</div>`:''}
+        <textarea id="mrText" rows="22" style="width:100%;box-sizing:border-box;margin-top:10px;font-size:13px;line-height:1.7;" oninput="mrState().text=this.value">${escapeHtml(st.text||mrCurrentText(open))}</textarea>
+        <div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap;">
+          <button class="btn sm gold" onclick="mrSaveEdit('${st.open}')">수정본 저장</button>
+          <button class="btn sm outline" onclick="mrCopy(this)">복사하기</button>
+          <button class="btn sm outline" onclick="mrMarkReviewed('${st.open}')">${open.status==='reviewed'?'확인 완료 해제':'✓ 검토 완료 표시'}</button>
+          <button class="btn sm outline" ${st.busy?'disabled':''} onclick="mrGenerate('${st.open}')">이 학생만 새 자료 반영</button>
+        </div>
+        <div style="font-size:11px;color:#8a8674;margin-top:8px;">내부 전용 메모(다음 시간 메모)는 포함되지 않아요. 기록이 없는 항목은 ‘기록 없음’으로 표시됩니다. ‘다음 달 학습 방향’은 기록으로 만든 초안이니 꼭 검토해주세요.</div>`}
+    </div>
+  </div>`;
+}
+/* MONTHLY_UI_END */
 
 /* ---------------- INIT ---------------- */
 initFirebase();
