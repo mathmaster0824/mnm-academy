@@ -2047,8 +2047,8 @@ function renderClassDetail(cls){
     <h3 style="margin-top:0;">일괄 적용 (반 전체)</h3>
     <div class="row">
       <select id="bulkAtt"><option value="">출석</option><option>출석</option><option>지각</option><option>결석</option></select>
-      <select id="bulkStepType"><option value="개념">개념학습</option><option value="유형">유형학습</option></select>
-      <select id="bulkCourseSel" onchange="onBulkCourseChange()"><option value="">학년학기</option>${sortedCourses().map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
+      <select id="bulkStepType"><option value="">개념/유형 (변경 안 함)</option><option value="개념">개념학습</option><option value="유형">유형학습</option></select>
+      <select id="bulkCourseSel" onchange="onBulkCourseChange()"><option value="">학년학기</option>${sortedCourses().map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}<option value="${STEP_ETC_ID}">${STEP_ETC_LABEL}</option></select>
       <select id="bulkStep"><option value="">STEP (학년학기 먼저 선택)</option></select>
       <select id="bulkHwComp"><option value="">숙제완성도</option><option>상</option><option>중</option><option>하</option></select>
       <select id="bulkStudyComp"><option value="">학습완성도</option><option>상</option><option>중</option><option>하</option></select>
@@ -2791,6 +2791,7 @@ function onBulkCourseChange(){
   const courseId = document.getElementById('bulkCourseSel').value;
   const course = courseById(courseId);
   const sel = document.getElementById('bulkStep');
+  if(courseId===STEP_ETC_ID){ sel.innerHTML = `<option value="${STEP_ETC_ID}" selected>${STEP_ETC_LABEL}</option>`; return; }
   sel.innerHTML = `<option value="">${course?'STEP 선택':'STEP (학년학기 먼저 선택)'}</option>` + (course ? (course.steps||[]).map(st=>`<option value="${st.id}">${st.name}</option>`).join('') : '');
 }
 function courseGradeLevel(courseId){
@@ -2855,12 +2856,25 @@ async function applyBulk(clsId,date){
   (cls.studentIds||[]).forEach(stuId=>{
     const patch = {};
     if(att) patch.attendance=att;
-    if(step){ patch.stepId=step; patch.stepType=stepType; }
+    if(stepType) patch.stepType=stepType;
+    if(step){ patch.stepId=step; if(!stepType) patch.stepType='개념'; patch.stepLabelSnapshot=stepShortLabel(step)||stepLabel(step)||''; }
     if(hw) patch.homeworkCompletionLevel=hw;
     if(study) patch.studyCompletionLevel=study;
-    upd[stuId]=patch;
+    if(Object.keys(patch).length) upd[stuId]=patch;
   });
-  await fsSet('classRecords', key, upd);
+  if(!Object.keys(upd).length){ alert('적용할 항목을 먼저 선택해주세요. (STEP은 학년학기를 고른 뒤 STEP까지 선택해야 해요. 개념/유형만 바꾸려면 그것만 골라도 돼요)'); return; }
+  // 수업기록은 최근 7일만 1회 읽어 오므로, 저장 성공 뒤 화면용 데이터(db)에도 직접 반영해야 바로 보인다.
+  const before=db.classRecords[key]?JSON.parse(JSON.stringify(db.classRecords[key])):null;
+  const merged={...(db.classRecords[key]||{})};
+  Object.keys(upd).forEach(id=>{ merged[id]={...(merged[id]||{}),...upd[id]}; });
+  db.classRecords[key]=merged;
+  render();
+  const ok=await fsSet('classRecords', key, upd);
+  if(!ok){
+    if(before) db.classRecords[key]=before; else delete db.classRecords[key];
+    render();
+    alert('일괄 적용을 저장하지 못했어요. 기존 기록은 바뀌지 않았습니다. 다시 시도해주세요.');
+  }
 }
 
 function renderWeeklyPlan(cls, date){
