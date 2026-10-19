@@ -27,7 +27,7 @@
 - Cloud Scheduler 작업은 **결제 계정당 3개까지 무료**, 초과 시 작업당 $0.10/31일(실행당 과금 없음). 같은 결제 계정의 다른 프로젝트 작업도 합산된다. 이 함수는 작업 1개.
 - 2세대 함수는 배포 시 Cloud Build·Artifact Registry·Cloud Run·Eventarc API를 사용하며 Artifact Registry 이미지 저장 용량에 소액 요금이 날 수 있다(무료 구간 초과분만). **요금이 0원이라고 단정하지 말고** 배포 후 첫 청구서/예산 알림으로 확인.
 - 읽기 비용: 월 1회 실행에서 학생 수 × 약 20문서 + 반별 수업기록·주간계획 + 해당 월 제출 문서 전체(날짜 범위 조회)를 읽는다. 사진이 문서에 들어 있어도 읽기 횟수는 문서 수로 계산된다. 학생 100명 기준 대략 수천 건 수준이며 Blaze 일일 무료 읽기(5만) 안쪽이지만, 제출 문서가 많은 달에는 앱 수동 생성도 같은 양을 읽는다.
-- 활성화/확인할 API: Cloud Functions, Cloud Build, Artifact Registry, Cloud Scheduler, Cloud Run Admin, Eventarc, Firebase Extensions 불필요. 대부분 `firebase deploy` 시 자동 활성화를 안내한다.
+- 활성화/확인할 API: Cloud Functions, Cloud Build, Artifact Registry, Cloud Scheduler, Cloud Run Admin, Eventarc. 대부분 `firebase deploy` 시 자동 활성화를 안내한다.
 - `onSchedule` 의 `timeZone: 'Asia/Seoul'`, `region: 'asia-northeast3'` 옵션은 배포 시 CLI가 검증한다(문서 예시에는 timeZone이 없어 **배포 전 `firebase deploy --only functions --dry-run` 또는 에뮬레이터로 확인 필요**).
 - 보안 규칙은 변경하지 않았다. 현재 규칙(`request.auth != null`)에서는 `monthlyReports` 도 로그인한 모든 세션(학생 익명 로그인 포함)이 읽을 수 있다. 앱의 학생 화면은 이 컬렉션을 읽지 않지만, 규칙 강화는 별도 검토 과제다.
 
