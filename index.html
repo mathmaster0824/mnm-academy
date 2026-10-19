@@ -529,6 +529,7 @@ function attachRoleListeners(){
   const stu=stuId?studentById(stuId):null;
   const resolvedClass=stuId?classForStudent(stuId):null;
   const clsId=resolvedClass?resolvedClass.id:(stu?stu.classId:null);
+  const studentClassIds=stuId?[...new Set(classesForStudent(stuId).map(c=>c.id).concat(clsId?[clsId]:[]))]:[];
   const subs=[];
   const recentStart=recentRecordStartISO();
   const currentWeek=weekStartISO(todayISO());
@@ -537,7 +538,7 @@ function attachRoleListeners(){
   // 로그인 때 전체 역사를 실시간 구독하지 않는다.
   // 최근 7일만 1회 읽고, 특정 과거 날짜는 화면에서 선택할 때 exact doc 1건을 읽는다.
   ['classRecords','weeklyPlans','fridaySupp'].forEach(col=>{ db[col]={}; });
-  const classIds=isDirector?(db.classes||[]).map(c=>c.id):(clsId?[clsId]:[]);
+  const classIds=isDirector?(db.classes||[]).map(c=>c.id):studentClassIds;
   Promise.all(classIds.flatMap(cid=>[
     fsdb.collection('classRecords')
       .where(firebase.firestore.FieldPath.documentId(),'>=',cid+'_'+recentStart)
@@ -1301,13 +1302,66 @@ async function handleMultiPhotoInput(inputEl, targetArrPush, maxW=480, quality=0
 
 /* ---------------- DOMAIN LOGIC ---------------- */
 
-function studentById(id){ return db.students.find(s=>s.id===id); }
+function studentById(id){
+  return db.students.find(s=>s.id===id) || ((typeof id==='string' && id.indexOf('_')>0) ? (hwSlotParts(id)?.student||undefined) : undefined);
+}
 function classById(id){ return db.classes.find(c=>c.id===id); }
-function classForStudent(stuId){
-  const byMembership=(db.classes||[]).find(c=>(c.studentIds||[]).includes(stuId));
-  if(byMembership) return byMembership;
-  const s=studentById(stuId);
-  return s&&s.classId ? classById(s.classId) : null;
+/* v97 복수 반 수강
+   - 학생 프로필은 1건. 소속 반은 classes.studentIds(여러 반 가능) + 레거시 students.classId(단일)로 읽는다.
+   - 대표 반(primary): students.classId가 소속 반이면 그 반, 아니면 첫 소속 반.
+   - 숙제 제출 문서 키: 대표 반/단일 반 학생은 기존 그대로 '학생ID_날짜'.
+     복수 반 학생의 대표 반이 아닌 반은 '학생ID_반ID_날짜'(슬롯 ID = '학생ID_반ID'). 끝 10자는 항상 날짜.
+   - 과거 문서는 변환하지 않는다. */
+function classesForStudent(stuId){
+  const s=db.students.find(x=>x.id===stuId);
+  const list=(db.classes||[]).filter(c=>(c.studentIds||[]).includes(stuId));
+  if(!list.length && s && s.classId){ const c=classById(s.classId); if(c) list.push(c); }
+  if(s && s.classId){ const i=list.findIndex(c=>c.id===s.classId); if(i>0) list.unshift(list.splice(i,1)[0]); }
+  return list;
+}
+function classNamesForStudent(stuId){ const l=classesForStudent(stuId); return l.length?l.map(c=>c.name).join(' · '):'미배정'; }
+function primaryClassId(stuId){ const l=classesForStudent(stuId); return l.length?l[0].id:''; }
+function classForStudent(stuId){ const l=classesForStudent(stuId); return l.length?l[0]:null; }
+function hwSlotId(stuId,clsId){
+  if(!clsId) return stuId;
+  const l=classesForStudent(stuId);
+  if(l.length<2 || clsId===l[0].id || !l.some(c=>c.id===clsId)) return stuId;
+  return stuId+'_'+clsId;
+}
+function hwSlotParts(id){
+  if(typeof id!=='string') return null;
+  const direct=db.students.find(x=>x.id===id);
+  if(direct) return {student:direct,stuId:direct.id,clsId:''};
+  for(const st of db.students){
+    if(id.length>st.id.length+1 && id.startsWith(st.id+'_')){
+      const clsId=id.slice(st.id.length+1);
+      if(classById(clsId)) return {student:st,stuId:st.id,clsId};
+    }
+  }
+  return null;
+}
+function baseStudentId(id){ const p=hwSlotParts(id); return p?p.stuId:id; }
+// 반별 숙제 제출 조회. 슬롯 문서가 없으면 반 정보가 없는 기존(레거시) 기본 문서를 그대로 인정한다.
+function subForClass(stuId,clsId,date){
+  if(!clsId) return db.submissions[stuId+'_'+date];
+  const slot=hwSlotId(stuId,clsId);
+  if(slot!==stuId){
+    const sec=db.submissions[slot+'_'+date];
+    if(sec) return sec;
+    const legacy=db.submissions[stuId+'_'+date];
+    return (legacy && !legacy.classId) ? legacy : undefined;
+  }
+  const base=db.submissions[stuId+'_'+date];
+  if(base && base.classId && base.classId!==clsId) return undefined;
+  return base;
+}
+// 이 날짜(요일)에 숙제 계획이 있는 소속 반 목록 (반별 계획은 weeklyPlans/{반ID}_{주} 안의 학생별 요일 칸)
+function homeworkClassesForDate(stuId,date){
+  const wk=weekStartISO(date), dayKey=DAY_KEYS[new Date(date+'T00:00:00').getDay()];
+  return classesForStudent(stuId).filter(c=>{
+    const per=(db.weeklyPlans[c.id+'_'+wk]||{})[stuId]||{};
+    return !!per[dayKey];
+  });
 }
 function courseById(id){ return db.courses.find(c=>c.id===id); }
 const COURSE_ORDER = [
@@ -2040,7 +2094,7 @@ function renderClassDetail(cls){
     <p style="font-size:12px;color:#8a8674;margin:0 0 10px;">위 수업 기록 표에 입력하신 내용을 바탕으로, 바로 카톡에 보낼 수 있는 문구가 자동으로 만들어져요.</p>
     ${students.length ? students.map(s=>{
       const r = rec[s.id] || {};
-      const text = buildDailyReportText(s, date, r, cls.dayGroup);
+      const text = buildDailyReportText(s, date, r, cls.dayGroup, cls.id);
       return `<div style="padding:10px 0;border-bottom:1px solid var(--line);">
         <div class="row between"><b>${s.name}</b><button class="btn sm outline" onclick="copyText(this)" data-text="${encodeURIComponent(text)}">복사하기</button></div>
         <pre style="white-space:pre-wrap;font-family:inherit;font-size:12px;line-height:1.6;margin:6px 0 0;color:#4a4636;">${text}</pre>
@@ -2059,7 +2113,7 @@ function renderClassDetail(cls){
   </div>
   `;
 }
-function buildDailyReportText(s, date, r, dayGroup){
+function buildDailyReportText(s, date, r, dayGroup, clsId){
   const trafficEmoji = {green:'🟢',yellow:'🟡',red:'🔴'}[dailyTrafficForStudentDate(s.id, date)] || '⚪';
   const stepTxt = r.stepId ? (stepShortLabel(r.stepId)||stepLabel(r.stepId)||r.stepLabelSnapshot||'-') : (r.stepLabelSnapshot||'-');
   const extraStepsTxt = (r.extraSteps&&r.extraSteps.length)
@@ -2067,10 +2121,11 @@ function buildDailyReportText(s, date, r, dayGroup){
     : ((r.extraStepLabelSnapshots&&r.extraStepLabelSnapshots.length) ? ' + '+r.extraStepLabelSnapshots.filter(Boolean).join(', ') : '');
   // 숙제완성도는 수업기록의 수기 등급이 아니라 실제 submissions 인증 기록으로 계산.
   const hwDates = homeworkDateRangeDates(dayGroup, date);
-  const hwApproved = hwDates.filter(d=>homeworkCountsAsCompleted(db.submissions[s.id+'_'+d],d));
-  const hwPending = hwDates.filter(d=>submissionIsPending(db.submissions[s.id+'_'+d],d));
+  const subOf = d => clsId ? subForClass(s.id,clsId,d) : db.submissions[s.id+'_'+d];
+  const hwApproved = hwDates.filter(d=>homeworkCountsAsCompleted(subOf(d),d));
+  const hwPending = hwDates.filter(d=>submissionIsPending(subOf(d),d));
   const hwMissing = hwDates.filter(d=>{
-    const sub=db.submissions[s.id+'_'+d];
+    const sub=subOf(d);
     return !sub || submissionIsRejected(sub,d);
   });
   const hwCompletionText = hwDates.length
@@ -2509,13 +2564,13 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames, focusRecommended=f
   const videoTotal = (r.videoAssignments||[]).length;
   const hwDateRange = homeworkDateRangeDates(cls.dayGroup, date);
   const dayChecklist = hwDateRange.map(d=>{
-    const daySub = db.submissions[s.id+'_'+d];
+    const daySub = subForClass(s.id,cls.id,d);
     const dowKey = DAY_KEYS[new Date(d+'T00:00:00').getDay()];
     const st = submissionReviewState(daySub,d,s.id);
     const cls2 = st==='approved' ? 'green' : st==='pending' ? 'yellow' : st==='unknown' ? 'gray' : 'red';
     return `<span class="badge ${cls2}" title="${homeworkReviewLabel(daySub,d,s.id)}" style="margin:2px 3px 0 0;font-size:9px;padding:2px 6px;">${DAY_LABEL[dowKey]} ${homeworkReviewMark(daySub,d,s.id)}</span>`;
   }).join('');
-  const submittedCount = hwDateRange.filter(d=>homeworkCountsAsCompleted(db.submissions[s.id+'_'+d],d)).length;
+  const submittedCount = hwDateRange.filter(d=>homeworkCountsAsCompleted(subForClass(s.id,cls.id,d),d)).length;
   const totalRangeDays = hwDateRange.length;
   const hwLevel = r.homeworkCompletionLevel || '';
   const status = studentStatus(s.id);
@@ -2711,7 +2766,10 @@ async function assignStudent(clsId){
   const cls=classById(clsId);
   const newIds = [...(cls.studentIds||[]), sel.value];
   await fsSet('classes', clsId, {studentIds:newIds});
-  await fsUpdate('students', sel.value, {classId:clsId});
+  // v97: 이미 대표 반이 있는 학생(복수 반 수강)의 classId는 바꾸지 않는다. 대표 반이 없을 때만 지정.
+  const stu=studentById(sel.value);
+  const stillIn=stu&&stu.classId&&(classById(stu.classId)?.studentIds||[]).includes(stu.id);
+  if(!stillIn) await fsUpdate('students', sel.value, {classId:clsId});
 }
 async function unassignStudent(clsId,stuId){
   const cls=classById(clsId);
@@ -4202,7 +4260,6 @@ function renderStudentDetail(stuId, directorView){
   });
 
   const wk = weekStartISO(todayISO());
-  const myWeekPlan = s.classId ? (db.weeklyPlans[s.classId+'_'+wk] || {})[stuId] || {} : {};
 
   return `
   ${directorView? `<button class="btn sm outline" style="margin-bottom:14px;" onclick="currentSubState.studentDetail=null;render();">← 목록으로</button>` : ''}
@@ -4212,7 +4269,7 @@ function renderStudentDetail(stuId, directorView){
     <div class="row between">
       <div>
         <h2 style="margin:0 0 4px;">${s.name} <span style="font-size:14px;color:#9c9880;">(${s.grade})</span> ${s.status==='withdrawn'?'<span class="badge gray">퇴원생</span>':''}</h2>
-        <span class="studentcode">${s.code}</span> · ${cls? cls.name : '미배정'} · ${statusBadge(status)} ${warningCountBadge(verifiedWarnings(s).length)}
+        <span class="studentcode">${s.code}</span> · ${escapeHtml(classNamesForStudent(stuId))} · ${statusBadge(status)} ${warningCountBadge(verifiedWarnings(s).length)}
       </div>
       ${directorView? `<div class="row">
         <button class="btn sm ${currentSubState.previewAsStudent?'gold':'outline'}" onclick="currentSubState.previewAsStudent=!currentSubState.previewAsStudent;render();">${currentSubState.previewAsStudent?'✓ 학생 화면 미리보기 중':'🔍 학생 화면 그대로 보기'}</button>
@@ -4283,13 +4340,7 @@ function renderStudentDetail(stuId, directorView){
     </div>`).join('') : `<div class="empty">부여된 영상 과제가 없어요.</div>`}
   </div>
 
-  <div class="card">
-    <h3 style="margin-top:0;">이번 주 숙제 계획</h3>
-    <div class="weekgrid" style="grid-template-columns:70px repeat(7,1fr);">
-      <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div class="hd">${DAY_LABEL[k]}</div>`).join('')}
-      <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div style="font-size:11px;padding:4px;border:1px solid var(--line);border-radius:6px;min-height:44px;">${myWeekPlan[k]||''}</div>`).join('')}
-    </div>
-  </div>
+    ${renderWeekPlanGrids(stuId,'이번 주 숙제 계획')}
 
   ${directorView ? renderHomeworkGlanceForWarning(stuId) : ''}
   ${renderWarningsCard(stuId, directorView)}
@@ -4372,10 +4423,10 @@ function renderHomeworkReview(){
   ${rows.length? rows.map(r=>{
     const s = studentById(r.studentId);
     const cls = s ? classForStudent(r.studentId) : null;
-    const hwContent = s ? homeworkContentForDate(r.studentId, cls?.id||s.classId, r.date) : '';
+    const hwContent = s ? homeworkContentForDate(baseStudentId(r.studentId), (r.classId||cls?.id||s.classId), r.date) : '';
     return `<div class="card">
       <div class="row between">
-        <div><b>${s? s.name : '(삭제된 학생)'}</b> <span style="color:#9c9880;font-size:12px;">${cls? cls.name+' · ':''}${fmtDate(r.date)}</span>
+        <div><b>${s? s.name : '(삭제된 학생)'}</b> <span style="color:#9c9880;font-size:12px;">${(r.classId&&classById(r.classId)?classById(r.classId).name:cls?.name)? (r.classId&&classById(r.classId)?classById(r.classId).name:cls.name)+' · ':''}${fmtDate(r.date)}</span>
           ${hwContent? `<div style="font-size:12px;color:#6b6858;margin-top:2px;">📖 그날 숙제: ${hwContent}</div>` : ''}
         </div>
         <div class="row">
@@ -4390,7 +4441,7 @@ function renderHomeworkReview(){
                 ? `<span class="badge red">최종 불합격</span>`
                 : `${submissionReviewState(r,r.date)!=='approved' && !submissionIsAutoSubmitted(r) ? `<button class="btn sm gold" onclick="confirmSubmission('${r.studentId}','${r.date}',this)">✓ 숙제 인정</button>` : ''}
                    ${submissionReviewState(r,r.date)!=='rejected' ? `<button class="btn sm danger" onclick="rejectSubmission('${r.studentId}','${r.date}')">✕ 불합격</button>` : ''}`}`}
-          ${s ? `<button class="btn sm outline" onclick="goto('students');currentSubState.studentDetail='${r.studentId}';render();">학생 페이지</button>` : ''}
+          ${s ? `<button class="btn sm outline" onclick="goto('students');currentSubState.studentDetail='${baseStudentId(r.studentId)}';render();">학생 페이지</button>` : ''}
         </div>
       </div>
       <div style="margin-top:8px;font-size:12px;color:#8a8674;">
@@ -4414,6 +4465,19 @@ function renderHomeworkReview(){
 function renderSubmissionCard(stuId, directorView, previewAsStudent){
   const asStudent = session.mode==='student' || previewAsStudent;
   const date = currentSubState.subDate || (asStudent ? academicTodayISO() : todayISO());
+  // v97 복수 반: 같은 날 숙제가 있는 반이 둘 이상이면 반을 고르게 하고, 선택한 반의 슬롯 ID로 제출/임시저장/타이머를 분리한다.
+  let classPicker='';
+  if(asStudent && classesForStudent(stuId).length>1){
+    const opts=homeworkClassesForDate(stuId,date);
+    if(opts.length>1){
+      const sel=opts.some(c=>c.id===currentSubState.subClassId)?currentSubState.subClassId:opts[0].id;
+      classPicker=`<div style="margin:8px 0 12px;"><div style="font-size:12px;color:#8a8674;margin-bottom:5px;">어느 반 숙제를 제출할까요?</div>
+        <div class="tabs2">${opts.map(c=>`<button class="${c.id===sel?'active':''}" onclick="selectSubmissionClass('${c.id}')">${escapeHtml(c.name)}</button>`).join('')}</div></div>`;
+      stuId=hwSlotId(baseStudentId(stuId),sel);
+    }else if(opts.length===1){
+      stuId=hwSlotId(baseStudentId(stuId),opts[0].id);
+    }
+  }
   const key = stuId+'_'+date;
   const sub = db.submissions[key];
   // 학생/학생 미리보기에서는 선생님 코멘트를 숙제 화면의 최상단에 먼저 노출한다.
@@ -4442,6 +4506,7 @@ function renderSubmissionCard(stuId, directorView, previewAsStudent){
   return `
   <div class="card">
     <div class="row between"><h3 style="margin:0;">📸 숙제 인증${previewAsStudent?' <span style="font-size:11px;color:var(--gold);">(미리보기)</span>':''}</h3><input type="date" value="${date}" onchange="currentSubState.subDate=this.value;render();"></div>
+    ${classPicker}
     ${teacherCommentBanner}
     ${statusBanner}
     ${asStudent ? renderSubmissionForm(stuId,date,sub) : (sub? renderSubmissionReadonly(sub,stuId,date) : `<div class="empty">이 날짜에 제출된 인증이 없어요.</div>`)}
@@ -4926,6 +4991,10 @@ async function compactSubmissionLegacyPhotos(payload){
   }
   return copy;
 }
+function selectSubmissionClass(clsId){
+  if(currentSubState._draftSub && !confirm('작성 중인 내용은 반별로 따로 저장돼요. 반을 바꿀까요?')) return;
+  currentSubState.subClassId=clsId; currentSubState._draftSub=null; currentSubState._draftSubKey=null; render();
+}
 async function submitHomework(stuId,date){
   const draft = currentSubState._draftSub;
   const existingSubmission = db.submissions[stuId+'_'+date] || null;
@@ -4952,7 +5021,9 @@ async function submitHomework(stuId,date){
   const {errorTypes: _legacyErrorTypes, ...submissionDraft} = draft || {};
   const payload = {
     ...submissionDraft,
-    studentId:stuId,
+    studentId:baseStudentId(stuId),
+    // v97: 신규 제출에만 어느 반 숙제인지 기록(과거 문서는 변환하지 않음)
+    classId:(hwSlotParts(stuId)?.clsId)||primaryClassId(baseStudentId(stuId))||'',
     date:date,
     status:HW_AUTO_SUBMITTED,
     reviewCount:homeworkReviewCount(existing),
@@ -5015,8 +5086,9 @@ async function updateStudentField(stuId,field,val){ await fsUpdate('students', s
 /* ---------------- 경고 기록 ---------------- */
 /* ---------------- 경고 판단용: 날짜별 숙제 제출 현황 한눈에 보기 (읽기 전용) ---------------- */
 function homeworkContentForDate(stuId, clsId, date){
+  const memberOfGiven = clsId && classesForStudent(stuId).some(c=>c.id===clsId);
   const actual=classForStudent(stuId);
-  const effectiveClsId=actual?.id || clsId || '';
+  const effectiveClsId=memberOfGiven ? clsId : (actual?.id || clsId || '');
   if(!effectiveClsId) return '';
   const wk = weekStartISO(date);
   const plan = db.weeklyPlans[effectiveClsId+'_'+wk];
@@ -5061,8 +5133,12 @@ function homeworkGlanceRowsForStudent(stuId, limitDays){
   const byDate=new Map();
   for(const l of lessons){
     for(const d of homeworkDateRangeDates(l.dayGroup,l.date)){
-      const sub = db.submissions[stuId+'_'+d];
-      byDate.set(d, {state: homeworkEffectiveState(sub, d, stuId), clsId: l.clsId});
+      const sub = subForClass(stuId,l.clsId,d);
+      const st = homeworkEffectiveState(sub, d, stuId);
+      const prev = byDate.get(d);
+      // 같은 날짜에 두 반 숙제가 있으면 더 나쁜 상태를 대표로 보여준다(미제출이 인정으로 가려지지 않게).
+      const rank = {missing:6,finalRejected:6,rejected:5,pending:4,unknown:3,open:2,approved:1};
+      if(!prev || (rank[st]||0) > (rank[prev.state]||0)) byDate.set(d, {state: st, clsId: l.clsId});
     }
   }
   const dates = [...byDate.keys()].sort();
@@ -6515,7 +6591,7 @@ function renderFeedbackPreview(stuId,type,traffic,comment,dailyDate){
     if(!s) return '<div class="empty">학생 정보를 찾을 수 없어요.</div>';
     const ctx=classRecordContextForStudentDate(stuId,date);
     const cls=ctx.cls||classForStudent(stuId);
-    const text=buildDailyReportText(s,date,ctx.record||{},cls?.dayGroup||'');
+    const text=buildDailyReportText(s,date,ctx.record||{},cls?.dayGroup||'',cls?.id||'');
     return `<div style="margin-bottom:8px;font-size:11px;color:#8a8674;">선택한 날짜의 출석·일일TEST·오늘 진도·문제 적용·숙제 현황을 그대로 읽어옵니다.</div><pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.7;margin:0;">${text}</pre><button class="btn sm outline" style="margin-top:10px;" onclick="copyText(this)" data-text="${encodeURIComponent(text)}">텍스트 복사하기</button>`;
   }
   const s = studentById(stuId);
@@ -6765,6 +6841,21 @@ async function downloadBackup(){
 }
 
 /* ---------------- STUDENT HOME ---------------- */
+function renderWeekPlanGrids(stuId,title){
+  const wk=weekStartISO(todayISO());
+  const classes=classesForStudent(stuId);
+  const many=classes.length>1;
+  const list=classes.length?classes:[null];
+  return list.map(c=>{
+    const plan=c?((db.weeklyPlans[c.id+'_'+wk]||{})[stuId]||{}):{};
+    return `<div class="card">
+    <h3 style="margin-top:0;">${title}${many?` · <span style="color:var(--navy2);">${escapeHtml(c.name)}</span>`:''}</h3>
+    <div class="weekgrid" style="grid-template-columns:70px repeat(7,1fr);">
+      <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div class="hd">${DAY_LABEL[k]}</div>`).join('')}
+      <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div style="font-size:11px;padding:4px;border:1px solid var(--line);border-radius:6px;min-height:44px;">${plan[k]||''}</div>`).join('')}
+    </div>
+  </div>`;}).join('');
+}
 function renderStudentHome(){
   const stuId = session.studentId;
   const s = studentById(stuId);
@@ -6773,7 +6864,7 @@ function renderStudentHome(){
   return `
     <div class="card">
       <h2 style="margin:0 0 4px;">${s.name} <span style="font-size:14px;color:#9c9880;">(${s.grade})</span></h2>
-      <span class="studentcode">${s.code}</span> · ${cls?cls.name:'미배정'}
+      <span class="studentcode">${s.code}</span> · ${escapeHtml(classNamesForStudent(stuId))}
     </div>
     ${renderStudentHomeworkSummary(stuId)}
     ${renderStudentQuestionSummary(stuId)}
@@ -6884,7 +6975,7 @@ function renderStudentProgressPage(){
       <div class="row between">
         <div>
           <h2 style="margin:0 0 4px;">🚦 학습현황</h2>
-          <div style="font-size:13px;color:#8a8674;">${s.name} · ${cls?cls.name:'미배정'}</div>
+          <div style="font-size:13px;color:#8a8674;">${s.name} · ${escapeHtml(classNamesForStudent(stuId))}</div>
         </div>
         <div style="text-align:center;min-width:105px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;">
           <div style="font-size:30px;line-height:1;">${trafficIcon}</div>
@@ -8722,7 +8813,6 @@ function renderStudentHomeworkPage(){
   const cls = classForStudent(stuId);
   const clsId = cls?.id || s.classId || '';
   const wk = weekStartISO(todayISO());
-  const myWeekPlan = clsId ? (db.weeklyPlans[clsId+'_'+wk] || {})[stuId] || {} : {};
 
   const videoAssignFlat = [];
   Object.entries(db.classRecords).forEach(([key,obj])=>{
@@ -8735,16 +8825,10 @@ function renderStudentHomeworkPage(){
   return `
     <div class="card">
       <h2 style="margin:0 0 4px;">✏️ 오늘의 숙제</h2>
-      <div style="font-size:13px;color:#8a8674;">${s.name} · ${cls?cls.name:'미배정'}</div>
+      <div style="font-size:13px;color:#8a8674;">${s.name} · ${escapeHtml(classNamesForStudent(stuId))}</div>
     </div>
 
-    <div class="card">
-      <h3 style="margin-top:0;">이번 주 숙제</h3>
-      <div class="weekgrid" style="grid-template-columns:70px repeat(7,1fr);">
-        <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div class="hd">${DAY_LABEL[k]}</div>`).join('')}
-        <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div style="font-size:11px;padding:4px;border:1px solid var(--line);border-radius:6px;min-height:44px;">${myWeekPlan[k]||''}</div>`).join('')}
-      </div>
-    </div>
+    ${renderWeekPlanGrids(stuId,'이번 주 숙제')}
 
     <div class="card">
       <h3 style="margin-top:0;">개념동영상학습</h3>
