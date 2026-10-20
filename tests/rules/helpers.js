@@ -16,9 +16,11 @@ const DIR_UID = 'dir1';
 
 const rulesPath = (name) => path.join(__dirname, '..', '..', 'security', name);
 
+// 에뮬레이터는 규칙을 "프로젝트 ID 단위"로 보관한다. 파일마다 다른 규칙을 쓰므로 프로젝트 ID 를 파일별로 분리한다
+// (같은 ID 를 쓰면 한 파일이 다른 파일의 규칙·데이터를 덮어써 결과가 뒤섞인다).
 async function makeEnv(rulesFile) {
   return initializeTestEnvironment({
-    projectId: 'demo-mnm-rules',
+    projectId: 'demo-r-' + rulesFile.split('.')[2],
     firestore: { rules: fs.readFileSync(rulesPath(rulesFile), 'utf8') },
   });
 }

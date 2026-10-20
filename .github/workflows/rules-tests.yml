@@ -54,6 +54,13 @@ jobs:
             echo "- 기준선·1단계·2단계: **${{ steps.t1.outcome }}**"
             echo "- 월말 리포트 잠금(PR #11 제안안): **${{ steps.t2.outcome }}**"
             echo
+            echo "<details open><summary>실패 항목 요약 (✖ 줄, 최대 120개)</summary>"
+            echo
+            echo '```'
+            grep -aE '^\s*✖' rules-test.log 2>/dev/null | head -n 120 | cut -c1-200
+            echo '```'
+            echo "</details>"
+            echo
             echo "<details><summary>기준선·1단계·2단계 로그 (앞 60줄 + 뒤 160줄)</summary>"
             echo
             echo '```'
