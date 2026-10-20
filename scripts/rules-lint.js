@@ -50,6 +50,16 @@ function unconstrainedForSession(cond) {
 function lintRules(raw) {
   const text = stripComments(raw);
   const violations = [];
+  // 0) 원장 판정: 규칙 파일의 UID 목록만 사용한다(Firestore 문서의 허용 목록 금지), 저장소에는 자리표시자만 둔다
+  if (/isDirector\(\)/.test(text)) {
+    if (!/function\s+directorUids\(\)\s*\{\s*return\s*\[\s*'REPLACE_WITH_DIRECTOR_UID'\s*\]\s*;\s*\}/.test(text))
+      violations.push("directorUids() 는 자리표시자 'REPLACE_WITH_DIRECTOR_UID' 하나만 담아야 한다(운영 UID 는 게시 시점에 콘솔에서 입력).");
+    const fn = (text.match(/function\s+isDirector\(\)\s*\{[\s\S]*?\n\s*\}/) || [''])[0];
+    if (!/request\.auth\.uid\s+in\s+directorUids\(\)/.test(fn)) violations.push('isDirector() 가 request.auth.uid in directorUids() 를 확인하지 않는다.');
+    if (!/sign_in_provider\s*==\s*'password'/.test(fn)) violations.push("isDirector() 가 비밀번호 로그인 공급자('password')를 확인하지 않는다.");
+    if (/\b(get|exists|getAfter|existsAfter)\s*\(\s*\/databases/.test(text)) violations.push('규칙이 문서를 읽어(get/exists) 권한을 판정한다 — 원장 판정에 Firestore 문서를 쓰지 않는다.');
+    if (/meta\/directors/.test(text)) violations.push('규칙이 meta/directors 를 참조한다.');
+  }
   // 1) 함수 정의 밖의 `request.auth != null` 금지
   const noFn = text.replace(/function\s+signedIn\s*\(\)\s*\{[^}]*\}/, '');
   if (/request\.auth\s*!=\s*null/.test(noFn)) violations.push('signedIn() 밖에 `request.auth != null` 조건이 있다(넓은 허용).');

@@ -15,13 +15,16 @@ const DATE = '2026-10-19', WEEK = '2026-10-19', MONTH = '2026-11';
 const DIR_UID = 'dir1';
 
 const rulesPath = (name) => path.join(__dirname, '..', '..', 'security', name);
+// 저장소의 규칙 파일에는 원장 UID 자리표시자가 있다. 시험에서는 가짜 원장 UID 로 바꿔 올린다(운영 UID 는 저장소에 없다).
+const UID_PLACEHOLDER = 'REPLACE_WITH_DIRECTOR_UID';
+const loadRules = (name, uid = DIR_UID) => fs.readFileSync(rulesPath(name), 'utf8').split(UID_PLACEHOLDER).join(uid);
 
 // 에뮬레이터는 규칙을 "프로젝트 ID 단위"로 보관한다. 파일마다 다른 규칙을 쓰므로 프로젝트 ID 를 파일별로 분리한다
 // (같은 ID 를 쓰면 한 파일이 다른 파일의 규칙·데이터를 덮어써 결과가 뒤섞인다).
 async function makeEnv(rulesFile) {
   return initializeTestEnvironment({
     projectId: 'demo-r-' + rulesFile.split('.')[2],
-    firestore: { rules: fs.readFileSync(rulesPath(rulesFile), 'utf8') },
+    firestore: { rules: loadRules(rulesFile) },
   });
 }
 
@@ -31,7 +34,6 @@ async function seed(env) {
     const d = ctx.firestore();
     const S = (p, data) => F.setDoc(F.doc(d, p), data);
     await S('meta/settings', { adminPassword: 'FAKE-PASSWORD-NOT-REAL', isDefaultPassword: false });
-    await S('meta/directors', { uids: [DIR_UID] });
     await S(`students/${A}`, { name: '가짜A', code: '1111', classId: CLS, status: 'active', memo: 'FAKE-MEMO', warnings: [] });
     await S(`students/${B}`, { name: '가짜B', code: '2222', classId: CLS, status: 'active', memo: 'FAKE-MEMO', warnings: [] });
     await S(`classes/${CLS}`, { name: '가짜반1', dayGroup: '월목', studentIds: [A, B] });
@@ -128,4 +130,4 @@ function suite(rulesFile, body) {
   body(() => env);
 }
 
-module.exports = { seed, rulesPath, initializeTestEnvironment, fs, before, after, beforeEach, assertFails, assertSucceeds, A, B, A2, CLS, CLS2, DATE, WEEK, MONTH, DIR_UID, ctx, op, table, suite, describe, it };
+module.exports = { seed, rulesPath, loadRules, UID_PLACEHOLDER, initializeTestEnvironment, fs, before, after, beforeEach, assertFails, assertSucceeds, A, B, A2, CLS, CLS2, DATE, WEEK, MONTH, DIR_UID, ctx, op, table, suite, describe, it };

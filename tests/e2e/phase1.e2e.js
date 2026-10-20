@@ -9,7 +9,7 @@ const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
 const F = require('firebase/firestore');
 
 const INDEX = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
-const rules = (n) => fs.readFileSync(path.join(__dirname, '..', '..', 'security', n), 'utf8');
+const rules = (n, uid) => fs.readFileSync(path.join(__dirname, '..', '..', 'security', n), 'utf8').split('REPLACE_WITH_DIRECTOR_UID').join(uid || 'unused-uid');
 const P1 = 'demo-e2e-p1', CUR = 'demo-e2e-cur';
 const TEST_PW = 'Test-Password-123';              // 시험 전용 가짜 비밀번호
 const DIR_EMAIL = 'director@test.invalid', OTHER_EMAIL = 'notdirector@test.invalid';
@@ -28,13 +28,12 @@ async function signUp(project, email) {
   return (await r.json()).localId;
 }
 
-async function seedEnv(project, rulesFile, directorUids) {
-  const env = await initializeTestEnvironment({ projectId: project, firestore: { rules: rules(rulesFile) } });
+async function seedEnv(project, rulesFile, directorUid) {
+  const env = await initializeTestEnvironment({ projectId: project, firestore: { rules: rules(rulesFile, directorUid) } });
   await env.clearFirestore();
   await env.withSecurityRulesDisabled(async (c) => {
     const d = c.firestore(); const S = (p, v) => F.setDoc(F.doc(d, p), v);
     await S('meta/settings', { adminPassword: 'FAKE-PW-NOT-REAL', isDefaultPassword: false });
-    if (directorUids) await S('meta/directors', { uids: directorUids });
     await S(`students/${A}`, { name: '가짜A', code: '1111', classId: CLS, status: 'active', grade: '중2' });
     await S(`students/${B}`, { name: '가짜B', code: '2222', classId: CLS, status: 'active', grade: '중2' });
     await S(`classes/${CLS}`, { name: '가짜반1', dayGroup: '월목', studentIds: [A, B] });
@@ -97,8 +96,8 @@ async function studentFlow(page, label, expectCode) {
   try {
     // ── 1단계 규칙 + 서버 검증 원장 로그인(firebase 모드) ─────────────────────
     const dirUid = await signUp(P1, DIR_EMAIL);
-    await signUp(P1, OTHER_EMAIL);
-    const env1 = await seedEnv(P1, 'firestore.rules.phase1.proposed', [dirUid]);
+    const otherUid = await signUp(P1, OTHER_EMAIL);
+    const env1 = await seedEnv(P1, 'firestore.rules.phase1.proposed', dirUid);
 
     {
       const { ctx, page, perm } = await openApp(browser, { project: P1, mode: 'firebase', email: DIR_EMAIL });
@@ -154,7 +153,7 @@ async function studentFlow(page, label, expectCode) {
       await page.fill('#pwInput', TEST_PW);
       await page.evaluate(() => tryDirectorLogin());
       await page.waitForFunction(() => session && session.mode === 'director', null, { timeout: 20000 }).catch(() => {});
-      check('원장 로그인: 올바른 시험 비밀번호 + 허용 목록 → 원장 화면 입장', await page.evaluate(() => !!(session && session.mode === 'director')));
+      check('원장 로그인: 올바른 시험 비밀번호 + 규칙의 원장 UID 일치 → 원장 화면 입장', await page.evaluate(() => !!(session && session.mode === 'director')));
       check('원장 세션: meta/settings 읽기 허용', (await tryOp(page, 'get', 'meta/settings')) === 'ok');
       check('원장 세션: monthlyReports 읽기 허용', (await tryOp(page, 'get', `monthlyReports/2026-09_${A}`)) === 'ok');
       check('원장 세션: 규칙에 없는 경로(settings/main, 전체 백업용) 읽기 허용', (await tryOp(page, 'get', 'settings/main')) === 'ok');
@@ -178,10 +177,17 @@ async function studentFlow(page, label, expectCode) {
       await page.fill('#pwInput', TEST_PW);
       await page.evaluate(() => tryDirectorLogin());
       await page.waitForFunction(() => /원장 권한이 없/.test(document.getElementById('pwErr').textContent), null, { timeout: 20000 }).catch(() => {});
-      check('허용 목록에 없는 계정(비밀번호는 맞음) → 원장 입장 거부', await page.evaluate(() => !session && /원장 권한이 없/.test(document.getElementById('pwErr').textContent)));
+      check('다른 이메일/비밀번호 계정(규칙에 적은 원장 UID 와 다름, 비밀번호는 맞음) → 원장 입장 거부', await page.evaluate(() => !session && /원장 권한이 없/.test(document.getElementById('pwErr').textContent)));
       await waitAnon(page);
-      check('허용 목록 밖 계정 거부 뒤 익명 세션으로 돌아감', await page.evaluate(() => fauth.currentUser.isAnonymous));
-      check('허용 목록 밖 계정이 meta/settings 읽기 → 거부', (await tryOp(page, 'get', 'meta/settings')) === 'permission-denied');
+      check('UID 불일치 계정 거부 뒤 익명 세션으로 돌아감', await page.evaluate(() => fauth.currentUser.isAnonymous));
+      check('UID 불일치 계정이 meta/settings 읽기 → 거부', (await tryOp(page, 'get', 'meta/settings')) === 'permission-denied');
+      check('UID 불일치 계정이 meta/directors 에 자기 UID 쓰기 → 거부(1단계 규칙)', (await tryOp(page, 'set', 'meta/directors', { uids: ['x'] })) === 'permission-denied');
+      // 옛 규칙 구간에서 목록이 변조됐다고 가정(문서를 직접 시드): 원장 판정에 쓰이지 않으므로 여전히 거부여야 한다
+      await env1.withSecurityRulesDisabled(async (c) => { await F.setDoc(F.doc(c.firestore(), 'meta/directors'), { uids: [otherUid] }); });
+      await page.fill('#pwInput', TEST_PW);
+      await page.evaluate(() => tryDirectorLogin());
+      await page.waitForTimeout(1500);
+      check('허용 목록 문서가 변조돼 있어도(다른 계정 UID 기재) 원장 입장 거부', await page.evaluate(() => !session));
       await ctx.close();
     }
     {

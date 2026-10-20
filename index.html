@@ -270,8 +270,8 @@ const fauth = firebase.auth();
    mode:'legacy'   → 기존 방식 그대로. 브라우저가 Firestore meta/settings 의 비밀번호와 입력값을 비교한다.
                      ⚠ 서버 검증이 아니다. 비밀번호가 모든 접속자에게 읽힌다. 전환 전 기본값이며 동작은 이전과 같다.
    mode:'firebase' → Firebase Authentication 이메일/비밀번호 로그인(비밀번호를 Firebase 서버가 검증)
-                     + Firestore meta/directors 허용 목록(uids)에 있는 계정만 원장. 앱은 meta/settings 를 읽지 않는다.
-   전환 절차: docs/SECURITY_PHASE1_CUTOVER.md (콘솔에서 계정·허용 목록을 먼저 만든 뒤 아래 값을 바꿔 배포한다).
+                     + Firestore 규칙 파일에 적힌 원장 UID 의 계정만 원장(서버가 판정). 앱은 meta/settings 를 읽지 않는다.
+   전환 절차: docs/SECURITY_PHASE1_CUTOVER.md (콘솔에서 원장 계정을 먼저 만들고, 규칙 파일의 원장 UID 를 확인한 뒤 아래 값을 바꿔 배포한다).
    email 은 자리표시자다. 실제 원장 로그인 이메일은 전환 때 이 한 줄만 바꾼다(비밀번호는 코드에 두지 않는다). */
 const DIRECTOR_AUTH = { mode:'legacy', email:'director@REPLACE-ME.invalid' };
 function directorAuthIsFirebase(){ return DIRECTOR_AUTH.mode==='firebase'; }
@@ -775,13 +775,14 @@ function setLoginMode(m){
 function isFirebaseDirectorUser(u){
   return !!(u && !u.isAnonymous && (u.providerData||[]).some(p=>p && p.providerId==='password'));
 }
-// 허용 목록(meta/directors.uids) 확인: 이 문서는 서버 규칙이 원장 계정에게만 읽게 한다.
-// 읽기에 성공하고 내 uid 가 목록에 있어야 원장이다(화면의 session 값이 아니라 서버 판정).
-async function verifyDirectorAllowList(u){
+// 원장 권한 확인: 규칙에 적힌 원장 UID 와 일치하는 계정만 원장 전용 경로를 읽을 수 있다.
+// 그래서 "원장 전용 경로(meta/_directorCheck, 문서가 없어도 됨)를 서버에서 읽어 본다 → 성공이면 원장, 거부면 원장 아님"으로 판정한다.
+// 이 확인은 화면 안내용이고 실제 권한은 항상 서버 규칙이 정한다. 원장 UID 는 규칙 파일에만 있고 앱·Firestore 문서에는 없다.
+async function verifyDirectorAccess(u){
+  if(!u || u.isAnonymous) return false;
   try{
-    const snap = await fsdb.collection('meta').doc('directors').get({source:'server'});
-    const uids = snap.exists ? (snap.data()||{}).uids : null;
-    return !!(u && Array.isArray(uids) && uids.includes(u.uid));
+    await fsdb.collection('meta').doc('_directorCheck').get({source:'server'});
+    return true;
   }catch(e){ return false; }
 }
 async function switchToAnonymousSession(){
@@ -793,7 +794,7 @@ async function switchToAnonymousSession(){
 }
 function verifyDirectorSessionSoon(){
   const u = fauth.currentUser;
-  verifyDirectorAllowList(u).then(ok=>{
+  verifyDirectorAccess(u).then(ok=>{
     if(ok || !(session && session.mode==='director')) return;
     logout();
     const el = document.getElementById('pwErr');
@@ -814,7 +815,7 @@ async function tryDirectorLogin(){
   if(!v){ err.textContent = '비밀번호를 입력해주세요.'; return; }
   try{
     const cred = await fauth.signInWithEmailAndPassword(DIRECTOR_AUTH.email, v);
-    if(!(await verifyDirectorAllowList(cred.user))){
+    if(!(await verifyDirectorAccess(cred.user))){
       await switchToAnonymousSession();
       err.textContent = '이 계정에는 원장 권한이 없어요.';
       return;

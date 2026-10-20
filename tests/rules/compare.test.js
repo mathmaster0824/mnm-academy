@@ -2,14 +2,15 @@
  *  (가) 학생 기능: 현재 규칙에서 되던 학생 동작이 1단계 규칙에서도 되는가 (회귀 없음)
  *  (나) 원장 전용: 현재 규칙에서 익명 세션이 되던 동작이 1단계 규칙에서 막히는가 (실제로 막힘)
  *  (다) 무력화 점검: 넓은 허용 규칙이 새 제한을 풀어버리지 않는가 — 규칙에 적지 않은 경로, 하위 경로, 위조 claim 포함 */
-const { describe, it, before, after, beforeEach, seed, rulesPath, initializeTestEnvironment, fs, assertFails, assertSucceeds,
+const { describe, it, before, after, beforeEach, seed, rulesPath, loadRules, UID_PLACEHOLDER, initializeTestEnvironment, fs, assertFails, assertSucceeds,
   A, B, CLS, DATE, WEEK, MONTH, ctx, op } = require('./helpers');
 
-let cur, p1;
-const mk = (id, f) => initializeTestEnvironment({ projectId: id, firestore: { rules: fs.readFileSync(rulesPath(f), 'utf8') } });
-before(async () => { cur = await mk('demo-r-cmpcur', 'firestore.rules.current'); p1 = await mk('demo-r-cmpp1', 'firestore.rules.phase1.proposed'); });
-after(async () => { await cur?.cleanup(); await p1?.cleanup(); });
-beforeEach(async () => { for (const e of [cur, p1]) { await e.clearFirestore(); await seed(e); } });
+let cur, p1, raw;
+const mk = (id, f, text) => initializeTestEnvironment({ projectId: id, firestore: { rules: text || loadRules(f) } });
+before(async () => { cur = await mk('demo-r-cmpcur', 'firestore.rules.current'); p1 = await mk('demo-r-cmpp1', 'firestore.rules.phase1.proposed');
+  raw = await mk('demo-r-cmpraw', null, fs.readFileSync(rulesPath('firestore.rules.phase1.proposed'), 'utf8')); });
+after(async () => { await cur?.cleanup(); await p1?.cleanup(); await raw?.cleanup(); });
+beforeEach(async () => { for (const e of [cur, p1, raw]) { await e.clearFirestore(); await seed(e); } });
 
 const run = async (env, fn, expect, who = 'anon') => {
   const db = ctx[who](env);
@@ -91,13 +92,41 @@ describe('(다) 넓은 허용 규칙의 무력화 점검(1단계 규칙)', () =>
     it(`${who} → ${p} 쓰기 거부`, () => run(p1, op.set(p, { x: 1 }), 'deny', who));
   }
   it('원장 세션은 규칙에 적지 않은 경로(settings/main)도 읽을 수 있다 — 전체 백업이 깨지지 않음', () => run(p1, op.get('settings/main'), 'ok', 'director'));
-  it('허용 목록에서 uid 가 빠진 뒤에는 같은 원장 세션도 거부된다', async () => {
-    await p1.withSecurityRulesDisabled(async (c) => { await require('firebase/firestore').setDoc(require('firebase/firestore').doc(c.firestore(), 'meta/directors'), { uids: [] }); });
-    await run(p1, op.get('meta/settings'), 'deny', 'director');
+});
+
+// (라) 원장 UID 를 규칙 파일에 직접 적는 방식 — Firestore 문서(meta/directors)는 원장 판정에 쓰이지 않는다
+describe('(라) 원장 UID 규칙 기재 방식 — 허용 목록 문서 변조·UID 불일치·자리표시자', () => {
+  const FS = require('firebase/firestore');
+  const seedDoc = (env, p, v) => env.withSecurityRulesDisabled(async (c) => { await FS.setDoc(FS.doc(c.firestore(), p), v); });
+  const ctxUid = (env, uid, provider) => env.authenticatedContext(uid, { firebase: { sign_in_provider: provider } }).firestore();
+  const dirOk = (env, uid, prov) => assertSucceeds(op.get('meta/settings')(ctxUid(env, uid, prov)));
+  const dirNo = (env, uid, prov) => assertFails(op.get('meta/settings')(ctxUid(env, uid, prov)));
+
+  it('규칙에 적은 원장 UID + 비밀번호 로그인 → 원장 전용 경로 허용', () => dirOk(p1, 'dir1', 'password'));
+  it('같은 UID 이지만 익명 공급자(위조) → 거부', () => dirNo(p1, 'dir1', 'anonymous'));
+  it('다른 이메일/비밀번호 계정(UID 다름) → 거부', () => dirNo(p1, 'pw_other', 'password'));
+  it('UID 가 비슷한 계정(접두어·접미어 추가) → 거부', async () => { await dirNo(p1, 'dir', 'password'); await dirNo(p1, 'dir1x', 'password'); await dirNo(p1, 'xdir1', 'password'); });
+  it('대소문자만 다른 UID → 거부', () => dirNo(p1, 'DIR1', 'password'));
+  it('옛 규칙 구간에서 공격자가 meta/directors 에 자기 UID 를 넣어 둔 상황을 가정해도(문서 직접 시드) → 거부', async () => {
+    await seedDoc(p1, 'meta/directors', { uids: ['pw_other', 'anon1', 'dir1'] });
+    await dirNo(p1, 'pw_other', 'password');
+    await dirNo(p1, 'anon1', 'anonymous');
   });
-  it('meta/directors 문서가 없으면 아무도 원장이 아니다(익명·비밀번호 계정 모두)', async () => {
-    await p1.withSecurityRulesDisabled(async (c) => { await require('firebase/firestore').deleteDoc(require('firebase/firestore').doc(c.firestore(), 'meta/directors')); });
-    await run(p1, op.get('meta/settings'), 'deny', 'director');
-    await run(p1, op.get('meta/settings'), 'deny', 'anon');
+  it('meta/directors 에 원장 UID 만 있어도 UID 가 규칙에 없으면 원장이 아니다(문서는 판정에 쓰이지 않음)', async () => {
+    await seedDoc(raw, 'meta/directors', { uids: ['dir1'] });
+    await dirNo(raw, 'dir1', 'password');
   });
+  it('1단계 규칙 아래에서는 공격자가 meta/directors 를 쓸 수 없다', async () => {
+    await assertFails(op.set('meta/directors', { uids: ['pw_other'] })(ctxUid(p1, 'pw_other', 'password')));
+    await assertFails(op.set('meta/directors', { uids: ['anon1'] })(ctxUid(p1, 'anon1', 'anonymous')));
+  });
+  it('자리표시자 그대로 게시한 규칙: 어떤 계정도 원장이 되지 못함(안전한 실패)', async () => {
+    await dirNo(raw, 'dir1', 'password'); await dirNo(raw, 'pw_other', 'password');
+  });
+  it('자리표시자 그대로 게시한 규칙에서도 학생 기능(숙제 제출·읽기)은 유지', async () => {
+    await assertSucceeds(op.set(`submissions/${A}_2026-10-21`, { studentId: A, date: '2026-10-21', status: '제출완료', photos: [] })(ctxUid(raw, 'anon1', 'anonymous')));
+    await assertSucceeds(op.get(`students/${A}`)(ctxUid(raw, 'anon1', 'anonymous')));
+    await assertFails(op.get('meta/settings')(ctxUid(raw, 'anon1', 'anonymous')));
+  });
+  it('원장 UID 일치 세션은 규칙에 적지 않은 경로(settings/main)도 읽을 수 있다(전체 백업 유지)', () => assertSucceeds(op.get('settings/main')(ctxUid(p1, 'dir1', 'password'))));
 });
