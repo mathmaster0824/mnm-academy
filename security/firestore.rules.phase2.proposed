@@ -116,13 +116,16 @@ service cloud.firestore {
       allow list: if isDirector();
       allow create: if ownDocId(docId)
                     && request.resource.data.studentId == me()
-                    && request.resource.data.status == '제출완료';
+                    && request.resource.data.status == '제출완료'
+                    && !('teacherComment' in request.resource.data);
       allow update: if ownDocId(docId)
                     && request.resource.data.studentId == me()
                     && (
                          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['commentSeen'])
                            && request.resource.data.get('commentSeen', false) == true)
-                      || (request.resource.data.status == '제출완료' && resource.data.get('status', '') != '최종불합격')
+                      || (request.resource.data.status == '제출완료' && resource.data.get('status', '') != '최종불합격'
+                          && (!('teacherComment' in request.resource.data)
+                              || request.resource.data.teacherComment == resource.data.get('teacherComment', null)))
                        );
       allow write: if isDirector();
     }

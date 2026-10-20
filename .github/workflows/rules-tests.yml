@@ -37,11 +37,13 @@ jobs:
       - name: 규칙 테스트 (기준선·1단계·2단계)
         id: t1
         continue-on-error: true
+        shell: bash
         working-directory: tests
         run: npm run test:rules 2>&1 | tee "$GITHUB_WORKSPACE/rules-test.log"
       - name: 월말 리포트 잠금 규칙 테스트 (PR #11 제안안)
         id: t2
         continue-on-error: true
+        shell: bash
         working-directory: tests
         run: npm run test:rules:monthly 2>&1 | tee "$GITHUB_WORKSPACE/monthly-test.log"
       - name: 결과 요약을 PR 댓글로 남기기
@@ -53,6 +55,8 @@ jobs:
             echo "### 규칙 테스트 결과 (run ${{ github.run_id }}, commit ${GITHUB_SHA::7})"
             echo "- 기준선·1단계·2단계: **${{ steps.t1.outcome }}**"
             echo "- 월말 리포트 잠금(PR #11 제안안): **${{ steps.t2.outcome }}**"
+            echo
+            echo "- 통과/실패 개수: $(grep -aE '^ℹ (tests|pass|fail) ' rules-test.log 2>/dev/null | tr -s ' ' | tr '\n' ' ')"
             echo
             echo "<details open><summary>실패 항목 요약 (✖ 줄, 최대 120개)</summary>"
             echo

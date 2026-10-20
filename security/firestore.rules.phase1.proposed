@@ -69,15 +69,20 @@ service cloud.firestore {
 
     // ── D. 학생 세션이 쓰는 컬렉션 — 원장 전용 상태값만 보호 ─────────────────
     // 숙제 제출: 학생은 '제출완료' 상태의 제출과 확인 표시(commentSeen)만. 승인/보완/불합격·코멘트는 원장만.
+    // 재제출은 문서 전체를 덮어쓰므로 teacherComment 는 "없애거나 그대로 두는 것"만 허용하고 새 값은 쓸 수 없다.
+    // 알려진 한계: reviewCount·reviewReason·reviewedAt 은 앱이 값을 정해 보내므로 규칙만으로는 학생 조작을 막지 못한다.
     match /submissions/{docId} {
       allow read: if signedIn();
       allow create: if isDirector()
-                    || (signedIn() && request.resource.data.status == '제출완료');
+                    || (signedIn() && request.resource.data.status == '제출완료'
+                        && !('teacherComment' in request.resource.data));
       allow update: if isDirector()
                     || (signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['commentSeen'])
                         && request.resource.data.get('commentSeen', false) == true)
                     || (signedIn() && request.resource.data.status == '제출완료'
-                        && resource.data.get('status', '') != '최종불합격');
+                        && resource.data.get('status', '') != '최종불합격'
+                        && (!('teacherComment' in request.resource.data)
+                            || request.resource.data.teacherComment == resource.data.get('teacherComment', null)));
       allow delete: if isDirector();
     }
 
