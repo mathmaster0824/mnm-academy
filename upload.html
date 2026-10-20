@@ -128,6 +128,7 @@ const fauth = firebase.auth();
 
 let db = { courses: [] };
 let accessToken = null;
+const uploadLaunch = new URLSearchParams(location.search);
 
 const logBox = document.getElementById('logBox');
 function log(msg, cls){
@@ -145,6 +146,33 @@ async function loadData(){
   const courseSnap = await fsdb.collection('courses').get();
   db.courses = courseSnap.docs.map(d=>({id:d.id, ...d.data()}));
   renderCourseSelect();
+  applyUploadLaunchParams();
+}
+function uploadCourseKey(value){
+  let key=String(value||'').replace(/\\[[^\\]]*\\]/g,'').replace(/학기/g,'').replace(/[\\s·]/g,'').toLowerCase();
+  if(key==='공통수학1') key='공수1';
+  return key;
+}
+function applyUploadLaunchParams(){
+  const lessonId=uploadLaunch.get('lessonId');
+  if(!lessonId) return;
+  const title=uploadLaunch.get('title')||'';
+  const titleInput=document.getElementById('titleText');
+  if(title) titleInput.value=title;
+  document.getElementById('videoType').value=uploadLaunch.get('type')||'개념';
+  onVideoTypeChange();
+  const wanted=uploadCourseKey(uploadLaunch.get('planCourse'));
+  const course=db.courses.find(c=>uploadCourseKey(c.name)===wanted);
+  if(course){
+    document.getElementById('courseSelect').value=course.id;
+    onCourseChange();
+    const unit=uploadLaunch.get('unit')||'';
+    const unitSel=document.getElementById('unitSelect');
+    const match=[...unitSel.options].find(o=>o.value===unit || (unit&&uploadCourseKey(o.value)===uploadCourseKey(unit)));
+    if(match) unitSel.value=match.value;
+  }
+  drawThumbnail();
+  document.getElementById('loginStatus').textContent='수업 목록에서 전달한 영상 제목을 입력했어요. 영상 파일을 선택하고 확인해주세요.';
 }
 function renderCourseSelect(){
   const sel = document.getElementById('courseSelect');
@@ -327,7 +355,16 @@ async function setThumbnail(videoId){
 async function registerToAcademy(title, url, courseId, videoType, book, unit){
   log('▶ 학원 프로그램 영상 보관함에 등록 중...', 'step');
   const vidRef = fsdb.collection('videos').doc();
-  await vidRef.set({ title, url, courseId: courseId || '', videoType: videoType || '개념', book: book || '', unit: unit || '' });
+  const record={title,url,courseId:courseId||'',videoType:videoType||'개념',book:book||'',unit:unit||''};
+  const lessonId=uploadLaunch.get('lessonId');
+  if(lessonId){
+    record.planLessonId=lessonId;
+    record.planCourse=uploadLaunch.get('planCourse')||'';
+    record.planCode=uploadLaunch.get('planCode')||'';
+    record.planPage=uploadLaunch.get('planPage')||'';
+    record.deskCreatedAt=new Date().toISOString();
+  }
+  await vidRef.set(record);
   log('✅ 영상 보관함 등록 완료 — 학원 프로그램에서 학생 배정하시면 됩니다', 'ok');
 }
 
