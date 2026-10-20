@@ -7815,13 +7815,22 @@ function problemPdfNumberCandidate(raw){
     kind:decorated?'decorated':leadingZero?'zero-padded':'bare'
   };
 }
+// 번호와 본문이 한 text item 으로 합쳐진 PDF("1. 18과 24의 …")용. 맨 앞의 "숫자." / "숫자)" 뒤에 공백과 본문이 이어질 때만 인정한다.
+// "3.14" 같은 소수, 4자리 이상 숫자, 번호만 있는 줄은 해당하지 않는다. 인정돼도 아래 연속 번호·단 정렬·경계품질 검사를 그대로 거친다.
+function problemPdfLeadingNumberCandidate(raw){
+  const s=String(raw||'').normalize('NFKC');
+  const m=s.match(/^\s*([1-9]\d{0,2})\s*[.)]\s+(?=\S)/);
+  if(!m) return null;
+  const n=Number(m[1]);
+  return {no:String(n).padStart(2,'0'),n,strength:3,kind:'prefixed',prefixLen:m[0].length};
+}
 function problemPdfNormalizeNo(raw){
   return problemPdfNumberCandidate(raw)?.no||'';
 }
 function problemPdfDetectNumberItems(items,viewport){
   const found=[];
   for(const it of items||[]){
-    const c=problemPdfNumberCandidate(it.str); if(!c) continue;
+    const c=problemPdfNumberCandidate(it.str)||problemPdfLeadingNumberCandidate(it.str); if(!c) continue;
     const tr=it.transform||[], x=Number(tr[4]||0), y=Number(tr[5]||0);
     if(!Number.isFinite(x)||!Number.isFinite(y)) continue;
     const xn=x/Math.max(1,viewport.width), yn=y/Math.max(1,viewport.height);
@@ -7931,7 +7940,7 @@ function problemPdfBuildRegions(plans){
     all.push({
       problemNo,printedProblemNo:printedNo,page:p.pageNo,x0,y0:top,x1,y1:Math.min(p.height,bottom),
       column:twoCol?label.side:'FULL',markerX:label.x,markerY:markerTop,
-      segmentationMethod:'text-rail-sequence'
+      segmentationMethod:'text-rail-sequence',markerPrefixLen:Number(label.prefixLen||0)
     });
     usedPrinted.add(printedNo);
   }
@@ -8024,7 +8033,14 @@ function problemPdfRegionText(items,region,pageHeight){
     if(x<region.x0+8||x>region.x1-4||y<region.y0-4||y>region.y1+4) continue;
     const text=String(it.str||'').trim(); if(!text) continue;
     // 문제번호와 같은 숫자가 본문에 다시 나올 수 있으므로, 실제 marker 좌표의 항목만 제거한다.
-    if(Number.isFinite(region.markerX)&&Number.isFinite(region.markerY)&&Math.abs(x-region.markerX)<12&&Math.abs(y-region.markerY)<12) continue;
+    if(Number.isFinite(region.markerX)&&Number.isFinite(region.markerY)&&Math.abs(x-region.markerX)<12&&Math.abs(y-region.markerY)<12){
+      // 번호와 본문이 한 덩어리인 항목은 번호 앞부분만 떼고 본문은 남긴다.
+      if(region.markerPrefixLen>0){
+        const rest=String(it.str||'').normalize('NFKC').slice(region.markerPrefixLen).trim();
+        if(rest) rows.push({x,y,s:rest});
+      }
+      continue;
+    }
     rows.push({x,y,s:text});
   }
   rows.sort((a,b)=>Math.abs(a.y-b.y)>4?a.y-b.y:a.x-b.x);

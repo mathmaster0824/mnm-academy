@@ -290,6 +290,7 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
         const drafts = Object.entries(window.__store.problemDrafts || {}).filter(([id]) => !before.has(id)).map(([, d]) => d);
         return { status: document.getElementById('problemPdfAutoStatus').textContent, n: drafts.length,
           answers: drafts.map((d) => ({ no: d.problemNo, a: d.answer, m: d.answerMethod, t: d.type })).sort((x, y) => String(x.no).localeCompare(String(y.no))),
+          texts: drafts.map((d) => ({ no: d.problemNo, t: String(d.problemText || d.rawText || '') })).sort((x, y) => String(x.no).localeCompare(String(y.no))),
           crops: drafts.filter((d) => JSON.stringify(d).includes('problem-crop/')).length };
       }, [b64, uploadName]);
       return { ...out, uploads: worker.uploads.length - w0.up, segCalls: worker.segment - w0.seg, deletes: worker.deletes - w0.del };
@@ -314,7 +315,10 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
     worker.segByPage = null;
     console.log('PROBLEM-REPO INFO CID 한글 PDF: ' + JSON.stringify({ ...r19, cmapRequests: worker.cmapRequests }));
     check('글꼴 미포함 한글 PDF: 글자를 읽어 정답표 3개(6·100·4)를 문항 1~3번에 연결', r19.answers.map((x) => x.a).join() === '6,100,4', JSON.stringify(r19));
-    check('문제 쪽의 "정답표" 언급 문장 때문에 문제 쪽을 정답 쪽으로 오인하지 않음(분리 요청은 1·2쪽만, 정답표 쪽은 건너뜀)', r19.segCalls === 2 && r19.n === 3, JSON.stringify(r19));
+    check('문제 쪽의 "정답표" 언급 문장 때문에 문제 쪽을 정답 쪽으로 오인하지 않음(문항 3개, 정답표 쪽은 문항에 섞이지 않음)', r19.n === 3 && r19.crops === 3, JSON.stringify(r19));
+    // 번호와 본문이 한 text item("1. 12와 18의 …")인 PDF: PDF.js 텍스트 단계에서 문항 경계를 찾아야 하므로 (가짜) AI 분리 서버를 부르지 않는다
+    check('번호+본문 한 덩어리 PDF: 텍스트 단계에서 문항 3개 경계 인식(AI 분리 요청 0회)', r19.segCalls === 0, JSON.stringify(r19));
+    check('번호+본문 한 덩어리 PDF: 문항 본문은 보존되고 앞의 "1." 번호만 제거됨', r19.texts[0].t.startsWith('12와 18의') && r19.texts[1].t.startsWith('5의 제곱') && r19.texts[2].t.startsWith('방정식'), JSON.stringify(r19.texts));
 
     // 14) 이미지 전용(스캔) PDF: 텍스트가 없어 AI 페이지 분리 경로(가짜 서버)로 전환 → 임시 페이지 이미지는 처리 후 삭제 요청
     const r14 = await ingestFile('sample-scan.pdf', 'scan-sample.pdf');
@@ -360,6 +364,26 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
   });
   check('쪼개진 제목·일반 제목·"빠른 정답"·쪽번호/범위가 붙은 제목은 정답 페이지로 인정(줄 정보 없는 호출은 종전 방식 유지)', r18.split && r18.plain && r18.quick && r18.withPageNo && r18.withRange && r18.noLinesCompat, JSON.stringify(r18));
   check('안내 문장 속 "정답표", 문제 문장 속 "정답", 문장 중간에 붙은 조각, 빈 글, 긴 줄은 정답 페이지로 오인하지 않음', !r18.noteSentence && !r18.noteSentence2 && !r18.questionSentence && !r18.midGlue && !r18.empty && !r18.longLine, JSON.stringify(r18));
+
+  // 18-2) 번호+본문이 한 덩어리인 줄의 문항 번호 후보: 인정/제외 경계 + 문항 영역 구성
+  const r18b = await page.evaluate(() => {
+    const c = (s) => { const r = problemPdfLeadingNumberCandidate(s); return r ? r.n : null; };
+    const mk = (strs, h = 842) => ({ pageNo: 1, width: 595, height: h, isAnswerPage: false, items: [],
+      candidates: problemPdfDetectNumberItems(strs.map(([str, y]) => ({ str, transform: [1, 0, 0, 1, 68, y] })), { width: 595, height: h }) });
+    const seq = problemPdfBuildRegions([mk([['1. 첫째 문제', 700], ['2. 둘째 문제', 600], ['3. 셋째 문제', 500]])]);
+    const noisy = problemPdfBuildRegions([mk([['7. 아무 문장', 700], ['2. 다른 문장', 600], ['9. 또 다른 문장', 500]])]);
+    return {
+      ok1: c('1. 18과 24의'), ok2: c('12) 다음 중'), okWide: c('３. 전각숫자'),
+      decimal: c('3.14는 원주율'), year: c('2026. 10. 20 기준'), numOnly: c('1.'), noSpace: c('1.18'), zero: c('0. 가'), text: c('가. 나. 다.'),
+      seqN: seq.regions.length, seqQ: seq.meta.quality, seqPrefix: seq.regions.map((r) => r.markerPrefixLen).join(),
+      noisyQ: noisy.meta.quality,
+    };
+  });
+  check('"숫자. 본문" / "숫자) 본문" 은 문항 번호로 인정(전각 숫자 포함)', r18b.ok1 === 1 && r18b.ok2 === 12 && r18b.okWide === 3, JSON.stringify(r18b));
+  check('소수(3.14)·연도·번호만 있는 줄·공백 없는 붙임·0번·글자 번호는 문항 번호로 보지 않음', r18b.decimal === null && r18b.year === null && r18b.numOnly === null && r18b.noSpace === null && r18b.zero === null && r18b.text === null, JSON.stringify(r18b));
+  check('연속한 1·2·3번 줄은 문항 3개·경계품질 100%, 번호 접두 길이가 영역에 기록됨', r18b.seqN === 3 && r18b.seqQ === 1 && r18b.seqPrefix === '3,3,3', JSON.stringify(r18b));
+  check('번호가 연속되지 않는(7·2·9) 줄은 경계품질이 낮게 평가돼 종전처럼 AI 분리로 넘어감(.65 미만)', r18b.noisyQ < .65, JSON.stringify(r18b));
+
 
   // 12) 원장 화면: 저장소 세트도 채점 버튼이 보이고, 대기 일괄 채점이 정답/오답/미확정을 구분해 저장
   const r12 = await page.evaluate(async ([aid]) => {
