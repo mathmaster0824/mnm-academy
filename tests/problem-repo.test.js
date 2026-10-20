@@ -360,8 +360,6 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
   });
   check('쪼개진 제목·일반 제목·"빠른 정답"·쪽번호/범위가 붙은 제목은 정답 페이지로 인정(줄 정보 없는 호출은 종전 방식 유지)', r18.split && r18.plain && r18.quick && r18.withPageNo && r18.withRange && r18.noLinesCompat, JSON.stringify(r18));
   check('안내 문장 속 "정답표", 문제 문장 속 "정답", 문장 중간에 붙은 조각, 빈 글, 긴 줄은 정답 페이지로 오인하지 않음', !r18.noteSentence && !r18.noteSentence2 && !r18.questionSentence && !r18.midGlue && !r18.empty && !r18.longLine, JSON.stringify(r18));
-  check('쪼개진 제목("정 답 및 해 설")·일반 제목·"빠른 정답" 은 정답 페이지로 인정', r18.split && r18.plain && r18.quickTable, JSON.stringify(r18));
-  check('문제 문장 속 "정답을 구하시오", 문장 중간의 "정답표시", 빈 글, 쪽 끝부분 조각은 정답 페이지로 오인하지 않음', !r18.questionSentence && !r18.questionMidTitle && !r18.empty && !r18.compactOnlyLateInPage, JSON.stringify(r18));
   // 17) 서버 채점 코어와 앱 채점 규칙 일치 (같은 시험 표를 양쪽에 돌려 비교)
   const core = require('../functions/gradeCore.js');
   const table = [
