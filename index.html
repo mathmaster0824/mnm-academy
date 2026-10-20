@@ -8704,7 +8704,13 @@ async function assignSelectedProblems(){
 }
 
 const ANSWER_WRONG_REASONS = ['개념부족','문제해석','풀이방법을 떠올리지 못함','계산실수','조건누락','마킹실수','기타'];
-function normalizeAnswerValue(v){ return String(v??'').trim().replace(/\s+/g,''); }
+// 답 비교용 정규화: 공백 제거 + 동그라미 숫자(①~⑩)·전각 숫자를 일반 숫자로. PDF 정답표는 ③ 로 오고 학생 답지는 1~5 로 입력되므로 같은 답으로 봐야 한다.
+// (NFKC 전체를 쓰지 않는다 — x² 와 x2 처럼 서로 다른 답이 같아지는 것을 막기 위해)
+function normalizeAnswerValue(v){
+  return String(v??'').trim().replace(/\s+/g,'')
+    .replace(/[\u2460-\u2469]/g,c=>String(c.charCodeAt(0)-0x2460+1))
+    .replace(/[\uFF10-\uFF19]/g,c=>String(c.charCodeAt(0)-0xFF10));
+}
 function assignmentPublicCopy(a){
   if(!a) return null;
   return {...a, problems:(a.problems||[]).map(({answer,acceptedAnswers,explanation,...p})=>p)};
@@ -8712,7 +8718,10 @@ function assignmentPublicCopy(a){
 function localGradeProblem(problem, answer){
   if(problem.type==='constructed') return {state:'pending', earnedPoints:null};
   const given=normalizeAnswerValue(answer);
-  const accepted=(problem.acceptedAnswers&&problem.acceptedAnswers.length?problem.acceptedAnswers:[problem.answer]).map(normalizeAnswerValue);
+  const candidates=(problem.acceptedAnswers&&problem.acceptedAnswers.length?problem.acceptedAnswers:[problem.answer]).filter(v=>v!==undefined&&v!==null&&String(v).trim()!=='');
+  // 정답키가 없으면 오답으로 단정하지 않고 '확인중'으로 둔다(저장소 문제는 정답키가 problemKeys 에만 있다).
+  if(!candidates.length) return {state:'pending', earnedPoints:null, keyMissing:true};
+  const accepted=candidates.map(normalizeAnswerValue);
   const correct=accepted.includes(given);
   return {state:correct?'correct':'wrong',earnedPoints:correct?Number(problem.points||1):0};
 }
@@ -8789,10 +8798,47 @@ async function completeAnswerLearning(assignmentId,stuId){
   if(!wrong.every(i=>sub.wrongReasons&&sub.wrongReasons[i])){alert('틀린 문제의 이유를 모두 선택해주세요.');return;}
   const at=new Date().toISOString(); const ok=await fsUpdate('answerSubmissions',id,{learningCompletedAt:at}); if(ok){sub.learningCompletedAt=at;render();}
 }
+// 문제저장소에서 배정한 문항은 정답키가 배정 문서에 없다(학생에게 내려가는 문서와 분리). 원장 채점 때만 problemKeys 에서 읽는다.
+// 테스트 세트(정답이 배정 문서에 들어 있는 경우)는 그대로 사용한다.
+async function problemWithGradingKey(problem){
+  if(!problem || problem.type==='constructed') return problem;
+  if(problem.answer!==undefined || (problem.acceptedAnswers&&problem.acceptedAnswers.length)) return problem;
+  if(!problem.problemId) return problem;
+  try{
+    const doc=await fsdb.collection('problemKeys').doc(problem.problemId).get();
+    if(doc.exists){ const k=doc.data()||{}; return {...problem, answer:k.answer, acceptedAnswers:k.acceptedAnswers}; }
+  }catch(e){ console.error('정답키 조회 실패',problem.problemId,e); }
+  return problem;
+}
+// 채점 공통부: 이미 정답키를 합친 문항(graded)으로 한 학생의 제출을 채점해 저장한다.
+async function gradeSubmissionWithKeys(assignmentId,stuId,graded){
+  const id=answerSubmissionId(assignmentId,stuId), sub=db.answerSubmissions[id]; if(!sub) return null;
+  const results=graded.map((p,i)=>localGradeProblem(p,(sub.originalAnswers||[])[i]));
+  const missing=results.filter(r=>r.keyMissing).length;
+  const ok=await fsUpdate('answerSubmissions',id,{autoResults:results}); if(ok){sub.autoResults=results;}
+  return {ok:!!ok,missing};
+}
 async function directorGradeAnswerSubmission(assignmentId,stuId){
   const a=db.assignments[assignmentId], id=answerSubmissionId(assignmentId,stuId), sub=db.answerSubmissions[id]; if(!a||!sub)return;
-  const results=(a.problems||[]).map((p,i)=>localGradeProblem(p,(sub.originalAnswers||[])[i]));
-  const ok=await fsUpdate('answerSubmissions',id,{autoResults:results}); if(ok){sub.autoResults=results;render();}
+  const graded=await Promise.all((a.problems||[]).map(p=>problemWithGradingKey(p)));
+  const r=await gradeSubmissionWithKeys(assignmentId,stuId,graded); if(!r)return;
+  if(r.missing) alert(`정답키를 찾지 못한 문항이 ${r.missing}개 있어요. 해당 문항은 '확인중'으로 두었으니 직접 채점해주세요.`);
+  if(r.ok) render();
+}
+// 채점 대기('grading') 상태인 제출만 한꺼번에 채점한다. 최종확인·수동 수정이 끝난 제출과 서술형은 건드리지 않는다.
+function pendingGradingStudentIds(a){
+  return (a?.studentIds||[]).filter(stuId=>{const sub=db.answerSubmissions[answerSubmissionId(a.id,stuId)];return sub&&!sub.review?.finalizedAt&&(sub.autoResults||[]).some(r=>r&&r.state==='grading');});
+}
+async function directorGradeAllPending(assignmentId){
+  const a=db.assignments[assignmentId]; if(!a)return;
+  const targets=pendingGradingStudentIds(a);
+  if(!targets.length){alert('채점 대기 중인 제출이 없어요.');return;}
+  if(!confirm(`채점 대기 ${targets.length}명을 정답키로 ○/× 채점할까요?\n서술형과 이미 최종확인한 제출은 건드리지 않아요.`))return;
+  const graded=await Promise.all((a.problems||[]).map(p=>problemWithGradingKey(p))); // 정답키는 문항마다 한 번만 읽는다
+  let done=0,failed=0,missing=0;
+  for(const stuId of targets){ const r=await gradeSubmissionWithKeys(assignmentId,stuId,graded); if(r&&r.ok){done++;missing+=r.missing;}else failed++; }
+  alert(`채점 완료 ${done}명`+(failed?` · 저장 실패 ${failed}명(다시 눌러주세요)`:'')+(missing?`\n정답키를 찾지 못한 문항이 있어 '확인중'으로 남았어요(합계 ${missing}건).`:''));
+  render();
 }
 function renderDirectorAnswerReview(a,stuId){
   const id=answerSubmissionId(a.id,stuId), sub=db.answerSubmissions[id]; if(!sub)return '<div class="empty">아직 답지를 제출하지 않았어요.</div>';
@@ -8822,7 +8868,7 @@ function ensureClassAnswerAssignmentsLoaded(clsId){const k=`classans_${clsId}`;i
 function renderClassAnswerSheetAdmin(cls){
   ensureClassAnswerAssignmentsLoaded(cls.id);
   const rows=Object.values(db.assignments||{}).filter(a=>a.classId===cls.id).sort((a,b)=>String(b.assignedAt||'').localeCompare(String(a.assignedAt||'')));
-  return `<div class="card"><div class="row between"><div><h3 style="margin:0;">📝 답지 제출 · 원장 확인</h3><div style="font-size:11px;color:#8a8674;margin-top:3px;">문제은행 연결 전 테스트용 최소 세트 생성기 · 객관식/단답은 ○/× 채점 후 필요한 문항만 수정</div></div><button class="btn sm outline" onclick="createTestAnswerAssignment('${cls.id}')">+ 테스트 세트</button></div>${rows.length?rows.map(a=>`<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line);"><b>${escapeHtml(a.title)}</b> <span class="badge gray">${(a.problems||[]).length}문항</span>${(a.studentIds||[]).map(stuId=>{const s=studentById(stuId),sub=db.answerSubmissions[answerSubmissionId(a.id,stuId)];return `<div style="padding:7px 0;"><div class="row between"><span>${s?escapeHtml(s.name):stuId}</span>${sub?`<div class="row"><span class="badge ${sub.review?.finalizedAt?'green':'yellow'}">${sub.review?.finalizedAt?'최종확인':'제출완료'}</span>${!sub.autoResults?.some(r=>r.state==='grading')?'':(a.source==='problem-repository'?'<span class="badge gray">서버채점 연결 대기</span>':`<button class="btn sm outline" onclick="directorGradeAnswerSubmission('${a.id}','${stuId}')">○/× 채점</button>`)}</div>`:'<span class="badge gray">미제출</span>'}</div>${sub?renderDirectorAnswerReview(a,stuId):''}</div>`;}).join('')}</div>`).join(''):'<div class="empty">배정된 답지 세트가 없어요.</div>'}</div>`;
+  return `<div class="card"><div class="row between"><div><h3 style="margin:0;">📝 답지 제출 · 원장 확인</h3><div style="font-size:11px;color:#8a8674;margin-top:3px;">문제은행 연결 전 테스트용 최소 세트 생성기 · 객관식/단답은 ○/× 채점 후 필요한 문항만 수정</div></div><button class="btn sm outline" onclick="createTestAnswerAssignment('${cls.id}')">+ 테스트 세트</button></div>${rows.length?rows.map(a=>`<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line);"><b>${escapeHtml(a.title)}</b> <span class="badge gray">${(a.problems||[]).length}문항</span>${(()=>{const n=pendingGradingStudentIds(a).length;return n?` <span class="badge yellow">채점 대기 ${n}명</span> <button class="btn sm gold" onclick="directorGradeAllPending('${a.id}')">대기 일괄 채점</button>`:'';})()}${(a.studentIds||[]).map(stuId=>{const s=studentById(stuId),sub=db.answerSubmissions[answerSubmissionId(a.id,stuId)];return `<div style="padding:7px 0;"><div class="row between"><span>${s?escapeHtml(s.name):stuId}</span>${sub?`<div class="row"><span class="badge ${sub.review?.finalizedAt?'green':'yellow'}">${sub.review?.finalizedAt?'최종확인':'제출완료'}</span>${!sub.autoResults?.some(r=>r.state==='grading')?'':`<button class="btn sm outline" onclick="directorGradeAnswerSubmission('${a.id}','${stuId}')">○/× 채점</button>`}</div>`:'<span class="badge gray">미제출</span>'}</div>${sub?renderDirectorAnswerReview(a,stuId):''}</div>`;}).join('')}</div>`).join(''):'<div class="empty">배정된 답지 세트가 없어요.</div>'}</div>`;
 }
 
 // 학생 두 번째 페이지: 기존 숙제계획/영상과 기존 숙제인증/Q&A 기능을 한 화면에 재배치한다.
