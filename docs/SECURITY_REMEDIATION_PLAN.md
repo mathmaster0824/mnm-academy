@@ -216,3 +216,11 @@
 
 ## 12. 이번 작업에서 하지 않은 것
 Firestore 규칙 배포, Cloud Functions 배포, main 병합, GitHub Pages 배포, 운영 Firebase 접속, 운영 데이터 열람·변경·삭제, `monthlyReports` 문서 생성, 원장 비밀번호 변경, Authentication 설정 변경. PR #11 은 병합하지 않았다.
+
+## 13. 1단계 구현 결과 (PR #13, draft)
+
+- 앱: `DIRECTOR_AUTH.mode` 기본값 `'legacy'`(동작 불변). `'firebase'` 로 바꾸면 원장 로그인을 Firebase Auth(이메일/비밀번호, 서버 검증) + `meta/directors` 허용 목록으로 확인하고 `meta/settings` 를 읽지 않는다. 운영에는 적용하지 않았다.
+- 시험(CI, 가짜 프로젝트·가짜 데이터): 규칙 487/487(기준선 13 · 1단계 144 · 2단계 151 · **현재↔1단계 대조** · 무력화 점검), 월말 잠금 34/34, 규칙 정적 점검 통과, **실제 앱 E2E 37/37**(Auth+Firestore Emulator).
+- 대조 결과: 현재 규칙에서 되던 학생 기능 20종은 1단계 규칙에서도 된다. 현재 규칙에서 익명 세션이 되던 원장 전용 동작 23종은 1단계 규칙에서 막힌다.
+- 해결하지 않은 것: 학생 간 자료 열람, 학생의 문제저장소 직접 쓰기(정답키 노출), 한 문서 다학생 구조, 숙제 `reviewCount` 위조, `adminPassword` 필드 삭제(별도 승인), 월말 리포트 앱 기능 잠금 유지.
+- 전환 절차: `docs/SECURITY_PHASE1_CUTOVER.md`.
