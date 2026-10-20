@@ -128,4 +128,4 @@ function suite(rulesFile, body) {
   body(() => env);
 }
 
-module.exports = { A, B, A2, CLS, CLS2, DATE, WEEK, MONTH, DIR_UID, ctx, op, table, suite, describe, it };
+module.exports = { seed, rulesPath, initializeTestEnvironment, fs, before, after, beforeEach, assertFails, assertSucceeds, A, B, A2, CLS, CLS2, DATE, WEEK, MONTH, DIR_UID, ctx, op, table, suite, describe, it };

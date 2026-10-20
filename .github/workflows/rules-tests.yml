@@ -9,6 +9,10 @@ on:
       - 'security/**'
       - 'tests/rules/**'
       - 'tests/firestore-rules.test.js'
+      - 'tests/e2e/**'
+      - 'scripts/rules-lint.js'
+      - 'index.html'
+      - 'firebase.e2e.json'
       - 'tests/package.json'
       - 'firebase.emulator.json'
       - '.github/workflows/rules-tests.yml'
@@ -40,6 +44,21 @@ jobs:
         shell: bash
         working-directory: tests
         run: npm run test:rules 2>&1 | tee "$GITHUB_WORKSPACE/rules-test.log"
+      - name: 규칙 정적 점검 (넓은 허용 규칙 검출)
+        id: t3
+        continue-on-error: true
+        shell: bash
+        working-directory: tests
+        run: npm run test:rules:lint 2>&1 | tee "$GITHUB_WORKSPACE/lint.log"
+      - name: 브라우저 설치 (Playwright Chromium)
+        working-directory: tests
+        run: npx playwright install --with-deps chromium
+      - name: 실제 앱 + Auth/Firestore Emulator 시험 (E2E)
+        id: t4
+        continue-on-error: true
+        shell: bash
+        working-directory: tests
+        run: npm run test:e2e 2>&1 | tee "$GITHUB_WORKSPACE/e2e.log"
       - name: 월말 리포트 잠금 규칙 테스트 (PR #11 제안안)
         id: t2
         continue-on-error: true
@@ -55,8 +74,31 @@ jobs:
             echo "### 규칙 테스트 결과 (run ${{ github.run_id }}, commit ${GITHUB_SHA::7})"
             echo "- 기준선·1단계·2단계: **${{ steps.t1.outcome }}**"
             echo "- 월말 리포트 잠금(PR #11 제안안): **${{ steps.t2.outcome }}**"
+            echo "- 규칙 정적 점검: **${{ steps.t3.outcome }}**"
+            echo "- 실제 앱 + Emulator 시험(E2E): **${{ steps.t4.outcome }}**"
             echo
             echo "- 통과/실패 개수: $(grep -aE '^ℹ (tests|pass|fail) ' rules-test.log 2>/dev/null | tr -s ' ' | tr '\n' ' ')"
+            echo
+            echo "<details open><summary>E2E 결과 (실제 앱)</summary>"
+            echo
+            echo '```'
+            grep -aE '^E2E ' e2e.log 2>/dev/null | cut -c1-220 | head -n 80
+            echo '```'
+            echo "</details>"
+            echo
+            echo "<details><summary>E2E 로그 꼬리(오류 확인용)</summary>"
+            echo
+            echo '```'
+            tail -n 40 e2e.log 2>/dev/null | cut -c1-240
+            echo '```'
+            echo "</details>"
+            echo
+            echo "<details><summary>규칙 정적 점검</summary>"
+            echo
+            echo '```'
+            cat lint.log 2>/dev/null | cut -c1-240
+            echo '```'
+            echo "</details>"
             echo
             echo "<details open><summary>실패 항목 요약 (✖ 줄, 최대 120개)</summary>"
             echo
@@ -84,5 +126,5 @@ jobs:
           head -c 60000 comment.md > comment.trim.md
           gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.trim.md
       - name: 결과에 따라 성공/실패 표시
-        if: steps.t1.outcome != 'success' || steps.t2.outcome != 'success'
+        if: steps.t1.outcome != 'success' || steps.t2.outcome != 'success' || steps.t3.outcome != 'success' || steps.t4.outcome != 'success'
         run: exit 1
