@@ -294,6 +294,12 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
     check('한글 정답표 자동연결(③, 17, 36 — 뒤쪽 정답표 3개)', r13.answers.map((x) => x.a).join() === '③,17,36', JSON.stringify(r13.answers));
     check('한글 PDF: 객관식 1개 · 나머지 단답 판별', r13.answers[0].t === 'mc' && r13.answers[1].t !== 'mc', JSON.stringify(r13.answers));
 
+    // 13-2) 글자 조각마다 text item 이 나뉘는 한글 PDF(Chromium 인쇄본): 'ㅈ ㅓㅇ 답 및 해 설' 로 쪼개져도 정답표 쪽을 알아보고 문항 쪽에 섞이지 않아야 한다
+    const r13g = await ingestFile('sample-problems-ko-glyph.pdf', 'ko-glyph.pdf');
+    console.log('PROBLEM-REPO INFO 한글(글자 조각) PDF: ' + JSON.stringify(r13g));
+    check('글자 조각 한글 PDF: 정답표 쪽을 문항으로 오인하지 않고 문항 3개 저장', r13g.n === 3 && r13g.crops === 3 && !/중단/.test(r13g.status), JSON.stringify(r13g));
+    check('글자 조각 한글 PDF: 정답표 3개 자동연결(③·17·36)', r13g.answers.map((x) => x.a).join() === '③,17,36', JSON.stringify(r13g.answers));
+
     // 14) 이미지 전용(스캔) PDF: 텍스트가 없어 AI 페이지 분리 경로(가짜 서버)로 전환 → 임시 페이지 이미지는 처리 후 삭제 요청
     const r14 = await ingestFile('sample-scan.pdf', 'scan-sample.pdf');
     console.log('PROBLEM-REPO INFO 스캔 PDF: ' + JSON.stringify(r14));
@@ -316,6 +322,22 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
   });
   check('객관식 정답키 ③ ↔ 학생 입력 3 이 같은 답으로 채점됨(다른 번호는 오답)', r15.circledKeyNumericAnswer === 'correct' && r15.circledKeyWrongAnswer === 'wrong' && r15.numericKeyCircledAnswer === 'correct', JSON.stringify(r15));
   check('전각 숫자·공백 차이는 같은 답, 윗첨자 x² 와 x2 는 구분 유지, 틀린 답은 오답', r15.fullwidth === 'correct' && r15.spaces === 'correct' && r15.superscriptStaysStrict === 'wrong' && r15.wrongShort === 'wrong', JSON.stringify(r15));
+
+  // 18) 정답 페이지 제목 판별: 쪼개진 제목은 인정, 문제 문장 속 '정답' 표현은 문항 쪽으로 유지(오인 방지)
+  const r18 = await page.evaluate(() => {
+    const f = problemPdfIsAnswerPageText;
+    return {
+      split: f('정 답   및   해 설  1   ③', '정답 및 해설1 ③'),
+      plain: f('정답 및 해설 1 ③ 2 17', '정답 및 해설 1 ③ 2 17'),
+      quickTable: f('빠른 정답 1 ③', ''),
+      questionSentence: f('3. 다음 식의 정답을 구하시오 x + 2 = 5', '3.다음 식의 정답을 구하시오 x + 2 = 5'),
+      questionMidTitle: f('1. 3x+2=11 일 때 x의 값은? ① 1 ② 2 2. 12+5 의 값은? 정 답 표 시 는 하지 않는다', '1.3x+2=11 일 때 x의 값은? ①1 ②2 2.12+5 의 값은?정답표시는 하지 않는다'),
+      empty: f('', ''),
+      compactOnlyLateInPage: f('가나다 '.repeat(40) + '정 답 및 해 설', '가나다'.repeat(40) + '정답및해설'),
+    };
+  });
+  check('쪼개진 제목("정 답 및 해 설")·일반 제목·"빠른 정답" 은 정답 페이지로 인정', r18.split && r18.plain && r18.quickTable, JSON.stringify(r18));
+  check('문제 문장 속 "정답을 구하시오", 문장 중간의 "정답표시", 빈 글, 쪽 끝부분 조각은 정답 페이지로 오인하지 않음', !r18.questionSentence && !r18.questionMidTitle && !r18.empty && !r18.compactOnlyLateInPage, JSON.stringify(r18));
 
   // 12) 원장 화면: 저장소 세트도 채점 버튼이 보이고, 대기 일괄 채점이 정답/오답/미확정을 구분해 저장
   const r12 = await page.evaluate(async ([aid]) => {

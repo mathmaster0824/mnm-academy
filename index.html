@@ -8031,10 +8031,19 @@ function problemPdfRegionText(items,region,pageHeight){
   return problemPdfDecodeText(cleaned);
 }
 
-function problemPdfIsAnswerPageText(pageText){
+const PROBLEM_PDF_ANSWER_TITLE_RE=/정답표|빠른\s*정답|빠른\s*답|정답\s*(?:및|과)\s*해설|정답\s*및\s*풀이|답안표|정답\s*모음|해답/i;
+// compactText: text item 을 사이 없이 이어 붙인 글(선택). 어떤 PDF 는 글자 조각마다 item 이 나뉘어(pdf.js 가 '정','답',' ','및'…로 돌려줌)
+// item 을 ' ' 로 이으면 '정 답   및   해 설' 처럼 제목이 쪼개진다. 그때는 붙여 이은 글의 앞부분(제목 자리)에서만 한 번 더 확인한다.
+function problemPdfIsAnswerPageText(pageText,compactText){
   const t=String(pageText||'').normalize('NFKC').replace(/\s+/g,' ').trim();
   if(!t) return false;
-  if(/정답표|빠른\s*정답|빠른\s*답|정답\s*(?:및|과)\s*해설|정답\s*및\s*풀이|답안표|정답\s*모음|해답/i.test(t)) return true;
+  if(PROBLEM_PDF_ANSWER_TITLE_RE.test(t)) return true;
+  if(compactText){
+    // 제목이 글 맨 앞(앞쪽 숫자·기호 10자 이내 뒤 바로)에 있을 때만 인정 — 문장 중간에서 조각이 붙어 우연히 '정답표' 가 되는 경우를 막는다.
+    const c=String(compactText).normalize('NFKC').replace(/\s+/g,' ').trim();
+    const body=c.slice(c.match(/^[^가-힣A-Za-z]{0,10}/)[0].length);
+    if(body.search(PROBLEM_PDF_ANSWER_TITLE_RE)===0) return true;
+  }
   // '정답을 구하시오' 같은 문제 문장과 구분하기 위해 페이지 앞부분의 제목형 '정답/답안'만 인정.
   const head=t.slice(0,180);
   return /^(?:[^가-힣A-Za-z0-9]{0,8})?(?:정답|답안)(?:\s|$|[·:：\-])/i.test(head);
@@ -8044,7 +8053,7 @@ async function problemPdfPagePlan(page,pageNo){
   const items=tc.items||[], pageText=items.map(x=>String(x.str||'')).join(' ');
   return {
     pageNo,width:viewport.width,height:viewport.height,items,pageText,
-    isAnswerPage:problemPdfIsAnswerPageText(pageText),
+    isAnswerPage:problemPdfIsAnswerPageText(pageText,items.map(x=>String(x.str||'')).join('')),
     candidates:problemPdfDetectNumberItems(items,viewport)
   };
 }
@@ -8249,7 +8258,7 @@ async function problemPdfExtractAnswerCandidates(pdf){
       y:Number(it.transform?.[5]||0)
     }));
     const pageText=items.map(x=>x.text).join(' ');
-    if(!problemPdfIsAnswerPageText(pageText)) continue;
+    if(!problemPdfIsAnswerPageText(pageText,items.map(x=>x.text).join(''))) continue;
     const pairs=problemPdfExtractAnswerPairsFromItems(items);
     for(const [key,val] of pairs.entries()){
       if(!out.has(key)) out.set(key,{...val,answerPage:n});
