@@ -16,6 +16,8 @@ const DIR_EMAIL = 'director@test.invalid', OTHER_EMAIL = 'notdirector@test.inval
 const A = 'stu_aaaaaaaaaa', B = 'stu_bbbbbbbbbb', CLS = 'cls_fakeclass1';
 const AUTH = 'http://127.0.0.1:9099';
 
+let currentHtml = '';
+const server = require('http').createServer((q, res) => { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(currentHtml); });
 const results = [];
 const check = (name, ok, detail) => { results.push({ name, ok: !!ok }); console.log(`E2E ${ok ? '✔' : '✖'} ${name}${ok ? '' : '  ← ' + (detail || '')}`); };
 
@@ -62,12 +64,9 @@ async function openApp(browser, { project, mode, email, storage }) {
   const perm = []; page.on('console', (m) => { if (m.type() === 'error' && /permission|insufficient/i.test(m.text())) perm.push(m.text().slice(0, 160)); });
   page.on('dialog', (d) => d.accept());
   const html = patchedHtml(project, mode, email);
-  await page.route('**/*', (r) => {
-    const u = r.request().url();
-    if (u === 'http://127.0.0.1:5173/index.html') return r.fulfill({ contentType: 'text/html', body: html });
-    if (/gstatic\.com\/firebasejs|127\.0\.0\.1/.test(u)) return r.continue();
-    return r.abort();
-  });
+  // 패치한 HTML 은 로컬 서버(127.0.0.1:5173)가 내주고, 에뮬레이터 요청은 건드리지 않는다(CORS 사전 요청을 브라우저가 직접 처리).
+  currentHtml = html;
+  await page.route((u) => !/^http:\/\/127\.0\.0\.1[:/]/.test(u.toString()) && !/gstatic\.com\/firebasejs/.test(u.toString()), (r) => r.abort());
   await page.goto('http://127.0.0.1:5173/index.html');
   const stuck = async (e) => { const st = await page.evaluate(() => ({ ls: document.getElementById('loadingScreen') && document.getElementById('loadingScreen').style.display, ready: typeof listenersReady !== 'undefined' ? JSON.stringify(listenersReady) : 'n/a', user: typeof fauth !== 'undefined' && fauth.currentUser ? 'user' : 'nouser' })).catch(() => ({})); console.log('E2E DIAG ' + JSON.stringify(st) + '\n' + diag.join('\n')); throw e; };
   await page.waitForFunction(() => { const e = document.getElementById('loginScreen'); const a = document.getElementById('appShell'); return (e && e.style.display === 'flex') || (a && a.style.display !== 'none' && a.style.display !== ''); }, null, { timeout: 40000 }).catch(stuck);
@@ -93,6 +92,7 @@ async function studentFlow(page, label, expectCode) {
 }
 
 (async () => {
+  await new Promise((ok) => server.listen(5173, '127.0.0.1', ok));
   const browser = await chromium.launch({ args: ['--no-sandbox'] });
   try {
     // ── 1단계 규칙 + 서버 검증 원장 로그인(firebase 모드) ─────────────────────
@@ -210,7 +210,7 @@ async function studentFlow(page, label, expectCode) {
   } catch (e) {
     check('E2E 실행 중 예외 없음', false, e.stack || e.message);
   } finally {
-    await browser.close();
+    await browser.close(); server.close();
   }
   const bad = results.filter((r) => !r.ok);
   console.log(`E2E SUMMARY total=${results.length} pass=${results.length - bad.length} fail=${bad.length}`);
