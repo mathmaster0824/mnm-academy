@@ -22,7 +22,7 @@ const LESSON = '2026-10-14', MON = '2026-10-12', TUE = '2026-10-13';
   await page.waitForTimeout(800);
 
   // 가짜 데이터 + 저장 지연/실패 주입 + 해당 학생 행만 그리는 render 대체(실제 renderClassRow 를 그대로 사용)
-  await page.evaluate(({ LESSON, MON, TUE }) => {
+  const setupApp = async (initialStore) => page.evaluate(({ LESSON, MON, TUE, initialStore }) => {
     session = { mode: 'director' };
     document.getElementById('loginScreen').style.display = 'none'; document.getElementById('appShell').style.display = 'block';
     db.students = [
@@ -33,7 +33,7 @@ const LESSON = '2026-10-14', MON = '2026-10-12', TUE = '2026-10-13';
     db.classRecords = {}; db.submissions = {};
     // B 는 기기로 낸 제출(사진·제출시각 있음)이 월요일에 있고 화요일은 없음. A 는 둘 다 없음.
     const bSub = { studentId: 'stu_b', classId: 'cls_x', date: MON, status: '제출완료', reviewCount: 0, hwPhotos: ['photo-b.jpg'], practicePhotos: [], submittedAt: '2026-10-12T10:00:00.000Z', firstSubmittedAt: '2026-10-12T10:00:00.000Z' };
-    window.__store.submissions = { ['stu_b_' + MON]: JSON.parse(JSON.stringify(bSub)) };
+    window.__store.submissions = initialStore || { ['stu_b_' + MON]: JSON.parse(JSON.stringify(bSub)) };
     db.submissions = JSON.parse(JSON.stringify(window.__store.submissions));
     window.__bSubBefore = JSON.stringify(bSub);
     homeworkRecentLoadState = 'ready'; homeworkRecentStart = '2026-10-01'; // 기록 조회가 끝난 상태(없는 날은 '미제출')
@@ -42,7 +42,8 @@ const LESSON = '2026-10-14', MON = '2026-10-12', TUE = '2026-10-13';
     window.__who = 'stu_a';
     window.__draw = () => { const s = db.students.find((x) => x.id === window.__who); document.getElementById('mainArea').innerHTML = '<div id="rowHost">' + renderClassRow(db.classes[0], s, LESSON, {}, '', new Set()) + '</div>'; };
     window.render = window.__draw; window.__draw();
-  }, { LESSON, MON, TUE });
+  }, { LESSON, MON, TUE, initialStore });
+  await setupApp(null);
 
   const badge = (d) => page.locator(`[data-hwverify="${d}"]`);
   const store = (k) => page.evaluate((k) => window.__store.submissions && window.__store.submissions[k] ? JSON.parse(JSON.stringify(window.__store.submissions[k])) : null, k);
@@ -138,6 +139,81 @@ const LESSON = '2026-10-14', MON = '2026-10-12', TUE = '2026-10-13';
     return window.__store.submissions['stu_c_2026-10-12'];
   });
   check('기존 "숙제 인정" 버튼 동작 유지(대기→확인, 검사횟수 +1)', old.status === '확인' && old.reviewCount === 1, JSON.stringify(old));
+
+
+  // ===== 9) 학생 상세페이지(최근 숙제 제출 현황)와 반별 페이지 학생 카드: 같은 기록을 양쪽에서 수정, 서로 일치, 새로고침 유지 =====
+  const mountBoth = () => page.evaluate(() => {
+    const L = mostRecentLessonDateOnOrBefore('mon-wed', todayISO());
+    window.__draw2 = () => { const s = db.students.find((x) => x.id === window.__who);
+      document.getElementById('mainArea').innerHTML = '<div id="classHost">' + renderClassRow(db.classes[0], s, L, {}, '', new Set()) + '</div><div id="detailHost">' + renderHomeworkGlanceForWarning(window.__who) + '</div>'; };
+    window.render = window.__draw2; window.__who = 'stu_a'; window.__draw2();
+    return { L, dates: homeworkDateRangeDates('mon-wed', L) };
+  });
+  // 시험 데이터 초기화(가짜 데이터만): B 는 D1 에 기기 제출, A 는 기록 없음
+  await page.evaluate(() => { window.__store.submissions = {}; db.submissions = {}; });
+  const mb = await mountBoth();
+  const D1 = mb.dates[0], D2 = mb.dates[1];
+  await page.evaluate(([D1]) => { const b = { studentId: 'stu_b', classId: 'cls_x', date: D1, status: '제출완료', reviewCount: 0, hwPhotos: ['photo-b.jpg'], practicePhotos: [], submittedAt: D1 + 'T10:00:00.000Z', firstSubmittedAt: D1 + 'T10:00:00.000Z' };
+    window.__store.submissions['stu_b_' + D1] = JSON.parse(JSON.stringify(b)); db.submissions['stu_b_' + D1] = JSON.parse(JSON.stringify(b)); window.__bBefore9 = JSON.stringify(b); window.__draw2(); }, [D1]);
+  const cBadge = (d) => page.locator(`#classHost [data-hwverify="${d}"]`), dBadge = (d) => page.locator(`#detailHost [data-hwverify-detail="${d}"]`);
+  const both = async (d) => ({ c: (await cBadge(d).textContent()).trim(), dt: (await dBadge(d).textContent()).trim() });
+  check('학생 상세페이지에 날짜별 숙제 상태 칸이 클릭 가능한 칸으로 나오고, 반별 카드와 날짜가 같음(미제출 ×)', mb.dates.length >= 2 && (await dBadge(D1).count()) === 1 && (await cBadge(D1).count()) === 1 && (await both(D1)).c.includes('×') && (await both(D1)).dt.includes('미제출'), JSON.stringify(await both(D1)));
+
+  // 9-1) 학생 상세에서 수정 → 같은 문서 → 반별 카드에도 같은 상태
+  await dBadge(D1).click(); await page.waitForTimeout(150);
+  const t1 = await store('stu_a_' + D1), x1 = await both(D1);
+  check('상세에서 클릭: 선생님 직접 확인으로 저장(teacher-direct, 사진·제출시각 없음), 상세·반별 카드 모두 인증으로 표시', t1 && t1.status === '확인' && t1.verifyMethod === 'teacher-direct' && !t1.submittedAt && !(t1.hwPhotos || []).length && x1.dt.includes('선생님 직접 확인') && x1.c.includes('○') && x1.c.includes('직접'), JSON.stringify({ t1, x1 }));
+  check('상세에서 바꿔도 같은 학생의 다른 날짜·다른 학생 B 기록은 그대로', (await store('stu_a_' + D2)) === null && (await page.evaluate(() => JSON.stringify(window.__store.submissions['stu_b_' + Object.keys(window.__store.submissions).find((k) => k.startsWith('stu_b_')).slice(6)]) === window.__bBefore9)) && (await both(D2)).dt.includes('미제출'));
+
+  // 9-2) 반별 카드에서 수정 → 상세에도 같은 상태
+  await cBadge(D2).click(); await page.waitForTimeout(150);
+  const x2 = await both(D2);
+  check('반별 카드에서 클릭한 D2 도 상세페이지에 같은 상태(선생님 직접 확인)로 표시', x2.dt.includes('선생님 직접 확인') && x2.c.includes('○') && (await store('stu_a_' + D2)).verifyMethod === 'teacher-direct', JSON.stringify(x2));
+
+  // 9-3) 상세에서 다시 클릭 → 미인증, 반별 카드도 미인증
+  await dBadge(D1).click(); await page.waitForTimeout(150);
+  const x3 = await both(D1);
+  check('상세에서 다시 클릭하면 미인증(status=미인증), 양쪽 화면 모두 미인증 표시, D2 인증은 유지', (await store('stu_a_' + D1)).status === '미인증' && x3.dt.includes('미인증') && x3.c.includes('×') && (await both(D2)).c.includes('○'), JSON.stringify(x3));
+
+  // 9-4) 기기 제출 있는 학생 B 를 상세에서 수정: 사진·제출시각 보존, 직접 확인으로 표시되지 않음, 반별 카드와 일치
+  await page.evaluate(() => { window.__who = 'stu_b'; window.__draw2(); });
+  await dBadge(D1).click(); await page.waitForTimeout(150);
+  const b9 = await store('stu_b_' + D1), xb = await both(D1);
+  check('B(기기 제출)를 상세에서 미인증으로: status=대기, 사진·제출시각 보존, 양쪽 모두 검토대기(△)', b9 && b9.status === '대기' && b9.hwPhotos[0] === 'photo-b.jpg' && b9.submittedAt === D1 + 'T10:00:00.000Z' && !b9.verifyMethod && xb.dt.includes('검토대기') && xb.c.includes('△'), JSON.stringify({ b9, xb }));
+  await cBadge(D1).click(); await page.waitForTimeout(150);
+  const b10 = await store('stu_b_' + D1), xb2 = await both(D1);
+  check('B 를 반별 카드에서 다시 인증: 사진 보존, "선생님 직접 확인"이 아니라 일반 인정으로 양쪽 동일 표시', b10.status === '확인' && b10.hwPhotos[0] === 'photo-b.jpg' && !b10.verifyMethod && xb2.dt.includes('인정') && !xb2.dt.includes('직접') && xb2.c.includes('○') && !xb2.c.includes('직접'), JSON.stringify({ b10, xb2 }));
+
+  // 9-5) 저장 실패(상세): 실패 안내, 성공처럼 남지 않음, 반별 카드도 그대로
+  await page.evaluate(() => { window.__who = 'stu_a'; window.__draw2(); window.__fail = true; });
+  const before5 = await store('stu_a_' + D1);
+  await dBadge(D1).click(); await page.waitForTimeout(300);
+  const x5 = await both(D1);
+  check('상세 저장 실패: "저장 실패" 표시·실패 안내 문구, 서버·화면 데이터는 이전 그대로(미인증), 같은 기록이라 반별 카드에도 실패 표시', /저장 실패/.test(x5.dt) && (await page.locator(`#detailHost [data-hwverify-detail-msg="${D1}"]`).textContent()).includes('저장 실패') && /저장 실패/.test(x5.c) && !x5.c.includes('○') && !x5.dt.includes('인증') && JSON.stringify(await store('stu_a_' + D1)) === JSON.stringify(before5) && (await page.evaluate(([D1]) => db.submissions['stu_a_' + D1].status, [D1])) === '미인증', JSON.stringify(x5));
+  await page.evaluate(() => { window.__fail = false; });
+
+  // 9-6) 저장 중 표시(상세)
+  await page.evaluate(() => { window.__delay = 400; window.__draw2(); });
+  await dBadge(D1).click(); await page.waitForTimeout(120);
+  const sv = (await dBadge(D1).textContent()).trim(), svDis = await dBadge(D1).isDisabled();
+  await page.waitForTimeout(600); await page.evaluate(() => { window.__delay = 0; });
+  check('상세 클릭 직후 "저장 중…" 표시와 잠금, 끝나면 ✓ 로 표시', /저장 중/.test(sv) && svDis && (await dBadge(D1).textContent()).includes('✓'), sv);
+
+  // 9-7) 학생 세션: 상세 표에 수정 칸 없음, 호출해도 저장 안 함
+  const st9 = await page.evaluate(async () => { const snap = () => JSON.stringify(window.__store.submissions); session = { mode: 'student', studentId: 'stu_a' }; window.__draw2();
+    const n = document.querySelectorAll('[data-hwverify-detail],[data-hwverify]').length; const s0 = snap(); await toggleHomeworkVerify('cls_x', 'stu_a', document.querySelector('#detailHost td').textContent ? '2026-10-15' : ''); const w = snap() !== s0; session = { mode: 'director' }; window.__draw2(); return { n, w }; });
+  check('학생 세션에서는 상세·반별 어디에도 수정 칸이 없고 호출해도 저장되지 않음', st9.n === 0 && st9.w === false, JSON.stringify(st9));
+
+  // 9-8) 새로고침: 서버(가짜 Firestore) 저장값을 보관 → 페이지 실제 새로고침 → 저장값만으로 다시 그림 → 양쪽 화면 일치
+  const saved = await page.evaluate(() => JSON.parse(JSON.stringify(window.__store.submissions)));
+  const strip = (o) => ({ c: o.c.replace(/\s*✓/g, ''), dt: o.dt.replace(/\s*✓/g, '') });
+  const expectD = { D1: strip(await both(D1)), D2: strip(await both(D2)) };
+  await page.reload(); await page.waitForTimeout(800);
+  await setupApp(saved);
+  await page.evaluate(async () => { db.submissions = {}; const snap = await fsdb.collection('submissions').get(); snap.docs.forEach((d) => { db.submissions[d.id] = d.data(); }); });
+  await mountBoth();
+  const after = { D1: strip(await both(D1)), D2: strip(await both(D2)) };
+  check('실제 새로고침 후에도 저장된 상태가 유지되고 반별 카드·상세 표가 서로 일치(D1 인증 ↔ D2 인증)', JSON.stringify(after) === JSON.stringify(expectD) && after.D1.dt.includes('선생님 직접 확인') && after.D2.dt.includes('선생님 직접 확인') && after.D1.c.includes('직접'), JSON.stringify({ expectD, after }));
 
   check('페이지 오류 없음', errs.length === 0, errs.join('|'));
   await browser.close();

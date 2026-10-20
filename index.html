@@ -5251,7 +5251,7 @@ function homeworkGlanceRowsForStudent(stuId, limitDays){
   const sliced = limitDays ? dates.slice(-limitDays) : dates;
   return sliced.map(d=>{
     const info = byDate.get(d);
-    return {date:d, state:info.state, content: homeworkContentForDate(stuId, info.clsId, d)};
+    return {date:d, state:info.state, clsId:info.clsId, content: homeworkContentForDate(stuId, info.clsId, d)};
   });
 }
 function operationStartDateForStudent(stuId){
@@ -5278,12 +5278,24 @@ function renderHomeworkGlanceForWarning(stuId){
     <div class="row between"><h3 style="margin:0;">📋 최근 숙제 제출 현황 (경고 판단용)</h3>${missedStreak>=3?`<span class="badge red">최근 ${missedStreak}일 연속 미이행</span>`:''}</div>
     ${rows.length ? `<table style="margin-top:8px;">
       <tr><th style="width:70px;">날짜</th><th style="width:90px;">상태</th><th>그날 숙제 내용</th></tr>
-      ${rows.map(r=>`<tr>
+      ${rows.map(r=>{
+        // 반별 페이지 학생 카드와 같은 기록(submissions/<학생>_<날짜>)·같은 저장 함수를 쓴다.
+        const sub = subForClass(stuId,r.clsId,r.date);
+        const ui = hwVerifyUi[hwVerifyUiKey(stuId,r.clsId,r.date)];
+        const direct = r.state==='approved' && homeworkIsTeacherDirect(sub);
+        const lab = ui&&ui.state==='saving' ? '저장 중…' : ui&&ui.state==='error' ? '저장 실패' : (direct ? '선생님 직접 확인' : (r.state==='missing' && sub && String(sub.status||'').trim()==='미인증') ? '미인증' : labelFor(r.state))+(ui&&ui.state==='saved'?' ✓':'');
+        const canVerify = !!session && session.mode==='director' && !isLegacyHomeworkDate(r.date) && r.date<=todayISO() && r.state!=='unknown';
+        const badge = canVerify
+          ? `<button type="button" class="badge ${colorFor(r.state)} hw-verify" data-hwverify-detail="${r.date}" data-state="${r.state}" ${ui&&ui.state==='saving'?'disabled':''} title="눌러서 인증/미인증 전환" onclick="toggleHomeworkVerify('${r.clsId}','${stuId}','${r.date}')" style="font-size:10px;border:1px solid rgba(0,0,0,.12);cursor:pointer;font-family:inherit;">${lab}</button>`
+          : `<span class="badge ${colorFor(r.state)}" style="font-size:10px;">${lab}</span>`;
+        const msg = canVerify && ui && ui.state!=='saving' && ui.msg ? `<div data-hwverify-detail-msg="${r.date}" style="font-size:10px;margin-top:3px;color:${ui.state==='error'?'var(--red)':'var(--green)'};">${ui.msg}</div>` : '';
+        return `<tr>
         <td style="font-size:11px;color:#6b6858;white-space:nowrap;">${r.date.slice(5).replace('-','/')}</td>
-        <td><span class="badge ${colorFor(r.state)}" style="font-size:10px;">${labelFor(r.state)}</span></td>
+        <td>${badge}${msg}</td>
         <td style="font-size:12px;color:${r.content?'var(--ink)':'#b3aea0'};">${r.content || '(등록된 숙제 내용 없음)'}</td>
-      </tr>`).join('')}
+      </tr>`; }).join('')}
       </table>
+    ${!!session && session.mode==='director' ? '<div style="font-size:11px;color:#8a8674;margin-top:8px;">상태 칸을 누르면 인증/미인증이 바뀌어요. 휴대전화 제출이 없는 숙제도 직접 확인으로 인증할 수 있어요.</div>' : ''}
     <div style="font-size:11px;color:#8a8674;margin-top:10px;">🟢 인정 · 🟡 검토대기·1/2차 불합격(재제출 가능) · 🔴 미제출·최종불합격 · ⚪ 아직 판정 전(오늘/미래)</div>` : `<div class="empty" style="padding:14px;">아직 판정할 숙제 기록이 없어요.</div>`}
   </div>`;
 }
