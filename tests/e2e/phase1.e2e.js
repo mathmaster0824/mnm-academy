@@ -33,7 +33,7 @@ async function seedEnv(project, rulesFile, directorUids) {
   await env.clearFirestore();
   await env.withSecurityRulesDisabled(async (c) => {
     const d = c.firestore(); const S = (p, v) => F.setDoc(F.doc(d, p), v);
-    await S('meta/settings', { adminPassword: 'FAKE-PASSWORD-NOT-REAL', isDefaultPassword: false });
+    await S('meta/settings', { adminPassword: 'FAKE-PW-NOT-REAL', isDefaultPassword: false });
     if (directorUids) await S('meta/directors', { uids: directorUids });
     await S(`students/${A}`, { name: '가짜A', code: '1111', classId: CLS, status: 'active', grade: '중2' });
     await S(`students/${B}`, { name: '가짜B', code: '2222', classId: CLS, status: 'active', grade: '중2' });
@@ -123,8 +123,9 @@ async function studentFlow(page, label, expectCode) {
         }, [A, CLS]);
         check('1단계 규칙: 학생 숙제 제출 함수 실행', /^done/.test(sub), sub);
         console.log('E2E INFO submit ' + sub + ' dialogs=' + JSON.stringify(page.dialogs));
-        const saved = await env1.withSecurityRulesDisabled(async (c) => (await F.getDoc(F.doc(c.firestore(), `submissions/${A}_2026-10-20`))).data());
-        check('1단계 규칙: 숙제 제출이 Firestore 에 저장됨(status=제출완료)', saved && saved.status === '제출완료' && saved.studentId === A, JSON.stringify(saved) + ' all=' + JSON.stringify(await env1.withSecurityRulesDisabled(async (c) => (await F.getDocs(F.collection(c.firestore(), 'submissions'))).docs.map((d) => d.id))));
+        let saved, allIds;
+        await env1.withSecurityRulesDisabled(async (c) => { saved = (await F.getDoc(F.doc(c.firestore(), `submissions/${A}_2026-10-20`))).data(); allIds = (await F.getDocs(F.collection(c.firestore(), 'submissions'))).docs.map((d) => d.id); });
+        check('1단계 규칙: 숙제 제출이 Firestore 에 저장됨(status=제출완료)', saved && saved.status === '제출완료' && saved.studentId === A, JSON.stringify(saved) + ' all=' + JSON.stringify(allIds));
         check('1단계 규칙: 학생이 질문 올리기', (await tryOp(page, 'set', 'questions/qNew', { studentId: A, status: '대기', text: '시험', photos: [], answerText: '', answerPhotos: [] })) === 'ok');
         check('1단계 규칙: 학생이 공부 타이머 저장', (await tryOp(page, 'set', `timerState/${A}_2026-10-20`, { baseSeconds: 5 })) === 'ok');
         // 차단
@@ -199,7 +200,7 @@ async function studentFlow(page, label, expectCode) {
       await page.fill('#pwInput', 'wrong');
       await page.evaluate(() => tryDirectorLogin());
       check('현재 규칙·legacy 모드: 틀린 비밀번호 거부', await page.evaluate(() => !session && /올바르지/.test(document.getElementById('pwErr').textContent)));
-      await page.fill('#pwInput', 'FAKE-PASSWORD-NOT-REAL');
+      await page.fill('#pwInput', 'FAKE-PW-NOT-REAL');
       await page.evaluate(() => tryDirectorLogin());
       await page.waitForTimeout(500);
       check('현재 규칙·legacy 모드: 기존 방식 원장 로그인 그대로 동작', await page.evaluate(() => !!(session && session.mode === 'director')), await page.evaluate(() => JSON.stringify({ s: session, pw: !!(db.settings && db.settings.adminPassword), len: db.settings && db.settings.adminPassword && db.settings.adminPassword.length, err: document.getElementById('pwErr').textContent, val: document.getElementById('pwInput').value.length })));
