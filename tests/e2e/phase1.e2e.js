@@ -124,7 +124,7 @@ async function studentFlow(page, label, expectCode) {
         check('1단계 규칙: 학생 숙제 제출 함수 실행', /^done/.test(sub), sub);
         console.log('E2E INFO submit ' + sub + ' dialogs=' + JSON.stringify(page.dialogs));
         let saved, allIds;
-        await env1.withSecurityRulesDisabled(async (c) => { saved = (await F.getDoc(F.doc(c.firestore(), `submissions/${A}_2026-10-20`))).data(); allIds = (await F.getDocs(F.collection(c.firestore(), 'submissions'))).docs.map((d) => d.id); });
+        await env1.withSecurityRulesDisabled(async (c) => { const fs2 = c.firestore(); saved = (await F.getDoc(F.doc(fs2, `submissions/${A}_2026-10-20`))).data(); allIds = (await F.getDocs(F.collection(fs2, 'submissions'))).docs.map((d) => d.id); });
         check('1단계 규칙: 숙제 제출이 Firestore 에 저장됨(status=제출완료)', saved && saved.status === '제출완료' && saved.studentId === A, JSON.stringify(saved) + ' all=' + JSON.stringify(allIds));
         check('1단계 규칙: 학생이 질문 올리기', (await tryOp(page, 'set', 'questions/qNew', { studentId: A, status: '대기', text: '시험', photos: [], answerText: '', answerPhotos: [] })) === 'ok');
         check('1단계 규칙: 학생이 공부 타이머 저장', (await tryOp(page, 'set', `timerState/${A}_2026-10-20`, { baseSeconds: 5 })) === 'ok');
