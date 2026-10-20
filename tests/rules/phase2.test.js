@@ -128,7 +128,7 @@ suite('firestore.rules.phase2.proposed', (env) => {
   table('① 익명 세션(공급자 anonymous, claim 없음)', env, (e) => ctx.anon(e), denyAll);
   table('① 익명 + 학생 claim 위조', env, (e) => ctx.anonForgedStudent(e), denyAll);
   table('① 익명 + 원장 claim 위조', env, (e) => ctx.anonForgedDirector(e), denyAll);
-  table('① 허용 목록에 없는 비밀번호 계정', env, (e) => ctx.passwordNotDirector(e), denyAll);
+  table('① 원장 UID 가 아닌 비밀번호 계정', env, (e) => ctx.passwordNotDirector(e), denyAll);
   table('① 비로그인', env, (e) => ctx.unauth(e), denyAll);
 
   // ── ③ 원장 ────────────────────────────────────────────────────────────────

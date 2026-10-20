@@ -266,6 +266,17 @@ firebase.initializeApp(firebaseConfig);
 const fsdb = firebase.firestore();
 const fauth = firebase.auth();
 
+/* ---------------- 원장 인증 방식 (보안 1단계) ----------------
+   mode:'legacy'   → 기존 방식 그대로. 브라우저가 Firestore meta/settings 의 비밀번호와 입력값을 비교한다.
+                     ⚠ 서버 검증이 아니다. 비밀번호가 모든 접속자에게 읽힌다. 전환 전 기본값이며 동작은 이전과 같다.
+   mode:'firebase' → Firebase Authentication 이메일/비밀번호 로그인(비밀번호를 Firebase 서버가 검증)
+                     + Firestore 규칙 파일에 적힌 원장 UID 의 계정만 원장(서버가 판정). 앱은 meta/settings 를 읽지 않는다.
+   전환 절차: docs/SECURITY_PHASE1_CUTOVER.md (콘솔에서 원장 계정을 먼저 만들고, 규칙 파일의 원장 UID 를 확인한 뒤 아래 값을 바꿔 배포한다).
+   email 은 자리표시자다. 실제 원장 로그인 이메일은 전환 때 이 한 줄만 바꾼다(비밀번호는 코드에 두지 않는다). */
+const DIRECTOR_AUTH = { mode:'legacy', email:'director@REPLACE-ME.invalid' };
+function directorAuthIsFirebase(){ return DIRECTOR_AUTH.mode==='firebase'; }
+function directorEmailConfigured(){ return !/REPLACE-ME/i.test(DIRECTOR_AUTH.email||''); }
+
 // 반복 진입 체감속도 개선: 이전에 받은 Firestore 데이터를 기기 캐시에 보관해
 // 다음 진입 때 캐시를 먼저 보여주고 뒤에서 서버와 동기화한다.
 const firestorePersistenceReady = fsdb.enablePersistence({synchronizeTabs:true})
@@ -408,8 +419,13 @@ function setConnStatus(ok){
 // 로그인 전부터 필요하고, 시간이 지나도 크게 늘어나지 않는 "기준정보" 컬렉션들.
 // 원장/학생 구분 없이 항상 전체를 구독해도 안전함 (읽기량이 크지 않음).
 function attachCoreListeners(){
+  // 서버 검증 원장 로그인 모드: 비밀번호 문서(meta/settings)를 구독하지도, 기본 문서를 만들지도 않는다.
+  if(directorAuthIsFirebase()){
+    db.settings = { isDefaultPassword:false };
+    listenersReady.settings = true;
+  }
   const subs = [
-    fsdb.collection('meta').doc('settings').onSnapshot(async doc=>{
+    ...(directorAuthIsFirebase() ? [] : [fsdb.collection('meta').doc('settings').onSnapshot(async doc=>{
       if(doc.exists){ db.settings = doc.data(); }
       else{
         db.settings = { adminPassword:'0000', isDefaultPassword:true };
@@ -418,7 +434,7 @@ function attachCoreListeners(){
       listenersReady.settings = true;
       maybeFinishLoading();
       scheduleRender();
-    }, err=>{ setConnStatus(false); }),
+    }, err=>{ setConnStatus(false); })]),
 
     fsdb.collection('students').onSnapshot(snap=>{
       db.students = snap.docs.map(d=>({id:d.id, ...d.data()}));
@@ -728,7 +744,12 @@ function maybeFinishLoading(){
     // 저장된 로그인 상태가 있으면 자동으로 복원 (화면 꺼짐/백그라운드 새로고침으로 로그인이 풀리는 것 방지)
     try{
       const saved = JSON.parse(localStorage.getItem('mnm_session') || 'null');
-      if(saved && saved.mode==='director'){ session = saved; }
+      if(directorAuthIsFirebase() && isFirebaseDirectorUser(fauth.currentUser)){
+        // 서버 로그인 세션(Firebase)이 남아 있을 때만 원장 화면을 복원한다. localStorage 값만으로는 복원하지 않는다.
+        session = {mode:'director', auth:'firebase'};
+        verifyDirectorSessionSoon();
+      }
+      else if(saved && saved.mode==='director' && !directorAuthIsFirebase()){ session = saved; }
       else if(saved && saved.mode==='student'){
         const stu = studentById(saved.studentId);
         if(stu && stu.status!=='withdrawn'){ session = saved; }
@@ -737,6 +758,7 @@ function maybeFinishLoading(){
   }
   if(session){ enterApp(); return; }
   document.getElementById('loginScreen').style.display='flex';
+  if(directorAuthIsFirebase()){ try{ document.getElementById('pwInput').maxLength = 64; }catch(e){} }
   if(db.settings.isDefaultPassword){
     document.getElementById('pwSetupNote').textContent = '최초 접속이에요. 기본 비밀번호(0000)로 먼저 로그인한 뒤, 대시보드에서 비밀번호를 변경해주세요.';
   }
@@ -750,10 +772,62 @@ function setLoginMode(m){
   document.getElementById('directorLogin').style.display = m==='director' ? 'block':'none';
   document.getElementById('studentLogin').style.display = m==='student' ? 'block':'none';
 }
-function tryDirectorLogin(){
+function isFirebaseDirectorUser(u){
+  return !!(u && !u.isAnonymous && (u.providerData||[]).some(p=>p && p.providerId==='password'));
+}
+// 원장 권한 확인: 규칙에 적힌 원장 UID 와 일치하는 계정만 원장 전용 경로를 읽을 수 있다.
+// 그래서 "원장 전용 경로(meta/_directorCheck, 문서가 없어도 됨)를 서버에서 읽어 본다 → 성공이면 원장, 거부면 원장 아님"으로 판정한다.
+// 이 확인은 화면 안내용이고 실제 권한은 항상 서버 규칙이 정한다. 원장 UID 는 규칙 파일에만 있고 앱·Firestore 문서에는 없다.
+async function verifyDirectorAccess(u){
+  if(!u || u.isAnonymous) return false;
+  try{
+    await fsdb.collection('meta').doc('_directorCheck').get({source:'server'});
+    return true;
+  }catch(e){ return false; }
+}
+async function switchToAnonymousSession(){
+  try{ await fauth.signOut(); }catch(e){}
+  try{ await fauth.signInAnonymously(); }catch(e){ console.error('[익명 세션 복구 실패]', e); }
+  // 로그아웃 순간 인증이 없어 끊긴 공통 리스너를 다시 붙인다.
+  try{ (unsubscribers||[]).forEach(u=>{ try{ u(); }catch(_){} }); }catch(e){}
+  attachCoreListeners();
+}
+function verifyDirectorSessionSoon(){
+  const u = fauth.currentUser;
+  verifyDirectorAccess(u).then(ok=>{
+    if(ok || !(session && session.mode==='director')) return;
+    logout();
+    const el = document.getElementById('pwErr');
+    if(el) el.textContent = '원장 권한을 확인하지 못해 로그아웃했어요. 다시 로그인해주세요.';
+  });
+}
+async function tryDirectorLogin(){
+  const err = document.getElementById('pwErr');
   const v = document.getElementById('pwInput').value;
-  if(v === db.settings.adminPassword){ session = {mode:'director'}; saveSessionLocal(); enterApp(); }
-  else{ document.getElementById('pwErr').textContent = '비밀번호가 올바르지 않아요. 다시 확인해주세요.'; }
+  if(!directorAuthIsFirebase()){
+    // 기존 방식(전환 전): 브라우저에서 비교한다. 서버 검증이 아니다.
+    if(v === db.settings.adminPassword){ session = {mode:'director'}; saveSessionLocal(); enterApp(); }
+    else{ err.textContent = '비밀번호가 올바르지 않아요. 다시 확인해주세요.'; }
+    return;
+  }
+  err.textContent = '';
+  if(!directorEmailConfigured()){ err.textContent = '원장 로그인 설정이 아직 끝나지 않았어요. 개발 담당에게 알려주세요.'; return; }
+  if(!v){ err.textContent = '비밀번호를 입력해주세요.'; return; }
+  try{
+    const cred = await fauth.signInWithEmailAndPassword(DIRECTOR_AUTH.email, v);
+    if(!(await verifyDirectorAccess(cred.user))){
+      await switchToAnonymousSession();
+      err.textContent = '이 계정에는 원장 권한이 없어요.';
+      return;
+    }
+    document.getElementById('pwInput').value = '';
+    session = {mode:'director', auth:'firebase'}; saveSessionLocal(); enterApp();
+  }catch(e){
+    const code = String((e && e.code) || '');
+    err.textContent = code==='auth/too-many-requests' ? '시도가 너무 많아요. 잠시 뒤에 다시 해주세요.'
+      : code==='auth/network-request-failed' ? '인터넷 연결을 확인한 뒤 다시 해주세요.'
+      : '비밀번호가 올바르지 않아요. 다시 확인해주세요.';
+  }
 }
 function tryStudentLogin(){
   const input = document.getElementById('codeInput');
@@ -778,6 +852,7 @@ function tryStudentLogin(){
 }
 function saveSessionLocal(){ try{ localStorage.setItem('mnm_session', JSON.stringify(session)); }catch(e){} }
 function logout(){
+  const wasFirebaseDirector = directorAuthIsFirebase() && session && session.mode==='director';
   homeworkLoadGen++; homeworkRecentLoadState='idle'; homeworkKnownDates.clear(); homeworkKnownStudents.clear();
   roleUnsubscribers.forEach(u=>{ try{ u(); }catch(e){} });
   roleUnsubscribers = [];
@@ -789,6 +864,8 @@ function logout(){
   document.getElementById('loginScreen').style.display='flex';
   document.getElementById('pwInput').value=''; document.getElementById('codeInput').value='';
   document.getElementById('pwErr').textContent=''; document.getElementById('codeErr').textContent='';
+  // 원장 서버 세션은 로그아웃 때 종료하고, 학생 화면용 익명 세션으로 되돌린다.
+  if(wasFirebaseDirector) switchToAnonymousSession();
 }
 function studentLessonRecords(stuId){
   const seen = new Set();
@@ -1860,6 +1937,15 @@ function renderDashboard(){
       </div>
     </div>
   </div>` : ''}
+  ${directorAuthIsFirebase() ? `<details style="margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:8px 12px;">
+    <summary style="cursor:pointer;font-size:12px;font-weight:800;">🔐 원장 비밀번호 변경</summary>
+    <div class="row" style="margin-top:9px;">
+      <input type="password" id="dirPwCur" placeholder="현재 비밀번호" autocomplete="current-password">
+      <input type="password" id="dirPwNew1" placeholder="새 비밀번호(6자 이상)" autocomplete="new-password">
+      <input type="password" id="dirPwNew2" placeholder="새 비밀번호 확인" autocomplete="new-password">
+      <button class="btn sm gold" onclick="changeDirectorPassword()">변경</button>
+    </div>
+  </details>` : ''}
   ${pwWarn ? `<details style="margin-top:10px;border:1px solid #efc2bd;background:#fff8f6;border-radius:10px;padding:8px 12px;">
     <summary style="cursor:pointer;color:#a83b32;font-size:12px;font-weight:800;">⚠️ 기본 비밀번호 사용 중 · 눌러서 변경</summary>
     <div class="row" style="margin-top:9px;">
@@ -1869,6 +1955,26 @@ function renderDashboard(){
     </div>
   </details>` : ''}
   `;
+}
+async function changeDirectorPassword(){
+  const cur=document.getElementById('dirPwCur').value, p1=document.getElementById('dirPwNew1').value, p2=document.getElementById('dirPwNew2').value;
+  if(!cur){ alert('현재 비밀번호를 입력해주세요.'); return; }
+  if(!p1 || p1.length<6){ alert('6자 이상의 비밀번호를 입력해주세요.'); return; }
+  if(p1!==p2){ alert('두 비밀번호가 일치하지 않아요.'); return; }
+  const u=fauth.currentUser;
+  if(!directorAuthIsFirebase() || !isFirebaseDirectorUser(u)){ alert('원장 계정으로 로그인한 상태에서만 변경할 수 있어요.'); return; }
+  try{
+    await u.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(DIRECTOR_AUTH.email, cur));
+    await u.updatePassword(p1);
+    ['dirPwCur','dirPwNew1','dirPwNew2'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+    alert('비밀번호를 변경했어요. 다음 로그인부터 새 비밀번호를 사용해주세요.');
+  }catch(e){
+    const code=String((e&&e.code)||'');
+    alert(code==='auth/wrong-password'||code==='auth/invalid-credential' ? '현재 비밀번호가 올바르지 않아요.'
+      : code==='auth/weak-password' ? '새 비밀번호가 너무 약해요. 6자 이상으로 해주세요.'
+      : code==='auth/too-many-requests' ? '시도가 너무 많아요. 잠시 뒤에 다시 해주세요.'
+      : '비밀번호를 변경하지 못했어요. 다시 로그인한 뒤 시도해주세요.');
+  }
 }
 async function changePassword(){
   const p1=document.getElementById('newPw1').value, p2=document.getElementById('newPw2').value;

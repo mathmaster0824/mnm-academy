@@ -6,7 +6,7 @@ rules_version = '2';
 // 전제(앱·서버 변경이 먼저 운영에 반영돼야 한다 — 이 규칙만 배포하면 학생 앱이 전부 멈춘다):
 //   1) 학생 로그인: 학생 코드 확인을 서버(Cloud Functions)가 하고, 성공하면 custom token 을 발급한다.
 //      토큰 claim: role='student', studentId=<students 문서 ID>.  (익명 로그인은 더 이상 쓰지 않는다)
-//   2) 원장 로그인: 1단계와 동일(Firebase Auth 이메일/비밀번호 + meta/directors 허용 목록).
+//   2) 원장 로그인: 1단계와 동일(Firebase Auth 이메일/비밀번호 + 규칙 파일에 적은 원장 UID).
 //   3) 학생 앱은 collection 범위(prefix) 쿼리 대신 "내 문서 ID 정확 조회"를 쓴다
 //      (규칙은 문서 ID 범위 쿼리를 증명하지 못해 list 를 허용할 수 없다).
 //   4) 반 단위 문서(classRecords/weeklyPlans/fridaySupp)는 한 문서에 같은 반 전체 학생 데이터가 들어 있어
@@ -19,11 +19,20 @@ service cloud.firestore {
 
     function signedIn() { return request.auth != null; }
 
+    // 원장 UID 는 이 규칙 파일에 직접 적는다(Firestore 문서의 허용 목록을 쓰지 않는다).
+    // 규칙은 Firebase 콘솔에서만 고칠 수 있어, 공개 클라이언트가 원장 목록을 바꿀 수 없다.
+    // UID 는 비밀값이 아니다(비밀번호·API 비밀키를 적는 곳이 아님). 게시 전에 아래 자리표시자를
+    // 콘솔 Authentication → Users 에서 확인한 "원장 계정의 사용자 UID" 로 바꾼다. 여러 명이면 쉼표로 추가한다.
+    // 자리표시자 그대로 게시하면 아무도 원장이 되지 못한다(앱 로딩·학생 기능은 유지, 원장 전용 기능만 막힘).
+    // 원장을 바꾸거나 추가하려면 이 값을 고쳐 규칙을 **다시 게시**해야 한다.
+    function directorUids() { return ['REPLACE_WITH_DIRECTOR_UID']; }
+
+    // 비밀번호 로그인(Firebase 서버 검증)이고, uid 가 위 목록에 있는 세션.
+    // 익명 세션·custom claim 위조·클라이언트가 보낸 값·Firestore 문서 내용은 영향이 없다.
     function isDirector() {
       return signedIn()
         && request.auth.token.firebase.sign_in_provider == 'password'
-        && exists(/databases/$(database)/documents/meta/directors)
-        && request.auth.uid in get(/databases/$(database)/documents/meta/directors).data.uids;
+        && request.auth.uid in directorUids();
     }
 
     // 서버(Admin SDK)가 발급한 custom token 만 'custom' 공급자를 가진다. 클라이언트는 claim 을 만들 수 없다.

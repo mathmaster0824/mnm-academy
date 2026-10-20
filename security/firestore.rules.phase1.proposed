@@ -4,7 +4,7 @@ rules_version = '2';
 // 계획서: docs/SECURITY_REMEDIATION_PLAN.md
 //
 // 목적: 학생(익명) 세션의 로그인 방식은 그대로 두고, "원장 권한"만 서버가 검증하도록 바꾼다.
-//   · 원장 = Firebase Auth 이메일/비밀번호 계정(비밀번호를 Firebase 서버가 검증) + meta/directors 허용 목록의 uid
+//   · 원장 = Firebase Auth 이메일/비밀번호 계정(비밀번호를 Firebase 서버가 검증) + 규칙 파일에 적은 원장 UID
 //   · 학생 세션(익명) = 원장이 아닌 모든 로그인 세션
 //
 // 1단계로 막을 수 있는 것:
@@ -25,13 +25,20 @@ service cloud.firestore {
 
     function signedIn() { return request.auth != null; }
 
-    // 비밀번호 로그인(Firebase 서버 검증)이고, 허용 목록 문서(meta/directors.uids)에 uid 가 있는 세션.
-    // 익명 세션·custom claim 위조·클라이언트가 보낸 값은 영향이 없다.
+    // 원장 UID 는 이 규칙 파일에 직접 적는다(Firestore 문서의 허용 목록을 쓰지 않는다).
+    // 규칙은 Firebase 콘솔에서만 고칠 수 있어, 공개 클라이언트가 원장 목록을 바꿀 수 없다.
+    // UID 는 비밀값이 아니다(비밀번호·API 비밀키를 적는 곳이 아님). 게시 전에 아래 자리표시자를
+    // 콘솔 Authentication → Users 에서 확인한 "원장 계정의 사용자 UID" 로 바꾼다. 여러 명이면 쉼표로 추가한다.
+    // 자리표시자 그대로 게시하면 아무도 원장이 되지 못한다(앱 로딩·학생 기능은 유지, 원장 전용 기능만 막힘).
+    // 원장을 바꾸거나 추가하려면 이 값을 고쳐 규칙을 **다시 게시**해야 한다.
+    function directorUids() { return ['REPLACE_WITH_DIRECTOR_UID']; }
+
+    // 비밀번호 로그인(Firebase 서버 검증)이고, uid 가 위 목록에 있는 세션.
+    // 익명 세션·custom claim 위조·클라이언트가 보낸 값·Firestore 문서 내용은 영향이 없다.
     function isDirector() {
       return signedIn()
         && request.auth.token.firebase.sign_in_provider == 'password'
-        && exists(/databases/$(database)/documents/meta/directors)
-        && request.auth.uid in get(/databases/$(database)/documents/meta/directors).data.uids;
+        && request.auth.uid in directorUids();
     }
 
     // ── A. 원장 전용 (읽기·쓰기) ───────────────────────────────────────────
