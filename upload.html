@@ -198,8 +198,9 @@ function courseUnitsList(courseId){
   if(!course.steps) return [];
   const seen = new Set(); const units = [];
   course.steps.forEach(s=>{
-    const unit = s.split('>')[0].trim();
-    if(!seen.has(unit)){ seen.add(unit); units.push(unit); }
+    const stepName = typeof s==='string' ? s : String(s?.name||'');
+    const unit = stepName.split('>')[0].trim();
+    if(unit && !seen.has(unit)){ seen.add(unit); units.push(unit); }
   });
   return units;
 }
