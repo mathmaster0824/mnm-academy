@@ -56,17 +56,21 @@ async function openApp(browser, { project, mode, email, storage }) {
   const ctx = await browser.newContext();
   if (storage) await ctx.addInitScript((s) => { try { if (!localStorage.getItem('__seeded')) { localStorage.setItem('__seeded', '1'); for (const k in s) localStorage.setItem(k, s[k]); } } catch (e) {} }, storage);
   const page = await ctx.newPage();
+  const diag = []; page.on('pageerror', (e) => diag.push('PAGEERROR ' + e.message.slice(0, 200)));
+  page.on('requestfailed', (r) => diag.push('REQFAILED ' + r.url().slice(0, 100) + ' ' + (r.failure() && r.failure().errorText)));
+  page.on('console', (m) => { if (diag.length < 25) diag.push('CONSOLE.' + m.type() + ' ' + m.text().slice(0, 200)); });
   const perm = []; page.on('console', (m) => { if (m.type() === 'error' && /permission|insufficient/i.test(m.text())) perm.push(m.text().slice(0, 160)); });
   page.on('dialog', (d) => d.accept());
   const html = patchedHtml(project, mode, email);
   await page.route('**/*', (r) => {
     const u = r.request().url();
-    if (u === 'http://mnm.test/index.html') return r.fulfill({ contentType: 'text/html', body: html });
+    if (u === 'http://127.0.0.1:5173/index.html') return r.fulfill({ contentType: 'text/html', body: html });
     if (/gstatic\.com\/firebasejs|127\.0\.0\.1/.test(u)) return r.continue();
     return r.abort();
   });
-  await page.goto('http://mnm.test/index.html');
-  await page.waitForFunction(() => { const e = document.getElementById('loginScreen'); const a = document.getElementById('appShell'); return (e && e.style.display === 'flex') || (a && a.style.display !== 'none' && a.style.display !== ''); }, null, { timeout: 40000 });
+  await page.goto('http://127.0.0.1:5173/index.html');
+  const stuck = async (e) => { const st = await page.evaluate(() => ({ ls: document.getElementById('loadingScreen') && document.getElementById('loadingScreen').style.display, ready: typeof listenersReady !== 'undefined' ? JSON.stringify(listenersReady) : 'n/a', user: typeof fauth !== 'undefined' && fauth.currentUser ? 'user' : 'nouser' })).catch(() => ({})); console.log('E2E DIAG ' + JSON.stringify(st) + '\n' + diag.join('\n')); throw e; };
+  await page.waitForFunction(() => { const e = document.getElementById('loginScreen'); const a = document.getElementById('appShell'); return (e && e.style.display === 'flex') || (a && a.style.display !== 'none' && a.style.display !== ''); }, null, { timeout: 40000 }).catch(stuck);
   return { ctx, page, perm };
 }
 const waitAnon = (page) => page.waitForFunction(() => fauth.currentUser && fauth.currentUser.isAnonymous, null, { timeout: 20000 });
