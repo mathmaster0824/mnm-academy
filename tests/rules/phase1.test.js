@@ -1,5 +1,5 @@
 /* 1단계 제안 규칙(security/firestore.rules.phase1.proposed) 테스트 — Emulator 필요.
- * 목적: ① 학생(익명) 세션이 원장 설정·월말 리포트에 접근하지 못한다 ② 원장 권한은 서버(비밀번호 로그인+허용 목록)가
+ * 목적: ① 학생(익명) 세션이 원장 설정·월말 리포트에 접근하지 못한다 ② 원장 권한은 서버(비밀번호 로그인 + 규칙에 적은 원장 UID)가
  * 검증한다 ③ 학생 세션의 기존 기능(숙제 제출 등)은 그대로 된다 ④ 학생 세션이 원장 전용 상태값을 바꾸지 못한다.
  * 1단계 한계(학생 A 가 B 의 자료를 읽는 것)는 맨 아래 "[알려진 한계]" 에 그대로 고정해 둔다. */
 const { A, B, A2, CLS, DATE, WEEK, MONTH, ctx, op, table, suite } = require('./helpers');
@@ -18,10 +18,10 @@ suite('firestore.rules.phase1.proposed', (env) => {
     ['meta 새 문서 만들기', op.set('meta/whatever', { x: 1 })],
   ].map(([l, f]) => [l, f, 'deny']);
   table('① 익명 학생 세션 → 원장 설정(meta)', env, anon, metaDeny);
-  table('① 비밀번호 로그인이지만 허용 목록에 없는 계정 → meta', env, (e) => ctx.passwordNotDirector(e), metaDeny);
+  table('① 비밀번호 로그인이지만 원장 UID 가 아닌 계정 → meta', env, (e) => ctx.passwordNotDirector(e), metaDeny);
   table('① 익명 + 원장 claim 위조 → meta', env, (e) => ctx.anonForgedDirector(e), metaDeny);
   table('① 비로그인 → meta', env, (e) => ctx.unauth(e), metaDeny);
-  table('① 원장(비밀번호 로그인 + 허용 목록) → meta', env, (e) => ctx.director(e), [
+  table('① 원장(비밀번호 로그인 + 규칙의 원장 UID) → meta', env, (e) => ctx.director(e), [
     ['meta/settings 읽기', op.get('meta/settings'), 'ok'],
     ['meta/settings 쓰기', op.set('meta/settings', { x: 1 }, { merge: true }), 'ok'],
     ['meta/directors 읽기', op.get('meta/directors'), 'ok'],
@@ -38,7 +38,7 @@ suite('firestore.rules.phase1.proposed', (env) => {
     ['하위 컬렉션 조회', op.get(`monthlyReports/2026-09_${A}/versions/v1`)],
   ].map(([l, f]) => [l, f, 'deny']);
   table('④ 익명 학생 세션 → 월말 리포트', env, anon, mrCases);
-  table('④ 허용 목록에 없는 비밀번호 계정 → 월말 리포트', env, (e) => ctx.passwordNotDirector(e), mrCases);
+  table('④ 원장 UID 가 아닌 비밀번호 계정 → 월말 리포트', env, (e) => ctx.passwordNotDirector(e), mrCases);
   table('④ 익명 + claim 위조 → 월말 리포트', env, (e) => ctx.anonForgedDirector(e), mrCases);
   table('④ 비로그인 → 월말 리포트', env, (e) => ctx.unauth(e), mrCases);
   table('④ 원장 → 월말 리포트', env, (e) => ctx.director(e), [

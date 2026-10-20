@@ -105,6 +105,12 @@ describe('(라) 원장 UID 규칙 기재 방식 — 허용 목록 문서 변조�
   it('규칙에 적은 원장 UID + 비밀번호 로그인 → 원장 전용 경로 허용', () => dirOk(p1, 'dir1', 'password'));
   it('같은 UID 이지만 익명 공급자(위조) → 거부', () => dirNo(p1, 'dir1', 'anonymous'));
   it('다른 이메일/비밀번호 계정(UID 다름) → 거부', () => dirNo(p1, 'pw_other', 'password'));
+  it('같은 이메일(클레임)이지만 UID 가 다른 비밀번호 계정 → 거부(이메일이 아니라 UID 로 판정)', async () => {
+    const same = (uid) => p1.authenticatedContext(uid, { email: 'director@test.invalid', email_verified: true, firebase: { sign_in_provider: 'password', identities: { email: ['director@test.invalid'] } } }).firestore();
+    await assertSucceeds(op.get('meta/settings')(same('dir1')));
+    await assertFails(op.get('meta/settings')(same('other_uid_same_email')));
+    await assertFails(op.get('monthlyReports/2026-09_stu_aaaaaaaaaa')(same('other_uid_same_email')));
+  });
   it('UID 가 비슷한 계정(접두어·접미어 추가) → 거부', async () => { await dirNo(p1, 'dir', 'password'); await dirNo(p1, 'dir1x', 'password'); await dirNo(p1, 'xdir1', 'password'); });
   it('대소문자만 다른 UID → 거부', () => dirNo(p1, 'DIR1', 'password'));
   it('옛 규칙 구간에서 공격자가 meta/directors 에 자기 UID 를 넣어 둔 상황을 가정해도(문서 직접 시드) → 거부', async () => {
