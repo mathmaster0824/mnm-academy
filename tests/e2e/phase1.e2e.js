@@ -62,7 +62,7 @@ async function openApp(browser, { project, mode, email, storage }) {
   page.on('requestfailed', (r) => diag.push('REQFAILED ' + r.url().slice(0, 100) + ' ' + (r.failure() && r.failure().errorText)));
   page.on('console', (m) => { if (diag.length < 25) diag.push('CONSOLE.' + m.type() + ' ' + m.text().slice(0, 200)); });
   const perm = []; page.on('console', (m) => { if (m.type() === 'error' && /permission|insufficient/i.test(m.text())) perm.push(m.text().slice(0, 160)); });
-  page.on('dialog', (d) => d.accept());
+  page.dialogs = []; page.on('dialog', (d) => { page.dialogs.push(d.message().slice(0, 120)); d.accept(); });
   const html = patchedHtml(project, mode, email);
   // 패치한 HTML 은 로컬 서버(127.0.0.1:5173)가 내주고, 에뮬레이터 요청은 건드리지 않는다(CORS 사전 요청을 브라우저가 직접 처리).
   currentHtml = html;
@@ -117,12 +117,14 @@ async function studentFlow(page, label, expectCode) {
           currentView = 'home'; currentSubState = { subDate: date };
           renderSubmissionCard(A, false, false);
           if (currentSubState._draftSub) { currentSubState._draftSub.hwPhotos = []; currentSubState._draftSub.memo = '시험'; }
+          const keyInfo = JSON.stringify({ draftKey: currentSubState._draftSubKey, hasDraft: !!currentSubState._draftSub, subClassId: currentSubState.subClassId });
           try { await submitHomework(A, date); } catch (e) { return 'ERR ' + e.message; }
-          return 'done';
+          return 'done ' + keyInfo;
         }, [A, CLS]);
-        check('1단계 규칙: 학생 숙제 제출 함수 실행', sub === 'done', sub);
+        check('1단계 규칙: 학생 숙제 제출 함수 실행', /^done/.test(sub), sub);
+        console.log('E2E INFO submit ' + sub + ' dialogs=' + JSON.stringify(page.dialogs));
         const saved = await env1.withSecurityRulesDisabled(async (c) => (await F.getDoc(F.doc(c.firestore(), `submissions/${A}_2026-10-20`))).data());
-        check('1단계 규칙: 숙제 제출이 Firestore 에 저장됨(status=제출완료)', saved && saved.status === '제출완료' && saved.studentId === A, JSON.stringify(saved));
+        check('1단계 규칙: 숙제 제출이 Firestore 에 저장됨(status=제출완료)', saved && saved.status === '제출완료' && saved.studentId === A, JSON.stringify(saved) + ' all=' + JSON.stringify(await env1.withSecurityRulesDisabled(async (c) => (await F.getDocs(F.collection(c.firestore(), 'submissions'))).docs.map((d) => d.id))));
         check('1단계 규칙: 학생이 질문 올리기', (await tryOp(page, 'set', 'questions/qNew', { studentId: A, status: '대기', text: '시험', photos: [], answerText: '', answerPhotos: [] })) === 'ok');
         check('1단계 규칙: 학생이 공부 타이머 저장', (await tryOp(page, 'set', `timerState/${A}_2026-10-20`, { baseSeconds: 5 })) === 'ok');
         // 차단
@@ -199,7 +201,8 @@ async function studentFlow(page, label, expectCode) {
       check('현재 규칙·legacy 모드: 틀린 비밀번호 거부', await page.evaluate(() => !session && /올바르지/.test(document.getElementById('pwErr').textContent)));
       await page.fill('#pwInput', 'FAKE-PASSWORD-NOT-REAL');
       await page.evaluate(() => tryDirectorLogin());
-      check('현재 규칙·legacy 모드: 기존 방식 원장 로그인 그대로 동작', await page.evaluate(() => !!(session && session.mode === 'director')));
+      await page.waitForTimeout(500);
+      check('현재 규칙·legacy 모드: 기존 방식 원장 로그인 그대로 동작', await page.evaluate(() => !!(session && session.mode === 'director')), await page.evaluate(() => JSON.stringify({ s: session, pw: !!(db.settings && db.settings.adminPassword), len: db.settings && db.settings.adminPassword && db.settings.adminPassword.length, err: document.getElementById('pwErr').textContent, val: document.getElementById('pwInput').value.length })));
       await page.evaluate(() => logout());
       await studentFlow(page, '현재 규칙·legacy 모드', '1111');
       check('[현재 문제점 확인] 현재 규칙: 학생 세션이 meta/settings(원장 비밀번호) 읽기 가능', (await tryOp(page, 'get', 'meta/settings')) === 'ok');
