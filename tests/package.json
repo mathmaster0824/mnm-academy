@@ -1,1 +1,16 @@
-{ "name": "mnm-academy-tests", "private": true, "devDependencies": { "@firebase/rules-unit-testing": "^3.0.0", "firebase": "^10.13.2", "firebase-tools": "^13.0.0" } }
+{
+  "name": "mnm-academy-tests",
+  "private": true,
+  "description": "M&m 수학훈련소 테스트(규칙 테스트는 Firestore Emulator 필요, 가짜 데이터만 사용)",
+  "scripts": {
+    "test:rules": "firebase emulators:exec --config ../firebase.emulator.json --project demo-mnm-rules --only firestore \"node --test rules/*.test.js\"",
+    "test:rules:monthly": "firebase emulators:exec --config ../firebase.emulator.json --project demo-mnm --only firestore \"node firestore-rules.test.js\"",
+    "test:unit": "node monthly-report.test.js"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^3.0.0",
+    "firebase": "^10.13.2",
+    "firebase-tools": "^13.0.0"
+  },
+  "engines": { "node": ">=20" }
+}

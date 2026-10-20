@@ -1,0 +1,40 @@
+name: Firestore 규칙 테스트 (Emulator)
+
+# 운영 Firebase 프로젝트에는 접속하지 않는다. 가짜 프로젝트(demo-*)의 에뮬레이터에서 가짜 데이터로만 실행한다.
+# 비밀값(secrets)을 쓰지 않고, 배포 단계도 없다.
+on:
+  pull_request:
+    paths:
+      - 'security/**'
+      - 'tests/rules/**'
+      - 'tests/firestore-rules.test.js'
+      - 'tests/package.json'
+      - 'firebase.emulator.json'
+      - '.github/workflows/rules-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: 의존성 설치
+        working-directory: tests
+        run: npm ci --no-audit --no-fund
+      - name: 규칙 테스트 (기준선·1단계·2단계)
+        working-directory: tests
+        run: npm run test:rules
+      - name: 월말 리포트 잠금 규칙 테스트 (PR #11 제안안)
+        working-directory: tests
+        run: npm run test:rules:monthly
