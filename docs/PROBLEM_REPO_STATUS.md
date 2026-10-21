@@ -1,7 +1,7 @@
 # 문제저장소 — 현황과 다음 단계
 
 > 범위: 보안 작업(PR #11~#13)과 **별개**. 보안 범위는 넓히지 않았다. 브랜치 `fix/problem-repo-audit`(main 기준), PR #14 **draft**. 병합·배포·운영 Firebase 변경 없음.
-> 점검 방법: 브라우저(Playwright)에 **메모리 Firestore 가짜**와 **가짜 사진 서버**를 붙여 실제 `index.html` 함수를 실행(`tests/problem-repo.test.js`, 50개). 운영 Firebase·운영 Worker 접속 없음.
+> 점검 방법: 브라우저(Playwright)에 **메모리 Firestore 가짜**와 **가짜 사진 서버**를 붙여 실제 `index.html` 함수를 실행(`tests/problem-repo.test.js`, 55개). 운영 Firebase·운영 Worker 접속 없음.
 > **운영 앱에서의 PDF 수집 시험은 하지 않았다(원장님 결정, 2026-10-20) → 해당 항목은 전부 "미확인".**
 
 ## A. 항목별 상태 (정정판)
@@ -112,7 +112,7 @@
 5. **(별도, 보안)** 문제저장소 컬렉션을 원장 전용으로 닫는 작업은 질문→저장소 연결을 서버 처리로 옮긴 뒤에.
 
 ## 8. 시험 실행
-- `node tests/problem-repo.test.js` — 앱 흐름 50개. PDF 수집 시험은 `pdfjs-dist@4.10.38`(또는 `PDFJS_DIST_DIR=<…/pdfjs-dist/build>`)이 있어야 돌고 없으면 건너뛴다고 표시한다.
+- `node tests/problem-repo.test.js` — 앱 흐름 55개. PDF 수집 시험은 `pdfjs-dist@4.10.38`(또는 `PDFJS_DIST_DIR=<…/pdfjs-dist/build>`)이 있어야 돌고 없으면 건너뛴다고 표시한다.
 - `node tests/monthly-report.test.js`, `node tests/smoke-browser.js` — 기존 시험(회귀 없음 확인).
 - 합성 PDF 는 `tests/fixtures/`(README 참고). 개인정보·교재 내용 없음. 모든 시험은 가짜 서버만 쓰며 운영 서버에는 접속하지 않는다.
 
@@ -130,3 +130,33 @@
 | 텍스트로 문항 경계 찾기 | 후보 0 → AI 이미지 분리로 넘어감 | 후보 3개(1·2·3번), 경계품질 100%, **AI 분리(Worker) 요청 0회**. 문항 본문은 보존되고 앞의 "1." 번호만 제거 |
 | 전체 수집 흐름 | 가짜 서버가 있어야만 초안 3건 | **분리 요청 없이** 초안 3건, 정답 6·24·5 연결(가짜 서버는 사진 업로드 3건만 응답). **실제 Worker 의 동작은 미확인(이번 수정은 Worker 를 거치지 않는 경로)** |
 실패한 문항: 없음(이 파일 한정, 로컬 가짜 서버·개발 환경). 정답 연결과 문항 경계 3문항 모두 성공.
+
+## 11. PDF 수집 코드 흐름 단계별 점검 (2026-10-21) — 실제 앱 코드 vs 시험용 대체
+
+| 단계 | 앱 코드(함수) | 회귀 테스트에서 | 판정 |
+|---|---|---|---|
+| 1. PDF 선택 | `<input id="problemPdfAutoInput" onchange="autoIngestProblemPdf(this)">` | 기존: 함수를 직접 호출(입력 요소 우회). **추가**: 실제 입력 요소에 파일을 지정(`setInputFiles`)해 onchange→수집 확인, 입력칸 초기화 확인 | 앱 코드 실행 |
+| 2. PDF.js로 읽기 | `loadMnmPdfJs`(cdnjs 4.10.38) → `getDocument({data,cMapUrl})` → `getTextContent` | **실제 PDF.js 4.10.38 이 PDF 바이트를 파싱**. 주소만 가로채 로컬 npm 사본(같은 버전)을 응답. 파싱 결과를 미리 만든 값으로 대신하지 않음. **추가**: 모듈·워커 요청 횟수·버전 확인, 깨진 PDF 는 PDF.js 가 거부하는지 확인 | 앱+실제 PDF.js(로컬 사본) |
+| 3. 문제 쪽/정답표 쪽 구분 | `problemPdfPagePlan`, `problemPdfIsAnswerPageText`(줄 단위 제목) | 실제 코드 | 앱 코드 실행 |
+| 4. 문항 경계 | `problemPdfDetectNumberItems`→`problemPdfBuildRegions`(신뢰도 ≥65%) / 미달 시 `problemPdfVisionRegions`→Worker | 텍스트 경로는 실제 코드. Worker 폴백 경로는 **가짜 서버**(분리 응답을 내가 지정) | 텍스트=실제, Worker=가짜 |
+| 5. 정답 연결 | `problemPdfExtractAnswerCandidates`→`problemPdfExtractAnswerPairsFromItems`→`problemPdfAnswerNoKey` | 실제 코드. **추가**: 정답표 쪽이 없는 PDF 는 정답이 비어 검토 대상으로 남는지 | 앱 코드 실행 |
+| 6. 문항 이미지 | `problemPdfCropBlob`(canvas)→`storeProblemCropFile`→Worker `/upload` | canvas 크롭은 실제 Chromium. 업로드는 **가짜 서버**(저장 키만 응답) | 크롭=실제, 저장=가짜 |
+| 7. 데이터 저장 | `createProblemDraftsFromManifest`→`fsAdd('problemSources'/'problemDrafts')`, `supersedeOlderProblemSourceDrafts` | **가짜 메모리 Firestore**. 이전에는 `batch` 가 없어 이전 초안 정리 단계가 조용히 건너뛰어졌음 → 가짜에 `batch`·문서 참조 추가, 같은 파일 재수집 시험 추가 | 앱 코드=실제, 저장소=가짜 |
+
+그 밖의 대체: 로그인(`fauth` 토큰은 가짜 문자열), 확인창(`confirm`/`alert`)은 시험에서 자동 승인, 한글 글꼴 매핑표(CMap)는 로컬 파일, 가짜 Firestore 는 범위 조회(`idRangeQuery`)·`onSnapshot` 을 흉내 내지 않음.
+
+시험 민감도 확인: `problemPdfLeadingNumberCandidate` 가 항상 `null` 을 돌려주게 일시 변경하면(수정 취소) 번호+본문 한 덩어리 시험 3건이 실패함 → 회귀 시험이 이번 수정에 의존함(되돌려 원복).
+
+### 이번 점검에서 새로 드러난 한계(수정하지 않음)
+- **쪽 마지막 문항의 영역이 쪽 아래 끝(−22pt)까지 확장**된다(`problemPdfBuildRegions`: 다음 번호가 없으면 `p.height-22`). 합성 PDF 에서 2번 문항 본문 뒤에 쪽 하단 안내 문구("※ 이 자료는 …")가 문항 텍스트·이미지에 같이 들어갔다. 실제 교재의 쪽 번호·머리말·꼬리말·해설 구획이 같은 방식으로 섞이는지는 **실제 PDF 로만 판단 가능**해 추측해 고치지 않았다.
+
+### 실제 교재 PDF가 있어야 판단할 수 있는 항목 (개인정보 없는 1~2쪽)
+| 확인할 항목 | 왜 합성 PDF 로는 부족한가 |
+|---|---|
+| 쪽 하단(쪽 번호·꼬리말)·상단(머리말)이 마지막/첫 문항 텍스트·이미지에 섞이는지 | 합성 PDF 의 꼬리말 위치·글꼴이 실제 출판사 조판과 다름 |
+| 문항 번호 모양(`1.`, `01`, `[1]`, `문제 1`, 이중 추출 `0101` 등)과 본문 안의 "N. " 하위 항목이 경계로 잘못 잡히는지 | 이번에 넣은 "숫자. 본문" 규칙의 오탐 여부는 실제 조판에서만 드러남 |
+| 2단 조판(왼쪽·오른쪽 단) 순서와 단 경계 | 합성 PDF 는 1단뿐 |
+| 정답표 제목 문구("빠른 정답", "정답 및 해설" 등)와 표 모양, 해설이 섞인 쪽 | 실제 표 구조·열 배치가 다양함 |
+| 글자 추출 방식(글자 조각 분리, 글꼴 미포함, 수식 글리프) | 출판사 PDF 생성기마다 다름 |
+**요청 형식**: 개인정보·학생 정보가 없는 교재 쪽 **1~2쪽**(문제 쪽 1장 + 정답표 쪽 1장이면 가장 좋음)을 개발 환경에서만 분석합니다. 운영 앱·Worker 에는 올리지 않습니다.
+

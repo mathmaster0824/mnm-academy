@@ -9,7 +9,7 @@ const STUB = `(function(){
   window.__store = store;
   const clone = (o)=>JSON.parse(JSON.stringify(o));
   const col = (c)=> (store[c] = store[c] || {});
-  const snapOf = (c,id)=>{ const d=col(c)[id]; return {id, exists:d!==undefined, data:()=>d===undefined?undefined:clone(d), ref:null}; };
+  const snapOf = (c,id)=>{ const d=col(c)[id]; return {id, exists:d!==undefined, data:()=>d===undefined?undefined:clone(d), ref:{set:async(data,opts)=>{ const cur=col(c)[id]; col(c)[id]=(opts&&opts.merge&&cur)?{...cur,...clone(data)}:clone(data); }}}; };
   let seq = 0;
   function query(c, filters=[], order=null, lim=null, after=null){
     const q = {
@@ -43,6 +43,7 @@ const STUB = `(function(){
       }),
       add:async(data)=>{ const id='auto'+(++seq); col(c)[id]=clone(data); return {id}; },
     }),
+    batch:()=>{ const ops=[]; return { set:(ref,data,opts)=>{ ops.push(()=>ref.set(data,opts)); }, commit:async()=>{ for(const f of ops) await f(); } }; },
     enablePersistence:()=>Promise.resolve(), settings:()=>{},
   };
   window.firebase={initializeApp:()=>{},auth:()=>({onAuthStateChanged:()=>{},signInAnonymously:()=>Promise.resolve({}),currentUser:null}),
@@ -65,7 +66,9 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
   let pdfDir = process.env.PDFJS_DIST_DIR || '';
   if (!pdfDir) { try { const pj = require.resolve('pdfjs-dist/package.json'); if (require(pj).version === '4.10.38') pdfDir = path.join(path.dirname(pj), 'build'); } catch (e) { /* 미설치 */ } }
   if (pdfDir) {
+    worker.pdfjsRequests = { main: 0, worker: 0 };
     await page.route(/cdnjs\.cloudflare\.com\/ajax\/libs\/pdf\.js\/4\.10\.38\//, (r) => {
+      if (/pdf\.min\.mjs/.test(r.request().url())) worker.pdfjsRequests.main++; if (/pdf\.worker\.min\.mjs/.test(r.request().url())) worker.pdfjsRequests.worker++;
       const f = path.join(pdfDir, path.basename(new URL(r.request().url()).pathname));
       r.fulfill({ contentType: 'application/javascript', headers: { 'access-control-allow-origin': '*' }, body: fs.readFileSync(f) });
     });
@@ -325,6 +328,53 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
     console.log('PROBLEM-REPO INFO 스캔 PDF: ' + JSON.stringify(r14));
     check('스캔 PDF: AI 페이지 분리 요청 1회, 문항 3개 초안 저장', r14.segCalls === 1 && r14.n === 3 && r14.crops === 3, JSON.stringify(r14));
     check('스캔 PDF: 임시 페이지 이미지 1장 + 문항 이미지 3장 업로드, 임시 이미지 삭제 요청 1회', r14.uploads === 4 && r14.deletes === 1, JSON.stringify(r14));
+
+    // 14-2) 실제 PDF.js 를 거치는지: 앱이 받아 간 PDF.js 모듈·워커 요청 횟수와 버전(가짜 파싱 결과가 아니라 PDF 바이트를 PDF.js 가 읽는다)
+    const pj = await page.evaluate(async () => { const m = await loadMnmPdfJs(); return { version: m.version, hasGetDocument: typeof m.getDocument === 'function' }; });
+    check('PDF.js 4.10.38 모듈과 워커를 앱이 실제로 불러 파싱함(로컬 npm 사본으로 응답, 파싱 결과 대체 아님)', pj.version === '4.10.38' && pj.hasGetDocument && worker.pdfjsRequests.main >= 1 && worker.pdfjsRequests.worker >= 1, JSON.stringify({ pj, req: worker.pdfjsRequests }));
+
+    // 14-3) 깨진 PDF: 파서가 거부 → 중단 메시지, 초안·출처 추가 없음(파싱 결과를 미리 만든 값으로 대신하지 않는다는 증거)
+    const rBad = await page.evaluate(async () => {
+      const bytes = new TextEncoder().encode('%PDF-1.4\nthis is not a real pdf body\n%%EOF');
+      const dt = new DataTransfer(); dt.items.add(new File([bytes], 'broken.pdf', { type: 'application/pdf' }));
+      const d0 = Object.keys(window.__store.problemDrafts || {}).length, s0 = Object.keys(window.__store.problemSources || {}).length;
+      await autoIngestProblemPdf({ files: dt.files, value: '' });
+      return { status: document.getElementById('problemPdfAutoStatus').textContent, d: Object.keys(window.__store.problemDrafts || {}).length - d0, s: Object.keys(window.__store.problemSources || {}).length - s0 };
+    });
+    check('깨진 PDF: PDF.js 가 읽지 못해 "자동분리 중단", 초안·출처 추가 없음', /자동분리 중단/.test(rBad.status) && rBad.d === 0 && rBad.s === 0, JSON.stringify(rBad));
+
+    // 14-4) 정답표 쪽이 없는 PDF: 문항은 3개 저장되지만 정답은 비어 있어야 하고(문제 문장이 정답으로 들어가면 안 됨), 검토 대상으로 남는다
+    const rNo = await ingestFile('sample-cid-ko-noanswer.pdf', 'noanswer.pdf');
+    console.log('PROBLEM-REPO INFO 정답표 없는 PDF: ' + JSON.stringify(rNo));
+    check('정답표 없는 PDF: 문항 3개 저장, 정답은 모두 비어 있음(문제 문장을 정답으로 오인하지 않음)', rNo.n === 3 && rNo.answers.every((x) => !x.a) && rNo.segCalls === 0, JSON.stringify(rNo));
+
+    // 14-5) 실제 파일 선택 입력(<input id=problemPdfAutoInput>)의 onchange 연결로 수집: 함수 직접 호출이 아니라 화면 요소를 통과
+    const rInput = await (async () => {
+      await page.evaluate(() => { session = { mode: 'director' }; problemStore.tab = 'ingest'; currentView = 'problemRepo'; document.getElementById('loginScreen').style.display = 'none'; document.getElementById('appShell').style.display = 'block'; render(); });
+      const w0 = { up: worker.uploads.length };
+      const d0 = await page.evaluate(() => Object.keys(window.__store.problemDrafts || {}).length);
+      await page.setInputFiles('#problemPdfAutoInput', path.join(__dirname, 'fixtures', 'sample-cid-ko.pdf'));
+      await page.waitForFunction((d0) => Object.keys(window.__store.problemDrafts || {}).length >= d0 + 3, d0, { timeout: 60000 }); // 수집이 끝나면 화면이 다시 그려져 상태 문구가 지워지므로 저장된 초안 수로 판단
+      return page.evaluate((d0) => ({ status: 'input-onchange', added: Object.keys(window.__store.problemDrafts || {}).length - d0, inputReset: document.getElementById('problemPdfAutoInput').value === '' }), d0);
+    })();
+    check('파일 선택 입력(onchange)으로 수집: 문항 3개 저장, 입력칸은 초기화(같은 파일을 다시 고를 수 있음)', rInput.added === 3 && rInput.inputReset, JSON.stringify(rInput));
+
+    // 14-6) 같은 파일을 다시 수집: 이전 초안은 superseded, 이미 저장(status:saved)된 초안은 건드리지 않음
+    const rRe = await page.evaluate(async (b64) => {
+      const store = window.__store;
+      const mine = (name) => Object.entries(store.problemSources || {}).filter(([, v]) => v.fileName === name).map(([id]) => id);
+      const firstIds = mine('cid-sample.pdf'); // 13-3 에서 한 번 수집됨(+ 14-5 에서 같은 이름이 아니라 sample-cid-ko.pdf 로 별도)
+      const firstDrafts = Object.entries(store.problemDrafts).filter(([, d]) => firstIds.includes(d.sourceId));
+      if (firstDrafts[0]) store.problemDrafts[firstDrafts[0][0]].status = 'saved'; // 하나는 이미 문제저장소에 저장한 것으로 표시
+      const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const dt = new DataTransfer(); dt.items.add(new File([bin], 'cid-sample.pdf', { type: 'application/pdf' }));
+      await autoIngestProblemPdf({ files: dt.files, value: '' });
+      const ids2 = mine('cid-sample.pdf');
+      const sup = Object.values(store.problemDrafts).filter((d) => firstIds.includes(d.sourceId));
+      return { firstSources: firstIds.length, nowSources: ids2.length, supersededCount: sup.filter((d) => d.status === 'superseded').length, savedKept: sup.filter((d) => d.status === 'saved').length, total: sup.length,
+        oldSourceMarked: firstIds.every((id) => !!store.problemSources[id].supersededBy) };
+    }, require('fs').readFileSync(path.join(__dirname, 'fixtures', 'sample-cid-ko.pdf')).toString('base64'));
+    check('같은 파일 재수집: 이전 출처는 대체 표시, 이전 초안은 superseded, 이미 저장(saved)한 초안은 그대로', rRe.nowSources === rRe.firstSources + 1 && rRe.oldSourceMarked && rRe.savedKept === 1 && rRe.supersededCount === rRe.total - 1, JSON.stringify(rRe));
   }
 
   // 15) 정답 표기 차이: PDF 정답표는 ③ 로 저장되지만 학생 답지 입력은 1~5 숫자 → 같은 답으로 채점되어야 한다
