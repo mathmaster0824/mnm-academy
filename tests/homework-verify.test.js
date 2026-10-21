@@ -82,9 +82,12 @@ const LESSON = '2026-10-14', MON = '2026-10-12', TUE = '2026-10-13';
 
   // 5) 기기로 제출한 학생 B: 인증 해제는 검토대기(사진·제출시각 보존), 다시 인증은 일반 인정(직접 확인으로 표시하지 않음)
   await page.evaluate(() => { window.__who = 'stu_b'; window.__draw(); });
+  const b0 = await store('stu_b_' + MON);
   await badge(MON).click(); await page.waitForTimeout(150);
   const b1 = await store('stu_b_' + MON);
-  check('B(기기 제출 있음) 인증→미인증: status=대기, 사진·제출시각 그대로, verifyMethod 없음', b1 && b1.status === '대기' && b1.hwPhotos[0] === 'photo-b.jpg' && b1.submittedAt === '2026-10-12T10:00:00.000Z' && !b1.verifyMethod, JSON.stringify(b1));
+  const bShown = await badge(MON).textContent(), bLabel = await page.evaluate(([MON]) => homeworkReviewLabel(db.submissions['stu_b_' + MON], MON, 'stu_b') + '|' + homeworkCountsAsCompleted(db.submissions['stu_b_' + MON], MON), [MON]);
+  const keep = (o) => JSON.stringify(Object.fromEntries(Object.entries(o).filter(([k]) => !['status', 'reviewedAt', 'reviewReason'].includes(k)).sort()));
+  check('B(기기 제출 있음) 반별 카드 O→X: status=미인증, 칸에 ×·라벨 "미인증"·완료 아님, 사진·제출시각·그 밖의 제출 기록은 한 글자도 바뀌지 않음, verifyMethod 없음', b0 && b1 && b1.status === '미인증' && bShown.includes('×') && !bShown.includes('○') && bLabel === '미인증|false' && keep(b1) === keep(b0) && b1.hwPhotos[0] === 'photo-b.jpg' && b1.submittedAt === '2026-10-12T10:00:00.000Z' && !b1.verifyMethod, JSON.stringify({ b0, b1, bShown, bLabel }));
   await badge(MON).click(); await page.waitForTimeout(150);
   const b2 = await store('stu_b_' + MON);
   const bl = await page.evaluate(([MON]) => homeworkReviewLabel(db.submissions['stu_b_' + MON], MON, 'stu_b') + '|' + homeworkIsTeacherDirect(db.submissions['stu_b_' + MON]), [MON]);
@@ -179,7 +182,7 @@ const LESSON = '2026-10-14', MON = '2026-10-12', TUE = '2026-10-13';
   await page.evaluate(() => { window.__who = 'stu_b'; window.__draw2(); });
   await dBadge(D1).click(); await page.waitForTimeout(150);
   const b9 = await store('stu_b_' + D1), xb = await both(D1);
-  check('B(기기 제출)를 상세에서 미인증으로: status=대기, 사진·제출시각 보존, 양쪽 모두 검토대기(△)', b9 && b9.status === '대기' && b9.hwPhotos[0] === 'photo-b.jpg' && b9.submittedAt === D1 + 'T10:00:00.000Z' && !b9.verifyMethod && xb.dt.includes('검토대기') && xb.c.includes('△'), JSON.stringify({ b9, xb }));
+  check('B(기기 제출)를 상세에서 미인증으로: status=미인증, 사진·제출시각 보존, 양쪽 모두 미인증(×)', b9 && b9.status === '미인증' && b9.hwPhotos[0] === 'photo-b.jpg' && b9.submittedAt === D1 + 'T10:00:00.000Z' && !b9.verifyMethod && xb.dt.includes('미인증') && xb.c.includes('×') && !xb.c.includes('△'), JSON.stringify({ b9, xb }));
   await cBadge(D1).click(); await page.waitForTimeout(150);
   const b10 = await store('stu_b_' + D1), xb2 = await both(D1);
   check('B 를 반별 카드에서 다시 인증: 사진 보존, "선생님 직접 확인"이 아니라 일반 인정으로 양쪽 동일 표시', b10.status === '확인' && b10.hwPhotos[0] === 'photo-b.jpg' && !b10.verifyMethod && xb2.dt.includes('인정') && !xb2.dt.includes('직접') && xb2.c.includes('○') && !xb2.c.includes('직접'), JSON.stringify({ b10, xb2 }));
@@ -214,6 +217,20 @@ const LESSON = '2026-10-14', MON = '2026-10-12', TUE = '2026-10-13';
   await mountBoth();
   const after = { D1: strip(await both(D1)), D2: strip(await both(D2)) };
   check('실제 새로고침 후에도 저장된 상태가 유지되고 반별 카드·상세 표가 서로 일치(D1 인증 ↔ D2 인증)', JSON.stringify(after) === JSON.stringify(expectD) && after.D1.dt.includes('선생님 직접 확인') && after.D2.dt.includes('선생님 직접 확인') && after.D1.c.includes('직접'), JSON.stringify({ expectD, after }));
+
+  // 9-9) 기기로 제출한 학생 B: 반별 카드에서 O→X 저장 → 실제 새로고침 → 저장값만으로 다시 그려도 ×, 사진·제출시각 보존
+  await mountBoth(); await page.evaluate(() => { window.__who = 'stu_b'; window.__draw2(); });
+  const bBefore = await store('stu_b_' + D1);
+  check('(준비) B 의 D1 은 인정(○) 상태', (await cBadge(D1).textContent()).includes('○') && bBefore.status === '확인');
+  await cBadge(D1).click(); await page.waitForTimeout(150);
+  const saved2 = await page.evaluate(() => JSON.parse(JSON.stringify(window.__store.submissions)));
+  await page.reload(); await page.waitForTimeout(800);
+  await setupApp(saved2);
+  await page.evaluate(async () => { db.submissions = {}; const snap = await fsdb.collection('submissions').get(); snap.docs.forEach((d) => { db.submissions[d.id] = d.data(); }); });
+  await mountBoth(); await page.evaluate(() => { window.__who = 'stu_b'; window.__draw2(); });
+  const bAfter = await store('stu_b_' + D1), bx = await both(D1);
+  const same = (o) => JSON.stringify(Object.fromEntries(Object.entries(o).filter(([k]) => !['status', 'reviewedAt', 'reviewReason'].includes(k)).sort()));
+  check('새로고침 후에도 B 의 O→X 유지: 반별 카드 ×·상세 미인증, 사진·제출시각 등 제출 기록 그대로', bAfter.status === '미인증' && bx.c.includes('×') && !bx.c.includes('○') && bx.dt.includes('미인증') && bAfter.hwPhotos[0] === 'photo-b.jpg' && same(bAfter) === same(bBefore), JSON.stringify({ bBefore, bAfter, bx }));
 
   check('페이지 오류 없음', errs.length === 0, errs.join('|'));
   await browser.close();

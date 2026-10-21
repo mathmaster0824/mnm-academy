@@ -4653,7 +4653,7 @@ async function applyHomeworkReviewPatch(stuId,date,patch,btn){
 /* ---- 선생님이 학생별·날짜별 숙제 확인 상태를 직접 바꾸기(인증 ↔ 미인증) ----
    - 저장 위치: 기존과 같은 submissions/<학생(또는 반 슬롯)ID>_<날짜> 문서 1건만 쓴다(다른 학생·날짜·반 문서는 건드리지 않음).
    - 기기로 낸 제출이 없으면 새 문서를 만들며 verifyMethod:'teacher-direct' 로 '선생님이 직접 확인'임을 표시한다(사진·제출시각 없음).
-   - 학생이 낸 제출이 있으면 사진·시각 등은 그대로 두고 status 만 바꾼다(인증→'확인', 해제→기존 '대기'=검토대기). */
+   - 학생이 낸 제출이 있으면 사진·시각 등은 그대로 두고 status 만 바꾼다(인증→'확인', 해제→'미인증'=×). */
 const hwVerifyUi={};   // '학생|반|날짜' -> {state:'saving'|'saved'|'error', msg}
 function hwVerifyUiKey(stuId,clsId,date){ return stuId+'|'+clsId+'|'+date; }
 function homeworkSubmittedByStudent(sub){
@@ -4686,9 +4686,9 @@ function homeworkVerifyPatch(existing,wantVerified,stuId,clsId,date){
   if(wantVerified){
     Object.assign(p,{status:'확인',reviewReason:'',reviewedAt:iso});
     if(!homeworkSubmittedByStudent(existing)){ p.verifyMethod='teacher-direct'; p.verifiedAt=iso; }
-  }else if(homeworkSubmittedByStudent(existing)){
-    Object.assign(p,{status:'대기',reviewReason:'',reviewedAt:null});
   }else{
+    // 기기로 제출한 기록이어도 선생님 확인 상태만 '미인증'(×)으로 바꾼다. 사진·제출시각 등 제출 기록은 patch 에 넣지 않으므로 그대로 남는다.
+    // (학생이 다시 제출하면 기존 흐름대로 '제출완료'가 되어 다시 인정된다.)
     Object.assign(p,{status:'미인증',reviewReason:'',reviewedAt:iso});
   }
   return p;
