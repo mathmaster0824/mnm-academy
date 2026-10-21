@@ -7964,30 +7964,59 @@ function problemPdfBuildRegions(plans){
 // 보수적 규칙: (1) 문항 안 글 줄 사이에 쪽 높이의 25% 이상 빈틈이 있고 (2) 그 뒤의 글이 모두 쪽 아래 20% 구역에만 있을 때만 그 틈에서 자른다.
 // 빈틈 안에 그림(화면에 그려진 어두운 픽셀 3행 이상)이 있으면 그림 끝까지는 남긴다. 조건이 하나라도 안 맞으면 자르지 않는다(그림·소문항 손실 방지).
 const PROBLEM_PDF_TRAIL_GAP=.25, PROBLEM_PDF_TRAIL_ZONE=.80;
-function problemPdfTrailingCut(items,region,pageHeight){
-  const rows=[];
+// 꼬리말 구역 규칙: 쪽 아래 8% 안의 줄이 (a) 쪽 번호 모양("3", "1 / 2", "- 3 -", "3쪽")이거나, (b) 다른 쪽의 같은 위치(±3pt, ±8pt)에도 글이 있거나(반복되는 꼬리말), (c) 쪽 아래 4% 안이면 꼬리말로 본다.
+// 꼬리말은 큰 빈틈이 없어도 문항에서 제외한다. 본문과 꼬리말 사이(빈틈)에 그림이 있으면 아래 ink 검사로 남긴다.
+const PROBLEM_PDF_FOOTER_BAND=.92, PROBLEM_PDF_FOOTER_EDGE=.96;
+const PROBLEM_PDF_PAGE_NUMBER_RE=/^\s*[-–—]?\s*\d{1,4}\s*(?:\/\s*\d{1,4})?\s*(?:쪽|페이지|p|P|page|Page)?\s*[-–—]?\s*$/;
+function problemPdfFooterRecurrence(plans){
+  const bottom=new Map();   // 쪽 번호 -> 아래 구역 글 위치 목록
+  for(const p of plans||[]){
+    const list=[];
+    for(const it of p.items||[]){
+      if(!String(it.str||'').trim()) continue;
+      const tr=it.transform||[], yb=p.height-Number(tr[5]||0), x=Number(tr[4]||0);
+      if(Number.isFinite(yb)&&Number.isFinite(x)&&yb>=PROBLEM_PDF_FOOTER_BAND*p.height) list.push({yb,x});
+    }
+    bottom.set(p.pageNo,list);
+  }
+  return (pageNo,it,pageHeight)=>{
+    if(bottom.size<2) return false;   // 한 쪽짜리 PDF 는 반복 여부를 알 수 없다
+    const tr=it.transform||[], yb=pageHeight-Number(tr[5]||0), x=Number(tr[4]||0);
+    for(const [n,list] of bottom) if(n!==pageNo&&list.some(o=>Math.abs(o.yb-yb)<=3&&Math.abs(o.x-x)<=8)) return true;
+    return false;
+  };
+}
+function problemPdfTrailingCut(items,region,pageHeight,opts){
+  const recur=opts&&opts.recur, rows=[];
   for(const it of items||[]){
     const str=String(it.str||'').trim(); if(!str) continue;
     const tr=it.transform||[], x=Number(tr[4]||0), yb=pageHeight-Number(tr[5]||0);
     const h=Math.abs(Number(it.height||tr[3]||10))||10;
     if(!Number.isFinite(x)||!Number.isFinite(yb)) continue;
     if(x<region.x0+8||x>region.x1-4||yb<region.y0) continue;
-    rows.push({yb,top:yb-h*.9,bottom:yb+h*.25});
+    rows.push({yb,x,str,top:yb-h*.9,bottom:yb+h*.25,recur:!!(recur&&recur(it))});
   }
-  rows.sort((a,b)=>a.yb-b.yb);
+  rows.sort((a,b)=>a.yb-b.yb||a.x-b.x);
   const lines=[];
   for(const r of rows){
     const l=lines[lines.length-1];
-    if(l&&Math.abs(r.yb-l.yb)<=4){ l.top=Math.min(l.top,r.top); l.bottom=Math.max(l.bottom,r.bottom); }
-    else lines.push({yb:r.yb,top:r.top,bottom:r.bottom});
+    if(l&&Math.abs(r.yb-l.yb)<=4){ l.top=Math.min(l.top,r.top); l.bottom=Math.max(l.bottom,r.bottom); l.text+=r.str; l.recur=l.recur||r.recur; }
+    else lines.push({yb:r.yb,top:r.top,bottom:r.bottom,text:r.str,recur:r.recur});
   }
-  for(let i=0;i<lines.length-1;i++){
+  let a=null, b=null;
+  // 규칙 A: 큰 빈틈(쪽 높이 25%↑) 뒤의 글이 모두 쪽 아래 20% 구역
+  for(let i=0;i<lines.length-1&&!a;i++){
     if(lines[i+1].top-lines[i].bottom<PROBLEM_PDF_TRAIL_GAP*pageHeight) continue;
-    if(lines.slice(i+1).every(l=>l.top>=PROBLEM_PDF_TRAIL_ZONE*pageHeight)) return {lastBodyBottom:lines[i].bottom,trailStart:lines[i+1].top,trailLines:lines.length-1-i};
+    if(lines.slice(i+1).every(l=>l.top>=PROBLEM_PDF_TRAIL_ZONE*pageHeight)) a={lastBodyBottom:lines[i].bottom,trailStart:lines[i+1].top,trailLines:lines.length-1-i,rule:'gap'};
   }
-  return null;
+  // 규칙 B: 맨 끝의 줄들이 꼬리말(쪽 번호 모양·반복 위치·맨 아래 4%)
+  const isFooter=l=>l.yb>=PROBLEM_PDF_FOOTER_BAND*pageHeight&&(l.yb>=PROBLEM_PDF_FOOTER_EDGE*pageHeight||l.recur||PROBLEM_PDF_PAGE_NUMBER_RE.test(l.text));
+  let f=lines.length; while(f>1&&isFooter(lines[f-1])) f--;
+  if(f<lines.length) b={lastBodyBottom:lines[f-1].bottom,trailStart:lines[f].top,trailLines:lines.length-f,rule:'footer'};
+  if(a&&b) return a.trailStart<=b.trailStart?a:b;
+  return a||b;
 }
-async function problemPdfInkRuns(page,x0,x1,yFrom,yTo){
+async function problemPdfInkRuns(page,x0,x1,yFrom,yTo,thr=215){
   const vp=page.getViewport({scale:1}), canvas=document.createElement('canvas');
   canvas.width=Math.ceil(vp.width); canvas.height=Math.ceil(vp.height);
   const ctx=canvas.getContext('2d',{alpha:false,willReadFrequently:true}); ctx.fillStyle='#fff'; ctx.fillRect(0,0,canvas.width,canvas.height);
@@ -7996,7 +8025,7 @@ async function problemPdfInkRuns(page,x0,x1,yFrom,yTo){
   if(xb<=xa||yb<=ya) return [];
   const w=xb-xa, data=ctx.getImageData(xa,ya,w,yb-ya).data, rows=[];
   for(let y=0;y<yb-ya;y++){
-    let n=0; for(let x=0;x<w;x++){ const i=(y*w+x)*4; if(data[i]*.3+data[i+1]*.59+data[i+2]*.11<215) n++; }
+    let n=0; for(let x=0;x<w;x++){ const i=(y*w+x)*4; if(data[i]*.3+data[i+1]*.59+data[i+2]*.11<thr) n++; }
     rows.push(n>=2);
   }
   const runs=[]; let st=-1;
@@ -8007,15 +8036,18 @@ async function problemPdfInkRuns(page,x0,x1,yFrom,yTo){
   return runs;
 }
 async function problemPdfTrimTrailingRegions(pages,plans,regions){
-  const last=new Map();
+  const recurs=problemPdfFooterRecurrence(plans), last=new Map();
   for(const r of regions){ const k=r.page+'|'+(r.column||'FULL'), cur=last.get(k); if(!cur||r.y0>cur.y0) last.set(k,r); }
   for(const r of last.values()){
     try{
       const plan=plans.find(p=>p.pageNo===r.page); if(!plan) continue;
-      const cut=problemPdfTrailingCut(plan.items,r,plan.height); if(!cut) continue;
+      const cut=problemPdfTrailingCut(plan.items,r,plan.height,{recur:it=>recurs(plan.pageNo,it,plan.height)}); if(!cut) continue;
       const runs=await problemPdfInkRuns(pages[r.page],r.x0,r.x1,cut.lastBodyBottom+1,cut.trailStart-2);
       const figBottom=runs.length?Math.max(...runs.map(x=>x.bottom)):0;
-      const nb=Math.max(cut.lastBodyBottom,figBottom)+8;
+      // 마지막 본문 줄에 바로 이어지는 옅은 음영 영역(안내 상자 등)은 끝까지 포함해 가장자리가 잘리지 않게 한다
+      const light=await problemPdfInkRuns(pages[r.page],r.x0,r.x1,cut.lastBodyBottom+1,cut.trailStart-2,250);
+      const touch=light.find(x=>x.top<=cut.lastBodyBottom+6), boxBottom=touch?touch.bottom:0;
+      const nb=Math.min(Math.max(cut.lastBodyBottom,figBottom,boxBottom)+8,cut.trailStart-2);
       const y1=Math.min(r.y1,Math.max(nb,r.y0+55));
       if(y1<r.y1){ r.y1=y1; r.trailingTrimmed=true; }
     }catch(e){ console.warn('problem region trailing trim skipped',e); }
@@ -8116,8 +8148,21 @@ function problemPdfRegionText(items,region,pageHeight){
 
 const PROBLEM_PDF_ANSWER_TITLE_RE=/정답표|빠른\s*정답|빠른\s*답|정답\s*(?:및|과)\s*해설|정답\s*및\s*풀이|답안표|정답\s*모음|해답/i;
 // 같은 줄(y 좌표가 거의 같은 text item 들)을 붙여 한 줄 글로 만든다. 글자 조각마다 item 이 나뉜 PDF 도 한 줄이 된다.
+// 글 폭(w)을 아는 경우 앞 글 끝과 다음 글 시작 사이가 PROBLEM_PDF_LINE_BREAK_GAP 보다 넓으면 다른 덩어리로 나눈다
+// (꼬리말의 왼쪽 안내문과 오른쪽 끝 라벨이 한 줄로 이어 붙어 제목처럼 보이는 것을 막는다). 글 조각이 맞붙은 PDF 는 간격이 거의 0이라 한 줄로 유지된다.
+const PROBLEM_PDF_LINE_BREAK_GAP=18;
 function problemPdfAnswerTextLines(items){
-  return problemPdfGroupAnswerRows(items).map(r=>r.items.map(i=>i.text).join(''));
+  const out=[];
+  for(const r of problemPdfGroupAnswerRows(items)){
+    let cur=[], prevEnd=null;
+    for(const it of r.items){
+      if(cur.length&&prevEnd!==null&&it.w!==null&&it.x-prevEnd>PROBLEM_PDF_LINE_BREAK_GAP){ out.push(cur.join('')); cur=[]; }
+      cur.push(it.text);
+      prevEnd=it.w!==null?it.x+it.w:null;
+    }
+    if(cur.length) out.push(cur.join(''));
+  }
+  return out;
 }
 // 정답표 '제목' 줄: 짧고, 문장이 아니어야 한다. "정답은 마지막 쪽의 정답표에서 확인하세요." 같은 안내 문장은 제목이 아니다.
 function problemPdfLineIsAnswerTitle(line){
@@ -8141,7 +8186,7 @@ async function problemPdfPagePlan(page,pageNo){
   const items=tc.items||[], pageText=items.map(x=>String(x.str||'')).join(' ');
   return {
     pageNo,width:viewport.width,height:viewport.height,items,pageText,
-    isAnswerPage:problemPdfIsAnswerPageText(pageText,problemPdfAnswerTextLines(items.map(x=>({text:x.str,x:x.transform?.[4],y:x.transform?.[5]})))),
+    isAnswerPage:problemPdfIsAnswerPageText(pageText,problemPdfAnswerTextLines(items.map(x=>({text:x.str,x:x.transform?.[4],y:x.transform?.[5],w:x.width})))),
     candidates:problemPdfDetectNumberItems(items,viewport)
   };
 }
@@ -8271,7 +8316,7 @@ function problemPdfCleanAnswerText(v){
 }
 function problemPdfGroupAnswerRows(items){
   const clean=(items||[]).filter(x=>String(x.text||'').trim()).map(x=>({
-    text:String(x.text||'').trim(), x:Number(x.x||0), y:Number(x.y||0)
+    text:String(x.text||'').trim(), x:Number(x.x||0), y:Number(x.y||0), w:Number.isFinite(Number(x.w))&&x.w!==null&&x.w!==''?Number(x.w):null
   })).sort((a,b)=>Math.abs(a.y-b.y)>5?b.y-a.y:a.x-b.x);
   const rows=[];
   for(const it of clean){
@@ -8348,7 +8393,8 @@ async function problemPdfExtractAnswerCandidates(pdf){
     const items=(tc.items||[]).map(it=>({
       text:String(it.str||'').trim(),
       x:Number(it.transform?.[4]||0),
-      y:Number(it.transform?.[5]||0)
+      y:Number(it.transform?.[5]||0),
+      w:it.width
     }));
     const pageText=items.map(x=>x.text).join(' ');
     if(!problemPdfIsAnswerPageText(pageText,problemPdfAnswerTextLines(items))) continue;

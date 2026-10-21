@@ -399,6 +399,49 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
     check('그림이 있는 마지막 문항: 영역이 그림 아래 끝(쪽 위에서 약 412pt)까지는 포함하고 안내 상자(약 686pt) 앞에서 끝남', gG.trimmed[2] >= 412 && gG.trimmed[2] < 680 && gG.flags[2] === true, JSON.stringify(gG));
     check('그림 PDF: 문항 3개, 3번 본문에 안내·꼬리말 없음, 정답 6·24cm²·5', rG.n === 3 && rG.texts[2].t === '25의 20%는 얼마인지 구하세요.' && rG.answers.map((x) => x.a).join() === '6,24cm²,5', JSON.stringify({ t: rG.texts, a: rG.answers }));
 
+    // 14-8) 번호('1번')와 본문이 다른 item · 그림+음영 안내 상자 · 꼬리말 줄(왼쪽 "정답 및 해설" 언급 안내문 + 오른쪽 끝 라벨) · 쪽 번호('1 / 2') · 'x = 5'/위첨자 정답
+    const rB = await ingestFile('sample-boundary-ko.pdf', 'boundary-sample.pdf');
+    const gB = await regionsOf('sample-boundary-ko.pdf');
+    console.log('PROBLEM-REPO INFO 경계 배치 PDF: ' + JSON.stringify({ n: rB.n, answers: rB.answers.map((x) => x.a), texts: rB.texts, segCalls: rB.segCalls, geo: gB }));
+    check('꼬리말 줄에 "정답 및 해설" 안내문이 있어도 문제 쪽을 정답 쪽으로 오인하지 않음: 문항 3개, AI 분리 요청 0회', rB.n === 3 && rB.segCalls === 0 && !/중단/.test(rB.status), JSON.stringify(rB));
+    check('정답표 연결: 1번 x=5, 2번 25cm²(위첨자 보존), 3번 24cm', rB.answers.map((x) => x.a).join() === 'x=5,25cm²,24cm', JSON.stringify(rB.answers));
+    check('마지막 문항 본문에 꼬리말 안내·오른쪽 라벨·쪽 번호가 섞이지 않고, 그림 치수 글자·딸린 안내는 남음', !/다음 쪽|연습 자료|1\/2|1 \/ 2/.test(rB.texts[2].t) && /8cm/.test(rB.texts[2].t) && /4cm/.test(rB.texts[2].t) && /풀이 과정/.test(rB.texts[2].t), JSON.stringify(rB.texts[2]));
+    check('마지막 문항 영역: 쪽 끝(820)이 아니라 그림·안내 상자 아래(약 616)까지, 꼬리말(약 790) 앞에서 끝남', gB.untrimmed[2] > 800 && gB.trimmed[2] >= 614 && gB.trimmed[2] < 700 && gB.flags[2] === true && gB.flags[0] === false && gB.flags[1] === false, JSON.stringify(gB));
+
+    // 같은 줄이라도 가로로 멀리 떨어진 글은 다른 덩어리: 제목 판정 단위 시험
+    const rL = await page.evaluate(() => {
+      const L = (arr) => problemPdfAnswerTextLines(arr.map(([text, x, y, w]) => ({ text, x, y, w })));
+      const note = L([['※ 정답 및 해설은 다음 쪽에서 확인하세요.', 52, 52, 200], ['연습 자료', 509, 52, 40]]);
+      const head = L([['정답 및 해설', 52, 784, 80], ['가상 시험 자료', 399, 786, 70]]);
+      const glyph = L([['정', 37, 760, 12], ['답', 49, 760, 12], ['및', 62, 760, 12], ['해', 76, 760, 12], ['설', 88, 760, 12]]);
+      const noW = L([['정답 및 해설', 52, 784], ['가상 시험 자료', 399, 786]]);
+      const f = problemPdfIsAnswerPageText;
+      return { noteLines: note.length, noteIsAnswerPage: f('x', note), headLines: head.length, headIsAnswerPage: f('x', head), glyphLines: glyph.length, glyphIsAnswerPage: f('x', glyph), noWLines: noW.length };
+    });
+    check('왼쪽 안내문과 오른쪽 끝 라벨은 다른 덩어리로 나뉘어 안내문이 제목으로 오인되지 않음, 제목+오른쪽 머리글은 제목 인정, 맞붙은 글자 조각은 한 줄 유지, 글 폭 정보가 없으면 종전처럼 한 줄', rL.noteLines === 2 && rL.noteIsAnswerPage === false && rL.headLines === 2 && rL.headIsAnswerPage === true && rL.glyphLines === 1 && rL.glyphIsAnswerPage === true && rL.noWLines === 1, JSON.stringify(rL));
+
+    // 꼬리말 구역 규칙 단위 시험
+    const rFt = await page.evaluate(() => {
+      const H = 842, reg = { x0: 0, x1: 595, y0: 100 };
+      const it = (str, yb, x = 66) => ({ str, transform: [12, 0, 0, 12, x, H - yb], height: 12 });
+      const mkPlan = (pageNo, arr) => ({ pageNo, height: H, items: arr });
+      const rec = problemPdfFooterRecurrence([mkPlan(1, [it('꼬리말', 790, 52)]), mkPlan(2, [it('다른 꼬리말', 790, 52)])]);
+      const rec1 = problemPdfFooterRecurrence([mkPlan(1, [it('꼬리말', 790, 52)])]);
+      const cut = (items, opts) => problemPdfTrailingCut(items, reg, H, opts);
+      return {
+        recurSame: rec(1, it('x', 790, 52), H), recurNear: rec(1, it('x', 792, 59), H), recurFar: rec(1, it('x', 796, 52), H), recurSinglePage: rec1(1, it('x', 790, 52), H),
+        pageNoOnly: cut([it('3번', 700), it('본문', 700, 95), it('1 / 2', 790, 287)]),
+        pageNoPlain: cut([it('본문', 700), it('- 3 -', 790, 287)]),
+        recurFooter: cut([it('본문', 300), it('안내', 600), it('아래 꼬리말', 790, 52)], { recur: (i) => i.str === '아래 꼬리말' }),
+        edgeBand: cut([it('본문', 500), it('안내', 600), it('맨 아래 글', 815)]),
+        bodyInBand: cut([it('본문', 700), it('몇 줄 아래 본문 문장', 790)]),
+        bodyNumberAbove: cut([it('본문', 600), it('12', 700)]),
+      };
+    });
+    check('반복 위치 판정: 같은 위치·±3pt/±8pt 안은 반복, 그보다 멀면 아님, 한 쪽짜리 PDF 는 판단 안 함', rFt.recurSame === true && rFt.recurNear === true && rFt.recurFar === false && rFt.recurSinglePage === false, JSON.stringify(rFt));
+    check('꼬리말 규칙: 쪽 번호 모양(1 / 2, - 3 -)·반복 위치 줄·맨 아래 4% 글은 큰 빈틈이 없어도 잘라냄', rFt.pageNoOnly && rFt.pageNoOnly.rule === 'footer' && rFt.pageNoOnly.trailLines === 1 && rFt.pageNoPlain && rFt.pageNoPlain.rule === 'footer' && rFt.recurFooter && rFt.recurFooter.rule === 'footer' && rFt.recurFooter.trailLines === 1 && rFt.recurFooter.lastBodyBottom > 600 && rFt.edgeBand && rFt.edgeBand.rule === 'footer' && rFt.edgeBand.trailLines === 1, JSON.stringify(rFt));
+    check('아래 8% 구역이라도 쪽 번호 모양·반복·맨 아래 4%가 아닌 본문 문장, 쪽 중간의 숫자 줄은 자르지 않음', rFt.bodyInBand === null && rFt.bodyNumberAbove === null, JSON.stringify(rFt));
+
     // 정리 규칙 단위 시험: 조건이 안 맞으면 자르지 않는다
     const rT = await page.evaluate(() => {
       const H = 842, reg = { x0: 0, x1: 595, y0: 100 };
@@ -409,12 +452,14 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
         smallGap: cut([it('3. 본문', 280), it('(1) 소문항', 360), it('(2) 소문항', 440)]),
         gapButMidPage: cut([it('3. 본문', 200), it('(1) 그림 뒤 소문항', 520)]),
         gapMidThenBottom: cut([it('3. 본문', 200), it('(1) 중간', 450), it('꼬리말', 810)]),
-        footerOnlyNoBigGap: cut([it('3. 본문', 600), it('꼬리말', 810)]),
+        footerOnlyNoBigGap: cut([it('3. 본문', 600), it('쪽 아래 문장', 790)]),
+        edgeFooterNoGap: cut([it('3. 본문', 600), it('꼬리말', 810)]),
         onlyBody: cut([it('3. 본문', 280)]),
       };
     });
     check('안내·꼬리말이 큰 빈틈(25%↑) 뒤 아래 20% 구역에만 있으면 자를 위치를 찾음', rT.noteFooter && rT.noteFooter.trailLines === 2 && rT.noteFooter.trailStart > 690, JSON.stringify(rT));
-    check('빈틈이 작거나, 큰 빈틈 뒤 글이 쪽 중간에 있거나, 본문만 있으면 자르지 않음(소문항·그림 뒤 글 보호)', rT.smallGap === null && rT.gapButMidPage === null && rT.onlyBody === null && rT.footerOnlyNoBigGap === null, JSON.stringify(rT));
+    check('빈틈이 작거나, 큰 빈틈 뒤 글이 쪽 중간에 있거나, 본문만 있거나, 아래 8% 안의 평범한 문장(쪽 번호 모양·반복·맨 아래 4%가 아님)이면 자르지 않음(소문항·그림 뒤 글 보호)', rT.smallGap === null && rT.gapButMidPage === null && rT.onlyBody === null && rT.footerOnlyNoBigGap === null, JSON.stringify(rT));
+    check('맨 아래 4% 안의 글은 큰 빈틈이 없어도 꼬리말로 잘림(규칙 B)', rT.edgeFooterNoGap && rT.edgeFooterNoGap.rule === 'footer' && rT.edgeFooterNoGap.trailLines === 1, JSON.stringify(rT));
     check('쪽 중간 글 뒤에 큰 빈틈이 있고 그 뒤가 아래 구역뿐이면 그 틈에서 자름(중간 글은 본문으로 유지)', rT.gapMidThenBottom && rT.gapMidThenBottom.trailLines === 1 && rT.gapMidThenBottom.lastBodyBottom > 440 && rT.gapMidThenBottom.lastBodyBottom < 470, JSON.stringify(rT));
 
     // 정답 글 정리 단위 시험: 위첨자·분수·동그라미 숫자는 유지, 전각 숫자·공백은 정리
