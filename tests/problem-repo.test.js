@@ -292,7 +292,7 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
         await autoIngestProblemPdf({ files: dt.files, value: '' });
         const drafts = Object.entries(window.__store.problemDrafts || {}).filter(([id]) => !before.has(id)).map(([, d]) => d);
         return { status: document.getElementById('problemPdfAutoStatus').textContent, n: drafts.length,
-          answers: drafts.map((d) => ({ no: d.problemNo, a: d.answer, m: d.answerMethod, t: d.type })).sort((x, y) => String(x.no).localeCompare(String(y.no))),
+          answers: drafts.map((d) => ({ no: d.problemNo, a: d.answer, m: d.answerMethod, t: d.type, src: d.idSource, asp: d.answerSourcePage, basis: d.answerLinkBasis, rr: d.reviewReason, pno: d.printedProblemNo, tn: d.typeNo, pg: d.page })).sort((x, y) => String(x.no).localeCompare(String(y.no))),
           texts: drafts.map((d) => ({ no: d.problemNo, t: String(d.problemText || d.rawText || '') })).sort((x, y) => String(x.no).localeCompare(String(y.no))),
           crops: drafts.filter((d) => JSON.stringify(d).includes('problem-crop/')).length };
       }, [b64, uploadName]);
@@ -422,11 +422,34 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
     const rT2 = await ingestFile('sample-twocol-ko.pdf', 'twocol-sample.pdf');
     const gT2 = await regionsOf('sample-twocol-ko.pdf');
     console.log('PROBLEM-REPO INFO 2단 합성 PDF: ' + JSON.stringify({ n: rT2.n, answers: rT2.answers.map((x) => x.a), texts: rT2.texts.map((x) => x.t.slice(0, 30)), segCalls: rT2.segCalls, geo: gT2 }));
-    check('2단·앞자리 0 번호: 보기 ①~⑤ 를 문항 번호로 오인하지 않고 문항 8개(001~008), AI 분리 요청 0회', rT2.n === 8 && rT2.segCalls === 0 && !/중단/.test(rT2.status) && rT2.answers.map((x) => x.no).join() === '01,02,03,04,05,06,07,08', JSON.stringify({ n: rT2.n, s: rT2.status, no: rT2.answers.map((x) => x.no) }));
-    check('문항별 본문이 맞게 나뉨(번호 글자는 빠지고 각 문항 첫 글이 해당 문제)', rT2.texts[0].t.startsWith('직선 y') && rT2.texts[2].t.startsWith('둘레의 길이가 24 cm') && rT2.texts[3].t.startsWith('점 (1, 3)') && rT2.texts[7].t.startsWith('5의 제곱') && rT2.texts.every((x) => !/대표유형|다음 중 옳은 것은/.test(x.t)), JSON.stringify(rT2.texts));
-    check('한 행에 번호 2개인 정답표: 번호별 답 연결, 여러 칸으로 쪼개진 답 이어붙임, 작게 올린 숫자는 위첨자(²)로 보존', rT2.answers.map((x) => x.a).join('|') === 'a ≠ 2|4|36 cm²|(1, −3)|3|4|6 cm|25', JSON.stringify(rT2.answers));
-    check('쪽 가운데 꼬리말이 두 단 경계를 가로질러도 오른쪽 단 마지막 문항(004, 008) 영역이 꼬리말(약 798pt) 앞에서 끝남', gT2.trimmed[3] < 790 && gT2.trimmed[7] < 790 && gT2.flags[3] === true && gT2.flags[7] === true && gT2.untrimmed[3] > 800, JSON.stringify(gT2));
-    check('다음 문항 번호 글자가 앞 문항 영역에 걸치지 않음(001 영역 아래 끝이 002 번호 기준선 위 14pt 이내, 약 506pt)', gT2.untrimmed[0] <= 507 && gT2.untrimmed[2] <= 507, JSON.stringify(gT2));
+    check('2단·앞자리 0 번호: 보기 ①~⑤ 를 문항 번호로 오인하지 않고 번호 문항 8개(001~008) + 번호 없는 대표 4개, AI 분리 요청 0회', rT2.n === 12 && rT2.segCalls === 0 && !/중단/.test(rT2.status) && rT2.answers.map((x) => x.no).join() === '01,02,03,04,05,06,07,08,유형01-대표,유형02-대표,유형03-대표,유형04-대표', JSON.stringify({ n: rT2.n, s: rT2.status, no: rT2.answers.map((x) => x.no) }));
+    check('문항별 본문이 맞게 나뉨(번호 글자는 빠지고 각 문항 첫 글이 해당 문제)', rT2.texts[0].t.startsWith('직선 y') && rT2.texts[2].t.startsWith('둘레의 길이가 24 cm') && rT2.texts[3].t.startsWith('점 (1, 3)') && rT2.texts[7].t.startsWith('5의 제곱') && rT2.texts.slice(0, 8).every((x) => !/대표유형|다음 중 옳은 것은/.test(x.t)) && rT2.texts.slice(8).every((x) => /다음 중 옳은 것은/.test(x.t) && !/대표유형/.test(x.t)), JSON.stringify(rT2.texts));
+    check('한 행에 번호 2개인 정답표: 번호별 답 연결, 여러 칸으로 쪼개진 답 이어붙임, 작게 올린 숫자는 위첨자(²)로 보존', rT2.answers.slice(0, 8).map((x) => x.a).join('|') === 'a ≠ 2|4|36 cm²|(1, −3)|3|4|6 cm|25', JSON.stringify(rT2.answers));
+    check('쪽 가운데 꼬리말이 두 단 경계를 가로질러도 오른쪽 단 마지막 문항(004, 008) 영역이 꼬리말(약 798pt) 앞에서 끝남', gT2.trimmed[2] < 790 && gT2.trimmed[5] < 790 && gT2.trimmed[8] < 790 && gT2.trimmed[11] < 790 && gT2.flags[2] === true && gT2.flags[11] === true && gT2.untrimmed[2] > 800, JSON.stringify(gT2));
+    check('다음 문항 번호 글자가 앞 문항 영역에 걸치지 않음(001 영역 아래 끝이 002 번호 기준선 위 14pt 이내, 약 506pt)', gT2.untrimmed[1] <= 507 && gT2.untrimmed[4] <= 507 && gT2.untrimmed[0] <= 317, JSON.stringify(gT2));
+    // 14-10) 대표 문항 식별자·정답 연결 기준: 유형 번호 있음 → '유형NN-대표', 없음 → 앱 생성 '대표NN', 모호/불일치 → 추측하지 않고 검토
+    const repOf = (r) => r.answers.filter((x) => /대표/.test(x.no));
+    const rep1 = repOf(rT2);
+    check('대표 문항: 원본 유형 번호로 안정적 식별자(유형01-대표…)를 만들고 정답표 "유형01 대표 ④" 와 연결, 원본 인쇄 번호는 비움', rep1.map((x) => x.a).join() === '④,③,⑤,②' && rep1.every((x) => x.src === 'printed-type-number' && x.pno === '' && x.m === 'answer-table-choice' && x.t === 'mc' && !x.rr) && rep1.map((x) => x.tn).join() === '01,02,03,04', JSON.stringify(rep1));
+    check('연결 근거 기록: 대표는 정답 쪽(3쪽)과 근거("정답표 \'유형01 대표\' 행"), 번호 문항은 정답 쪽과 "정답표 문항번호 NN", 문제 쪽(page)도 함께 남음', rep1[0].asp === 3 && /유형01 대표/.test(rep1[0].basis) && rep1[0].pg === 1 && rep1[2].pg === 2 && rT2.answers[0].asp === 3 && /문항번호 01/.test(rT2.answers[0].basis) && rT2.answers[0].src === 'printed-number', JSON.stringify({ r: rep1[0], n: rT2.answers[0] }));
+    const rNH = await ingestFile('sample-rep-nohead-ko.pdf', 'rep-nohead.pdf');
+    const repNH = repOf(rNH);
+    check('유형 번호가 전혀 없으면 앱 생성 번호 대표01~04(원본 번호 아님), 정답표와 추측 연결하지 않고 검토(정답 비움)', rNH.n === 12 && repNH.map((x) => x.no).join() === '대표01,대표02,대표03,대표04' && repNH.every((x) => x.src === 'app-generated' && x.a === '' && x.m === 'needs-review' && x.rr === 'app-generated-number-no-answer-link' && x.pno === '' && x.asp === null), JSON.stringify(repNH));
+    const rMM = await ingestFile('sample-rep-mismatch-ko.pdf', 'rep-mismatch.pdf');
+    const repMM = repOf(rMM), mmMeta = await page.evaluate(() => { const v = Object.values(window.__store.problemSources || {}); return v[v.length - 1].segmentationMeta; });
+    const mmBy = (re) => repMM.filter((x) => re.test(x.no));
+    check('제목 [01, 02, 02(중복), 없음]: 01 만 연결(정답 ④), 중복 02 두 개와 제목 없는 것은 추측하지 않고 검토(사유·쪽 포함 식별자)', repMM.length === 4 && mmBy(/^유형01-대표$/)[0].a === '④' && mmBy(/^유형01-대표$/)[0].src === 'printed-type-number' && mmBy(/^유형02-대표@p/).length === 2 && mmBy(/^유형02-대표@p/).every((x) => x.a === '' && x.rr === 'type-number-duplicate' && x.src === 'unresolved') && mmBy(/^대표-p/).length === 1 && mmBy(/^대표-p/)[0].rr === 'type-number-missing' && mmBy(/^대표-p/)[0].a === '', JSON.stringify(repMM));
+    check('정답표에는 있는데 문제 쪽에서 짝을 못 찾은 항목(유형02 중복, 유형09)은 연결하지 않고 쪽과 함께 기록', JSON.stringify((mmMeta.unmatchedRepresentativeAnswers || []).map((x) => x.id + '@' + x.answerPage).sort()) === JSON.stringify(['유형02-대표@3', '유형09-대표@3']), JSON.stringify(mmMeta));
+    // 기존 데이터(새 필드 없음) 호환: 새 필드가 없는 초안도 상태·완성도·공개 데이터 변환·목록 표시가 그대로 동작
+    const rLeg = await page.evaluate(() => {
+      const legacy = { id: 'leg1', problemNo: '07', printedProblemNo: '07', page: 3, rawText: '3x+1=7 일 때 x 를 구하시오.', answer: '2', answerMethod: 'answer-table-text', type: 'short', grade: '중3', semester: '1학기', majorUnit: '이차함수', middleUnit: '', status: 'review', sourceId: 'srcL', cropKey: 'problem-crop/legacy.jpg' };
+      const out = { st: problemDraftStatus(legacy), cf: problemDraftConfidence(legacy), pub: problemDraftPublicData(legacy) };
+      problemStore.ingest = { loaded: true, loading: false, sources: [], drafts: [legacy, { ...legacy, id: 'new1', problemNo: '대표01', idSource: 'app-generated', reviewReason: 'app-generated-number-no-answer-link' }], sourceFilter: '', statusFilter: '', aiFilter: '' };
+      let html = ''; try { html = renderProblemIngest(); } catch (e) { html = 'ERR ' + e.message; }
+      return { st: out.st, cf: out.cf, srcNo: out.pub.sourceProblemNo, srcPage: out.pub.sourcePage, htmlOk: !/^ERR/.test(html) && html.includes('07') && html.includes('대표01'), badgeNew: /앱 생성 번호/.test(html) && /번호·정답 검토/.test(html), badgeCount: (html.match(/앱 생성 번호/g) || []).length };
+    });
+    check('새 필드가 없는 기존 초안: 상태·완성도·공개 데이터 변환·목록 표시가 그대로 동작하고, 앱 생성 번호·검토 사유 배지는 새 필드가 있는 초안에만 붙음', ['review', 'ready'].includes(rLeg.st) && rLeg.cf > 0 && rLeg.srcNo === '07' && rLeg.srcPage === 3 && rLeg.htmlOk && rLeg.badgeNew && rLeg.badgeCount === 1, JSON.stringify(rLeg));
+
     const rU = await page.evaluate(() => ({
       circ: problemPdfNumberCandidate('①'), circ3: problemPdfNumberCandidate('③ 2'), zero: problemPdfNumberCandidate('001'), plain: problemPdfNumberCandidate('3'),
       sup: problemPdfJoinAnswerCells([{ text: '36 cm', x: 437, y: 363, w: 29, h: 10 }, { text: '2', x: 466, y: 366, w: 4, h: 7 }]),
