@@ -8383,7 +8383,8 @@ function problemPdfInferType(rawText,answerCandidate){
   if(answerCandidate?.method==='answer-table-choice' || /^[①②③④⑤]$/.test(String(answerCandidate?.answer||''))) return 'mc';
   const circled=(t.match(/[①②③④⑤]/g)||[]).length;
   if(circled>=2) return 'mc';
-  if(/증명하시오|서술하시오|풀이\s*과정.*(?:쓰|적|나타내)|과정을\s*쓰시오|이유를\s*쓰시오/.test(t)) return 'constructed';
+  // 풀이 과정 제출 안내("풀이 과정을 식으로 쓰고…")만으로는 서술형으로 단정하지 않는다(최종 답이 정해지면 단답형, 풀이 과정 요구는 현재 저장 구조에 필드가 없음).
+  if(/증명하시오|서술하시오|이유를\s*쓰시오/.test(t)) return 'constructed';
   return 'short';
 }
 async function problemPdfExtractAnswerCandidates(pdf){

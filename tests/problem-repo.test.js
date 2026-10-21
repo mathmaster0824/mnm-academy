@@ -408,6 +408,15 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
     check('마지막 문항 본문에 꼬리말 안내·오른쪽 라벨·쪽 번호가 섞이지 않고, 그림 치수 글자·딸린 안내는 남음', !/다음 쪽|연습 자료|1\/2|1 \/ 2/.test(rB.texts[2].t) && /8cm/.test(rB.texts[2].t) && /4cm/.test(rB.texts[2].t) && /풀이 과정/.test(rB.texts[2].t), JSON.stringify(rB.texts[2]));
     check('마지막 문항 영역: 쪽 끝(820)이 아니라 그림·안내 상자 아래(약 616)까지, 꼬리말(약 790) 앞에서 끝남', gB.untrimmed[2] > 800 && gB.trimmed[2] >= 614 && gB.trimmed[2] < 700 && gB.flags[2] === true && gB.flags[0] === false && gB.flags[1] === false, JSON.stringify(gB));
 
+    const rTy = await page.evaluate(() => ({
+      proc: problemPdfInferType('직사각형의 넓이를 구하세요. ※ 풀이 과정을 식으로 쓰고, 단위도 표시하세요.', { answer: '24cm²' }),
+      procOnly: problemPdfInferType('풀이 과정을 쓰시오.', { answer: '' }),
+      prove: problemPdfInferType('삼각형의 합동을 증명하시오.', { answer: '' }),
+      mc: problemPdfInferType('다음 중 옳은 것은?', { answer: '③', method: 'answer-table-choice' })
+    }));
+    check('"풀이 과정을 …쓰고" 안내만으로 서술형으로 단정하지 않음(단답형), 증명·서술 지시와 객관식은 기존대로', rTy.proc === 'short' && rTy.procOnly === 'short' && rTy.prove === 'constructed' && rTy.mc === 'mc', JSON.stringify(rTy));
+    check('경계 시험 PDF 3번(풀이 과정 안내 포함)은 단답형으로 저장되고 정답 원문(25cm², 24cm)은 변경 없이 저장됨', rB.answers[2].t === 'short' && rB.answers[1].a === '25cm²' && rB.answers[2].a === '24cm', JSON.stringify(rB.answers));
+
     // 같은 줄이라도 가로로 멀리 떨어진 글은 다른 덩어리: 제목 판정 단위 시험
     const rL = await page.evaluate(() => {
       const L = (arr) => problemPdfAnswerTextLines(arr.map(([text, x, y, w]) => ({ text, x, y, w })));
