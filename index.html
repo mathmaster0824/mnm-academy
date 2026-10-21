@@ -871,6 +871,7 @@ function homeworkCountsAsMissed(sub,date,stuId){
   // 리스타트 기준일 이전은 제출 유무와 무관하게 무조건 미이행이 아니라고 취급한다.
   if(isLegacyHomeworkDate(date)) return false;
   if(!sub) return date < todayISO() && homeworkRecordKnown(date,stuId);
+  if(String(sub.status||'').trim()==='미인증') return date < todayISO();
 
   // 선생님이 인정한 기록은 어떤 경우에도 미이행/경고 대상으로 되돌리지 않는다.
   if(submissionIsApproved(sub,date)) return false;
@@ -887,6 +888,7 @@ function submissionReviewState(sub,date,stuId){
   if(!sub) return homeworkRecordKnown(recordDate,stuId) ? 'missing' : 'unknown';
   const status = String(sub.status||'').trim();
   if(!status) return 'approved'; // 기존 레거시 제출 보호
+  if(status==='미인증') return 'missing'; // 선생님이 직접 확인을 해제한 기록: 제출 없음과 같게 취급
   if(status==='확인' || status==='approved') return 'approved';
   if(status===HW_AUTO_SUBMITTED) return 'approved'; // v97: 사진 제출 즉시 '제출 완료'(제출 사실만 의미, 품질 평가 아님)
   if(status==='최종불합격') return 'rejected';
@@ -905,10 +907,10 @@ function homeworkReviewMark(sub,date,stuId){
 function homeworkReviewLabel(sub,date,stuId){
   const eff=homeworkEffectiveState(sub,date,stuId);
   if(eff==='unknown') return '조회 중';
-  if(eff==='approved') return submissionIsAutoSubmitted(sub) ? '제출 완료' : '인정';
+  if(eff==='approved') return submissionIsAutoSubmitted(sub) ? '제출 완료' : homeworkIsTeacherDirect(sub) ? '선생님 직접 확인' : '인정';
   if(eff==='pending') return '검토대기';
   if(eff==='needsRevision') return '수정필요';
-  if(eff==='missing') return '미제출';
+  if(eff==='missing') return (sub && String(sub.status||'').trim()==='미인증') ? '미인증' : '미제출';
   if(eff==='finalRejected') return '최종불합격';
   if(eff==='rejected') return '불합격';
   return '미인증';
@@ -2570,13 +2572,21 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames, focusRecommended=f
   const doneCount = (r.videoAssignments||[]).filter(v=>v.done).length;
   const videoTotal = (r.videoAssignments||[]).length;
   const hwDateRange = homeworkDateRangeDates(cls.dayGroup, date);
+  const canVerify = !!session && session.mode==='director';
   const dayChecklist = hwDateRange.map(d=>{
     const daySub = subForClass(s.id,cls.id,d);
     const dowKey = DAY_KEYS[new Date(d+'T00:00:00').getDay()];
     const st = submissionReviewState(daySub,d,s.id);
     const cls2 = st==='approved' ? 'green' : st==='pending' ? 'yellow' : st==='unknown' ? 'gray' : 'red';
-    return `<span class="badge ${cls2}" title="${homeworkReviewLabel(daySub,d,s.id)}" style="margin:2px 3px 0 0;font-size:9px;padding:2px 6px;">${DAY_LABEL[dowKey]} ${homeworkReviewMark(daySub,d,s.id)}</span>`;
+    const ui = hwVerifyUi[hwVerifyUiKey(s.id,cls.id,d)];
+    const direct = homeworkIsTeacherDirect(daySub) && st==='approved';
+    const mark = ui && ui.state==='saving' ? '… 저장 중' : ui && ui.state==='error' ? '✖ 저장 실패' : (homeworkReviewMark(daySub,d,s.id)+(direct?' 직접':'')+(ui && ui.state==='saved' ? ' ✓' : ''));
+    const title = `${homeworkReviewLabel(daySub,d,s.id)}${ui&&ui.msg?' · '+ui.msg:''}`;
+    const clickable = canVerify && !isLegacyHomeworkDate(d) && d<=todayISO() && st!=='unknown';
+    if(!clickable) return `<span class="badge ${cls2}" title="${title}" style="margin:2px 3px 0 0;font-size:9px;padding:2px 6px;">${DAY_LABEL[dowKey]} ${mark}</span>`;
+    return `<button type="button" class="badge ${cls2} hw-verify" data-hwverify="${d}" data-state="${st}" ${ui&&ui.state==='saving'?'disabled':''} title="${title} (눌러서 인증/미인증 전환)" onclick="toggleHomeworkVerify('${cls.id}','${s.id}','${d}')" style="margin:2px 3px 0 0;font-size:9px;padding:2px 6px;border:1px solid rgba(0,0,0,.12);cursor:pointer;font-family:inherit;">${DAY_LABEL[dowKey]} ${mark}</button>`;
   }).join('');
+  const verifyMsgs = canVerify ? hwDateRange.map(d=>{ const u=hwVerifyUi[hwVerifyUiKey(s.id,cls.id,d)]; return u&&u.state!=='saving'&&u.msg?`<div data-hwverify-msg="${d}" style="font-size:10px;margin-top:3px;color:${u.state==='error'?'var(--red)':'var(--green)'};">${DAY_LABEL[DAY_KEYS[new Date(d+'T00:00:00').getDay()]]} ${u.msg}</div>`:''; }).join('') : '';
   const submittedCount = hwDateRange.filter(d=>homeworkCountsAsCompleted(subForClass(s.id,cls.id,d),d)).length;
   const totalRangeDays = hwDateRange.length;
   const hwLevel = r.homeworkCompletionLevel || '';
@@ -2645,7 +2655,7 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames, focusRecommended=f
       <div class="class-record-box">
         <h4>숙제 현황</h4>
         <div style="font-size:11px;color:#6b6858;line-height:1.5;">${hwText||'-'}</div>
-        ${totalRangeDays? `<div style="margin-top:7px;">${dayChecklist}</div><div style="font-size:10px;color:#8a8674;margin-top:4px;">${submittedCount}/${totalRangeDays} 제출</div>` : ''}
+        ${totalRangeDays? `<div style="margin-top:7px;">${dayChecklist}</div>${verifyMsgs}<div style="font-size:10px;color:#8a8674;margin-top:4px;">${submittedCount}/${totalRangeDays} 제출${canVerify?' · 날짜를 누르면 인증/미인증이 바뀌어요':''}</div>` : ''}
         <div class="class-mini-grid" style="grid-template-columns:1fr 1fr;margin-top:9px;">
           <div class="class-field"><label title="상: ${HW_QUALITY_GUIDE['상']}&#10;중: ${HW_QUALITY_GUIDE['중']}&#10;하: ${HW_QUALITY_GUIDE['하']}">숙제 완성도 ⓘ</label><select onchange="updateClassRec('${cls.id}','${date}','${s.id}','homeworkCompletionLevel',this.value)"><option value="">미평가</option>${['상','중','하'].map(o=>`<option ${hwLevel===o?'selected':''}>${o}</option>`).join('')}</select></div>
           <div class="class-field"><label>학습완성도</label><select onchange="updateClassRec('${cls.id}','${date}','${s.id}','studyCompletionLevel',this.value)"><option value="">-</option>${['상','중','하'].map(o=>`<option ${r.studyCompletionLevel===o?'selected':''}>${o}</option>`).join('')}</select></div>
@@ -4514,8 +4524,10 @@ function renderSubmissionCard(stuId, directorView, previewAsStudent){
     const icon=st==='approved'?'✅':st==='pending'?'⏳':'❌';
     const msg=submissionIsFinalRejected(sub)
       ? `최종 불합격입니다. 숙제 검사 3회를 모두 사용했습니다.${sub.reviewReason? ' 사유: '+sub.reviewReason : ''}`
+      : st==='missing'
+        ? '아직 선생님이 확인하지 않았어요.'
       : st==='approved'
-        ? (submissionIsAutoSubmitted(sub) ? '제출 완료 — 사진이 정상적으로 접수됐어요. 숙제 완성도는 수업 시간에 선생님이 확인해요.' : '선생님 확인 완료 — 숙제로 인정됐어요.')
+        ? (homeworkIsTeacherDirect(sub) ? '선생님이 직접 확인했어요.' : submissionIsAutoSubmitted(sub) ? '제출 완료 — 사진이 정상적으로 접수됐어요. 숙제 완성도는 수업 시간에 선생님이 확인해요.' : '선생님 확인 완료 — 숙제로 인정됐어요.')
         : st==='pending'
           ? '선생님 검토 대기 중이에요.'
           : `숙제 수정이 필요합니다.${sub.reviewReason? ' 사유: '+sub.reviewReason : ''}`;
@@ -4637,6 +4649,79 @@ async function applyHomeworkReviewPatch(stuId,date,patch,btn){
   render();
   alert('숙제 판정을 저장하지 못해 이전 상태로 되돌렸어요. 다시 시도해주세요.');
   return false;
+}
+/* ---- 선생님이 학생별·날짜별 숙제 확인 상태를 직접 바꾸기(인증 ↔ 미인증) ----
+   - 저장 위치: 기존과 같은 submissions/<학생(또는 반 슬롯)ID>_<날짜> 문서 1건만 쓴다(다른 학생·날짜·반 문서는 건드리지 않음).
+   - 기기로 낸 제출이 없으면 새 문서를 만들며 verifyMethod:'teacher-direct' 로 '선생님이 직접 확인'임을 표시한다(사진·제출시각 없음).
+   - 학생이 낸 제출이 있으면 사진·시각 등은 그대로 두고 status 만 바꾼다(인증→'확인', 해제→'미인증'=×). */
+const hwVerifyUi={};   // '학생|반|날짜' -> {state:'saving'|'saved'|'error', msg}
+function hwVerifyUiKey(stuId,clsId,date){ return stuId+'|'+clsId+'|'+date; }
+function homeworkSubmittedByStudent(sub){
+  return !!sub && (!!sub.submittedAt || (sub.hwPhotos||[]).length>0 || (sub.practicePhotos||[]).length>0);
+}
+function homeworkIsTeacherDirect(sub){
+  return !!sub && sub.verifyMethod==='teacher-direct' && !homeworkSubmittedByStudent(sub);
+}
+// 이 학생·반·날짜의 숙제 문서 ID. 다른 반의 기록과 겹쳐 안전하게 정할 수 없으면 ''.
+function homeworkVerifyDocKey(stuId,clsId,date){
+  const slot=hwSlotId(stuId,clsId), base=db.submissions[stuId+'_'+date];
+  if(slot!==stuId){
+    if(db.submissions[slot+'_'+date]) return slot+'_'+date;
+    if(base && !base.classId) return stuId+'_'+date;
+    return slot+'_'+date;
+  }
+  if(base && base.classId && base.classId!==clsId) return '';
+  return stuId+'_'+date;
+}
+// wantVerified=true → 인증, false → 미인증. 바꿀 것이 없으면 null.
+function homeworkVerifyPatch(existing,wantVerified,stuId,clsId,date){
+  const iso=new Date().toISOString();
+  if(!existing){
+    if(!wantVerified) return null;
+    return {studentId:baseStudentId(stuId),classId:clsId||'',date,status:'확인',reviewCount:0,reviewReason:'',reviewedAt:iso,verifyMethod:'teacher-direct',verifiedAt:iso};
+  }
+  const p={};
+  if(!existing.studentId) p.studentId=baseStudentId(stuId);
+  if(!existing.date) p.date=date;
+  if(wantVerified){
+    Object.assign(p,{status:'확인',reviewReason:'',reviewedAt:iso});
+    if(!homeworkSubmittedByStudent(existing)){ p.verifyMethod='teacher-direct'; p.verifiedAt=iso; }
+  }else{
+    // 기기로 제출한 기록이어도 선생님 확인 상태만 '미인증'(×)으로 바꾼다. 사진·제출시각 등 제출 기록은 patch 에 넣지 않으므로 그대로 남는다.
+    // (학생이 다시 제출하면 기존 흐름대로 '제출완료'가 되어 다시 인정된다.)
+    Object.assign(p,{status:'미인증',reviewReason:'',reviewedAt:iso});
+  }
+  return p;
+}
+function hwVerifyUiSet(k,v,clearMs){
+  if(v) hwVerifyUi[k]=v; else delete hwVerifyUi[k];
+  render();
+  if(v && clearMs) setTimeout(()=>{ if(hwVerifyUi[k]===v){ delete hwVerifyUi[k]; render(); } },clearMs);
+}
+async function toggleHomeworkVerify(clsId,stuId,date){
+  if(!session || session.mode!=='director') return;   // 학생에게는 수정 권한이 없다
+  const uk=hwVerifyUiKey(stuId,clsId,date);
+  if(hwVerifyUi[uk] && hwVerifyUi[uk].state==='saving') return;
+  const fail=(msg)=>hwVerifyUiSet(uk,{state:'error',msg},6000);
+  if(isLegacyHomeworkDate(date)) return fail('9/6까지의 과거 숙제는 조회만 가능해요');
+  if(date>todayISO()) return fail('아직 오지 않은 날짜예요');
+  const key=homeworkVerifyDocKey(stuId,clsId,date);
+  if(!key) return fail('다른 반 기록과 겹쳐 여기서 바꿀 수 없어요');
+  const existing=db.submissions[key];
+  if(submissionIsFinalRejected(existing)) return fail('3회 검사가 끝난 최종 불합격 기록이에요');
+  const wantVerified=!homeworkCountsAsCompleted(subForClass(stuId,clsId,date),date);
+  const patch=homeworkVerifyPatch(existing,wantVerified,stuId,clsId,date);
+  if(!patch) return;
+  hwVerifyUiSet(uk,{state:'saving',msg:'저장 중…'});
+  let ok=false;
+  try{ await fsdb.collection('submissions').doc(key).set(patch,{merge:true}); ok=true; }
+  catch(e){ console.error('[숙제 확인 상태 저장 실패]',{key,code:e&&e.code||'',message:e&&e.message||''}); }
+  if(ok){
+    db.submissions[key]={...(existing||{}),...patch};   // 저장에 성공한 뒤에만 화면 데이터를 바꾼다
+    hwVerifyUiSet(uk,{state:'saved',msg:wantVerified?'인증 저장됨':'미인증 저장됨'},2500);
+  }else{
+    hwVerifyUiSet(uk,{state:'error',msg:'저장 실패 · 다시 눌러주세요'},6000);
+  }
 }
 async function confirmSubmission(stuId,date,btn){
   if(isLegacyHomeworkDate(date)){ alert('9/6까지의 과거 숙제는 조회만 가능합니다 (시스템 장애로 인한 리스타트).'); return; }
@@ -5166,7 +5251,7 @@ function homeworkGlanceRowsForStudent(stuId, limitDays){
   const sliced = limitDays ? dates.slice(-limitDays) : dates;
   return sliced.map(d=>{
     const info = byDate.get(d);
-    return {date:d, state:info.state, content: homeworkContentForDate(stuId, info.clsId, d)};
+    return {date:d, state:info.state, clsId:info.clsId, content: homeworkContentForDate(stuId, info.clsId, d)};
   });
 }
 function operationStartDateForStudent(stuId){
@@ -5193,12 +5278,24 @@ function renderHomeworkGlanceForWarning(stuId){
     <div class="row between"><h3 style="margin:0;">📋 최근 숙제 제출 현황 (경고 판단용)</h3>${missedStreak>=3?`<span class="badge red">최근 ${missedStreak}일 연속 미이행</span>`:''}</div>
     ${rows.length ? `<table style="margin-top:8px;">
       <tr><th style="width:70px;">날짜</th><th style="width:90px;">상태</th><th>그날 숙제 내용</th></tr>
-      ${rows.map(r=>`<tr>
+      ${rows.map(r=>{
+        // 반별 페이지 학생 카드와 같은 기록(submissions/<학생>_<날짜>)·같은 저장 함수를 쓴다.
+        const sub = subForClass(stuId,r.clsId,r.date);
+        const ui = hwVerifyUi[hwVerifyUiKey(stuId,r.clsId,r.date)];
+        const direct = r.state==='approved' && homeworkIsTeacherDirect(sub);
+        const lab = ui&&ui.state==='saving' ? '저장 중…' : ui&&ui.state==='error' ? '저장 실패' : (direct ? '선생님 직접 확인' : (r.state==='missing' && sub && String(sub.status||'').trim()==='미인증') ? '미인증' : labelFor(r.state))+(ui&&ui.state==='saved'?' ✓':'');
+        const canVerify = !!session && session.mode==='director' && !isLegacyHomeworkDate(r.date) && r.date<=todayISO() && r.state!=='unknown';
+        const badge = canVerify
+          ? `<button type="button" class="badge ${colorFor(r.state)} hw-verify" data-hwverify-detail="${r.date}" data-state="${r.state}" ${ui&&ui.state==='saving'?'disabled':''} title="눌러서 인증/미인증 전환" onclick="toggleHomeworkVerify('${r.clsId}','${stuId}','${r.date}')" style="font-size:10px;border:1px solid rgba(0,0,0,.12);cursor:pointer;font-family:inherit;">${lab}</button>`
+          : `<span class="badge ${colorFor(r.state)}" style="font-size:10px;">${lab}</span>`;
+        const msg = canVerify && ui && ui.state!=='saving' && ui.msg ? `<div data-hwverify-detail-msg="${r.date}" style="font-size:10px;margin-top:3px;color:${ui.state==='error'?'var(--red)':'var(--green)'};">${ui.msg}</div>` : '';
+        return `<tr>
         <td style="font-size:11px;color:#6b6858;white-space:nowrap;">${r.date.slice(5).replace('-','/')}</td>
-        <td><span class="badge ${colorFor(r.state)}" style="font-size:10px;">${labelFor(r.state)}</span></td>
+        <td>${badge}${msg}</td>
         <td style="font-size:12px;color:${r.content?'var(--ink)':'#b3aea0'};">${r.content || '(등록된 숙제 내용 없음)'}</td>
-      </tr>`).join('')}
+      </tr>`; }).join('')}
       </table>
+    ${!!session && session.mode==='director' ? '<div style="font-size:11px;color:#8a8674;margin-top:8px;">상태 칸을 누르면 인증/미인증이 바뀌어요. 휴대전화 제출이 없는 숙제도 직접 확인으로 인증할 수 있어요.</div>' : ''}
     <div style="font-size:11px;color:#8a8674;margin-top:10px;">🟢 인정 · 🟡 검토대기·1/2차 불합격(재제출 가능) · 🔴 미제출·최종불합격 · ⚪ 아직 판정 전(오늘/미래)</div>` : `<div class="empty" style="padding:14px;">아직 판정할 숙제 기록이 없어요.</div>`}
   </div>`;
 }
