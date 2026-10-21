@@ -7901,22 +7901,36 @@ function problemPdfSequentialLabels(plans,rails){
   }
   rows.sort((a,b)=>a.page-b.page||(a.side===b.side?b.y-a.y:(a.side==='L'?-1:1)));
 
-  const accepted=[];
-  let expected=null,gaps=0,resets=0;
-  for(const r of rows){
-    if(expected===null){
-      accepted.push(r); expected=r.n+1; continue;
+  // 연속 번호의 시작점: 맨 처음 만난 후보를 믿지 않는다. 표지("PART 04")·목차·개념 쪽의 숫자가 먼저 잡히면
+  // 그 번호로 사슬이 시작되어 실제 문항 01~05 가 통째로 버려지던 문제(실제 전체 교재 PDF 에서 재현)를 막기 위해,
+  // 모든 후보를 시작점으로 시험해 가장 믿을 만한 사슬을 고른다. 기준: ①번호 모양의 강도 합(앞자리 0·장식 번호 > 맨 숫자)
+  // ②사슬이 걸친 쪽 수가 적은 것(문제 쪽에 모여 있음) ③시작 번호가 1 ④앞선 것.
+  const runChain=(startIdx)=>{
+    const out=[]; let expected=null,gaps=0;
+    for(let i=startIdx;i<rows.length;i++){
+      const r=rows[i];
+      if(expected===null){ out.push(r); expected=r.n+1; continue; }
+      if(r.n===expected){ out.push(r); expected=r.n+1; continue; }
+      if(r.n===expected+1&&r.strength>=4){ gaps++; out.push(r); expected=r.n+1; continue; }
+      // 본문 속 수치/보기 번호는 대부분 현재 expected보다 작거나 갑자기 크게 튄다 → 무시.
     }
-    if(r.n===expected){
-      accepted.push(r); expected=r.n+1; continue;
-    }
-    if(r.n===expected+1&&r.strength>=4){
-      gaps++; accepted.push(r); expected=r.n+1; continue;
-    }
-    // 본문 속 수치/보기 번호는 대부분 현재 expected보다 작거나 갑자기 크게 튄다 → 무시.
+    return {out,gaps};
+  };
+  let best=null;
+  for(let i=0;i<rows.length;i++){
+    const c=runChain(i);
+    c.strength=c.out.reduce((a,x)=>a+Number(x.strength||1),0);
+    c.pages=new Set(c.out.map(x=>x.page)).size;
+    c.startOne=c.out[0].n===1?1:0;
+    if(!best||c.strength>best.strength
+       ||(c.strength===best.strength&&(c.pages<best.pages||(c.pages===best.pages&&c.startOne>best.startOne)))) best=c;
   }
-  const noise=Math.max(0,rows.length-accepted.length);
-  const quality=accepted.length?Math.max(0,Math.min(1,1-(noise/Math.max(1,rows.length))*.55-gaps*.08-resets*.05)):0;
+  const accepted=best?best.out:[], gaps=best?best.gaps:0, resets=0;
+  // 품질: 문항이 잡힌 쪽의 후보만 센다. 개념·표지 쪽의 위첨자 숫자 등은 문제 쪽이 아니므로 경계 품질을 깎지 않는다.
+  const acceptedPages=new Set(accepted.map(x=>x.page));
+  const noise=rows.filter(r=>acceptedPages.has(r.page)&&!accepted.includes(r)).length;
+  const scored=rows.filter(r=>acceptedPages.has(r.page)).length;
+  const quality=accepted.length?Math.max(0,Math.min(1,1-(noise/Math.max(1,scored))*.55-gaps*.08-resets*.05)):0;
   return {labels:accepted,quality,noise,gaps,resets,candidateCount:rows.length};
 }
 // 영역 아래 끝: 다음 영역 시작 글자(nextTop, 쪽 위 기준)의 윗부분이 걸치지 않도록 기준선 위 14pt 까지 내려 자르되,
@@ -8113,6 +8127,37 @@ async function problemPdfInkRuns(page,x0,x1,yFrom,yTo,thr=215){
     else if(st>=0){ if(y-st>=3) runs.push({top:ya+st,bottom:ya+y}); st=-1; }   // 가는 선(1~2행)은 그림으로 보지 않는다
   }
   return runs;
+}
+// ---- 교사용 쪽 안의 "정답/풀이" 줄 잘라내기 ----
+// 교사용 교재는 문제 바로 아래에 빨간 "정답 ④ / 풀이"가 같은 쪽 안에 인쇄돼 있다(실제 교재에서 재현). 그대로 두면 문항 이미지와 본문 글에
+// 정답이 섞여 학생에게 보일 수 있다. 문항 영역 안에서 줄의 맨 앞이 "정답"(뒤에 한글이 붙는 "정답을"·"정답은" 같은 문장은 제외)인 첫 줄을 찾아
+// 그 줄 위에서 영역을 자르고, 잘랐다는 표시(inlineAnswerCut)를 남긴다. 정답 줄이 번호 글줄 바로 밑(18pt 이내)이라 남는 문제 본문이 없으면 자르지 않고 검토 사유를 남긴다.
+// 정답 값 자체는 이 단계에서 읽어 쓰지 않는다(정답표가 있을 때만 연결, 없으면 검토).
+const PROBLEM_PDF_INLINE_ANSWER_RE=/^정답(?:[\s:：]|[^가-힣]|$)/;   // 공백을 남긴 줄 글에서 판정("정답 제3사분면"은 인정, "정답은 …"·"정답을 …" 문장은 제외)
+function problemPdfCutInlineAnswers(plans,regions){
+  for(const r of regions){
+    const plan=plans.find(p=>p.pageNo===r.page); if(!plan) continue;
+    const rows=[];
+    for(const it of plan.items||[]){
+      const str=String(it.str||''); if(!str.trim()) continue;
+      const tr=it.transform||[], x=Number(tr[4]||0), y=plan.height-Number(tr[5]||0);
+      if(!Number.isFinite(x)||!Number.isFinite(y)) continue;
+      if(x<r.x0+8||x>r.x1-4||y<r.y0+20||y>r.y1+4) continue;
+      let row=rows.find(q=>Math.abs(q.y-y)<=3); if(!row){row={y,items:[]};rows.push(row);} row.items.push({x,s:str});
+    }
+    rows.sort((a,b)=>a.y-b.y);
+    for(const row of rows){
+      row.items.sort((a,b)=>a.x-b.x);
+      const text=row.items.map(i=>i.s).join('').normalize('NFKC').replace(/\s+/g,' ').trim();
+      if(!PROBLEM_PDF_INLINE_ANSWER_RE.test(text)) continue;
+      const cut=row.y-14;                       // 글줄 기준선 위로 14pt (글자 윗부분 포함)
+      const base=Number.isFinite(r.markerY)?r.markerY:r.y0+14;   // 번호가 있는 글줄 기준선
+      if(cut>=base+4){ r.y1=Math.min(r.y1,cut); r.inlineAnswerCut=true; }
+      else if(!r.reviewReason) r.reviewReason='inline-answer-not-trimmed';
+      break;
+    }
+  }
+  return regions;
 }
 async function problemPdfTrimTrailingRegions(pages,plans,regions){
   const recurs=problemPdfFooterRecurrence(plans), last=new Map();
@@ -8515,7 +8560,8 @@ function problemPdfExtractAnswerPairsFromItems(items){
 function problemPdfInferType(rawText,answerCandidate){
   const t=String(rawText||'').normalize('NFKC');
   if(answerCandidate?.method==='answer-table-choice' || /^[①②③④⑤]$/.test(String(answerCandidate?.answer||''))) return 'mc';
-  const circled=(t.match(/[①②③④⑤]/g)||[]).length;
+  // NFKC 정규화는 ①→1 로 바꿔 보기 번호를 지우므로, 원문에서 센다(정답표가 없는 학생용 PDF 의 객관식 판별).
+  const circled=(String(rawText||'').match(/[①②③④⑤]/g)||[]).length;
   if(circled>=2) return 'mc';
   // 풀이 과정 제출 안내("풀이 과정을 식으로 쓰고…")만으로는 서술형으로 단정하지 않는다(최종 답이 정해지면 단답형, 풀이 과정 요구는 현재 저장 구조에 필드가 없음).
   if(/증명하시오|서술하시오|이유를\s*쓰시오/.test(t)) return 'constructed';
@@ -8596,7 +8642,7 @@ async function autoIngestProblemPdf(input){
       segmentationMeta={method:'ai-page-vision',quality:regions.length?1:0,detected:regions.length,layout:'vision'};
       textDetected=false;
     }
-    if(textDetected&&regions.length) regions=await problemPdfTrimTrailingRegions(pages,plans,regions);
+    if(textDetected&&regions.length){ regions=problemPdfCutInlineAnswers(plans,regions); regions=await problemPdfTrimTrailingRegions(pages,plans,regions); }
     if(!regions.length) throw new Error('문항을 찾지 못했습니다. 텍스트 탐지와 AI 이미지 탐지를 모두 확인해주세요.');
     say(`문항 ${regions.length}개 탐지 · ${segmentationMeta.layout||''} · 경계품질 ${Math.round(Number(segmentationMeta.quality||0)*100)}% · 정답표 확인 중…`);
     const answerMap=await problemPdfExtractAnswerCandidates(pdf), sourceMeta=problemPdfSourceMeta(file.name);

@@ -440,6 +440,27 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
     const mmBy = (re) => repMM.filter((x) => re.test(x.no));
     check('제목 [01, 02, 02(중복), 없음]: 01 만 연결(정답 ④), 중복 02 두 개와 제목 없는 것은 추측하지 않고 검토(사유·쪽 포함 식별자)', repMM.length === 4 && mmBy(/^유형01-대표$/)[0].a === '④' && mmBy(/^유형01-대표$/)[0].src === 'printed-type-number' && mmBy(/^유형02-대표@p/).length === 2 && mmBy(/^유형02-대표@p/).every((x) => x.a === '' && x.rr === 'type-number-duplicate' && x.src === 'unresolved') && mmBy(/^대표-p/).length === 1 && mmBy(/^대표-p/)[0].rr === 'type-number-missing' && mmBy(/^대표-p/)[0].a === '', JSON.stringify(repMM));
     check('정답표에는 있는데 문제 쪽에서 짝을 못 찾은 항목(유형02 중복, 유형09)은 연결하지 않고 쪽과 함께 기록', JSON.stringify((mmMeta.unmatchedRepresentativeAnswers || []).map((x) => x.id + '@' + x.answerPage).sort()) === JSON.stringify(['유형02-대표@3', '유형09-대표@3']), JSON.stringify(mmMeta));
+    // 14-11) 단원 전체 교재 PDF(표지·개념 쪽이 문제 쪽 앞에 섞임). 실제 교재 2종(학생용·교사용)에서 재현된 실패를 가상 내용으로 본뜬 시험.
+    //  (a) 표지 'PART 04'·개념 쪽 '5. …' 가 연속 번호의 시작으로 잡혀 실제 001~005 가 버려짐 (b) 교사용 쪽의 인라인 '정답/풀이' 가 문항 본문·이미지에 섞임
+    //  (c) 정답표 없는 학생용 PDF 의 대표 문항이 보기 ①~⑤ 가 있는데도 단답형으로 판정됨(NFKC 가 원문자를 지움)
+    const rFS = await ingestFile('sample-fullchapter-student-ko.pdf', 'fullchapter-student.pdf');
+    const rFT = await ingestFile('sample-fullchapter-teacher-ko.pdf', 'fullchapter-teacher.pdf');
+    const numOf = (r) => r.answers.filter((x) => !/대표/.test(x.no)).map((x) => x.no).join();
+    console.log('PROBLEM-REPO INFO 전체 단원 합성 PDF: ' + JSON.stringify({ stu: { n: rFS.n, no: numOf(rFS), seg: rFS.segCalls, status: rFS.status }, tch: { n: rFT.n, no: numOf(rFT), seg: rFT.segCalls, a: rFT.answers.map((x) => x.a) } }));
+    check('표지·개념 쪽이 앞에 있어도 번호 문항 001~008 이 모두 잡히고 표지(04)·개념 쪽(05)은 문항이 아님: 문항 12개(번호 8 + 대표 4), AI 분리 요청 0회', rFS.n === 12 && numOf(rFS) === '01,02,03,04,05,06,07,08' && rFS.segCalls === 0 && !/중단/.test(rFS.status), JSON.stringify({ n: rFS.n, no: numOf(rFS), seg: rFS.segCalls }));
+    check('정답표가 없는 학생용: 보기 ①~⑤ 가 있는 대표 4개는 객관식, 번호 문항 8개는 단답, 정답은 비워 검토로 남김', rFS.answers.filter((x) => /대표/.test(x.no)).every((x) => x.t === 'mc') && rFS.answers.filter((x) => !/대표/.test(x.no)).every((x) => x.t === 'short') && rFS.answers.every((x) => !x.a), JSON.stringify(rFS.answers.map((x) => [x.no, x.t, x.a])));
+    check('교사용(문제 아래 빨간 정답·풀이 인쇄): 문항 본문에 "정답"·"풀이" 글이 섞이지 않고 문항 12개, 정답표에서 12개 모두 연결', rFT.n === 12 && rFT.texts.every((x) => !/정답|가상 풀이|④ 라 \(/.test(x.t)) && rFT.answers.every((x) => x.a), JSON.stringify({ n: rFT.n, texts: rFT.texts.map((x) => x.t.slice(-24)), a: rFT.answers.map((x) => x.a) }));
+    check('교사용 문항 본문은 문제 문장까지는 그대로 남음(001 은 "…값을 구하시오.", 대표는 보기 ⑤ 까지)', rFT.texts[0].t.endsWith('의 값을 구하시오.') && /⑤ 마$/.test(rFT.texts.find((x, i) => /대표/.test(rFT.answers[i].no)).t), JSON.stringify(rFT.texts.slice(0, 2)));
+    const rIA = await page.evaluate(() => {
+      const mk = (rows) => ({ pageNo: 1, height: 800, width: 600, items: rows.map(([str, x, ytop]) => ({ str, transform: [1, 0, 0, 1, x, 800 - ytop] })) });
+      const reg = () => ({ page: 1, x0: 0, y0: 100, x1: 600, y1: 400, markerX: 52, markerY: 120 });
+      const run = (rows) => { const r = [reg()]; problemPdfCutInlineAnswers([mk(rows)], r); return r[0]; };
+      const sentence = run([['1', 52, 120], ['정답을 고르시오.', 70, 150], ['보기 ①', 70, 200]]);          // 문제 문장 속 "정답을"
+      const answerLine = run([['1', 52, 120], ['문제 본문', 70, 150], ['정답', 52, 260], ['③', 80, 260]]);     // 인쇄된 정답 줄
+      const tooHigh = run([['정답 3', 52, 130]]);                                                           // 번호 글줄 바로 밑이라 남는 본문이 없는 경우
+      return { sentence: { y1: sentence.y1, cut: !!sentence.inlineAnswerCut }, answerLine: { y1: answerLine.y1, cut: !!answerLine.inlineAnswerCut }, tooHigh: { y1: tooHigh.y1, cut: !!tooHigh.inlineAnswerCut, rr: tooHigh.reviewReason || '' } };
+    });
+    check('정답 줄 판정 단위 시험: "정답을 고르시오." 문장은 자르지 않고, 줄 맨 앞 "정답"은 그 줄 위에서 자르며, 남는 본문이 없으면 자르지 않고 검토 사유를 남김', !rIA.sentence.cut && rIA.sentence.y1 === 400 && rIA.answerLine.cut && rIA.answerLine.y1 === 246 && !rIA.tooHigh.cut && rIA.tooHigh.rr === 'inline-answer-not-trimmed', JSON.stringify(rIA));
     // 기존 데이터(새 필드 없음) 호환: 새 필드가 없는 초안도 상태·완성도·공개 데이터 변환·목록 표시가 그대로 동작
     const rLeg = await page.evaluate(() => {
       const legacy = { id: 'leg1', problemNo: '07', printedProblemNo: '07', page: 3, rawText: '3x+1=7 일 때 x 를 구하시오.', answer: '2', answerMethod: 'answer-table-text', type: 'short', grade: '중3', semester: '1학기', majorUnit: '이차함수', middleUnit: '', status: 'review', sourceId: 'srcL', cropKey: 'problem-crop/legacy.jpg' };
