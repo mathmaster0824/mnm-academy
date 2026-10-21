@@ -6,3 +6,4 @@
 실제 교재·학생 자료는 넣지 않는다. 운영 서버에 올리는 시험에는 `sample-problems.pdf` 만 안내한다.
 - `sample-cid-ko.pdf` — 한글 글꼴을 PDF 에 넣지 않은 방식(CID)으로, 문제 쪽에 "정답표" 안내 문장이 있고 정답표 문항번호가 ①②③ 인 3쪽짜리. `make-sample-cid-ko.py`(reportlab)로 생성. 글자 매핑표(CMap) 지정, 정답 쪽 판정, 번호와 본문이 한 text item("1. 12와 18의 …")인 문항의 텍스트 경계 인식 시험용.
 - `sample-cid-ko-noanswer.pdf` — 위 `sample-cid-ko.pdf` 의 1~2쪽만 잘라 정답표 쪽이 없는 경우를 재현(정답이 비어 검토 대상으로 남는지, 문제 문장이 정답으로 들어가지 않는지 시험).
+- `sample-footer-ko.pdf`, `sample-figure-ko.pdf` — 쪽 아래 안내 상자·꼬리말 선·꼬리말·쪽 번호가 있는 문제 쪽 + `N번` 정답표(정답 `24cm²` 위첨자). 두 번째는 마지막 문항 아래에 그림이 있음. `make-sample-footer-ko.py <출력폴더>` 로 생성. 마지막 문항에 안내·꼬리말이 섞이지 않는지, 그림은 남는지, 위첨자 정답이 보존되는지 시험.

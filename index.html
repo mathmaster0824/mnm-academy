@@ -7959,6 +7959,70 @@ function problemPdfBuildRegions(plans){
   };
 }
 
+// ---- 쪽 마지막 문항 아래쪽 정리 ----
+// 다음 문항 번호가 없는 쪽의 마지막 문항은 영역이 쪽 아래 끝까지 늘어나 안내 상자·꼬리말·쪽 번호가 본문 글과 문항 이미지에 섞인다.
+// 보수적 규칙: (1) 문항 안 글 줄 사이에 쪽 높이의 25% 이상 빈틈이 있고 (2) 그 뒤의 글이 모두 쪽 아래 20% 구역에만 있을 때만 그 틈에서 자른다.
+// 빈틈 안에 그림(화면에 그려진 어두운 픽셀 3행 이상)이 있으면 그림 끝까지는 남긴다. 조건이 하나라도 안 맞으면 자르지 않는다(그림·소문항 손실 방지).
+const PROBLEM_PDF_TRAIL_GAP=.25, PROBLEM_PDF_TRAIL_ZONE=.80;
+function problemPdfTrailingCut(items,region,pageHeight){
+  const rows=[];
+  for(const it of items||[]){
+    const str=String(it.str||'').trim(); if(!str) continue;
+    const tr=it.transform||[], x=Number(tr[4]||0), yb=pageHeight-Number(tr[5]||0);
+    const h=Math.abs(Number(it.height||tr[3]||10))||10;
+    if(!Number.isFinite(x)||!Number.isFinite(yb)) continue;
+    if(x<region.x0+8||x>region.x1-4||yb<region.y0) continue;
+    rows.push({yb,top:yb-h*.9,bottom:yb+h*.25});
+  }
+  rows.sort((a,b)=>a.yb-b.yb);
+  const lines=[];
+  for(const r of rows){
+    const l=lines[lines.length-1];
+    if(l&&Math.abs(r.yb-l.yb)<=4){ l.top=Math.min(l.top,r.top); l.bottom=Math.max(l.bottom,r.bottom); }
+    else lines.push({yb:r.yb,top:r.top,bottom:r.bottom});
+  }
+  for(let i=0;i<lines.length-1;i++){
+    if(lines[i+1].top-lines[i].bottom<PROBLEM_PDF_TRAIL_GAP*pageHeight) continue;
+    if(lines.slice(i+1).every(l=>l.top>=PROBLEM_PDF_TRAIL_ZONE*pageHeight)) return {lastBodyBottom:lines[i].bottom,trailStart:lines[i+1].top,trailLines:lines.length-1-i};
+  }
+  return null;
+}
+async function problemPdfInkRuns(page,x0,x1,yFrom,yTo){
+  const vp=page.getViewport({scale:1}), canvas=document.createElement('canvas');
+  canvas.width=Math.ceil(vp.width); canvas.height=Math.ceil(vp.height);
+  const ctx=canvas.getContext('2d',{alpha:false,willReadFrequently:true}); ctx.fillStyle='#fff'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  await page.render({canvasContext:ctx,viewport:vp}).promise;
+  const xa=Math.max(0,Math.floor(x0)), xb=Math.min(canvas.width,Math.ceil(x1)), ya=Math.max(0,Math.floor(yFrom)), yb=Math.min(canvas.height,Math.ceil(yTo));
+  if(xb<=xa||yb<=ya) return [];
+  const w=xb-xa, data=ctx.getImageData(xa,ya,w,yb-ya).data, rows=[];
+  for(let y=0;y<yb-ya;y++){
+    let n=0; for(let x=0;x<w;x++){ const i=(y*w+x)*4; if(data[i]*.3+data[i+1]*.59+data[i+2]*.11<215) n++; }
+    rows.push(n>=2);
+  }
+  const runs=[]; let st=-1;
+  for(let y=0;y<=rows.length;y++){
+    if(y<rows.length&&rows[y]){ if(st<0) st=y; }
+    else if(st>=0){ if(y-st>=3) runs.push({top:ya+st,bottom:ya+y}); st=-1; }   // 가는 선(1~2행)은 그림으로 보지 않는다
+  }
+  return runs;
+}
+async function problemPdfTrimTrailingRegions(pages,plans,regions){
+  const last=new Map();
+  for(const r of regions){ const k=r.page+'|'+(r.column||'FULL'), cur=last.get(k); if(!cur||r.y0>cur.y0) last.set(k,r); }
+  for(const r of last.values()){
+    try{
+      const plan=plans.find(p=>p.pageNo===r.page); if(!plan) continue;
+      const cut=problemPdfTrailingCut(plan.items,r,plan.height); if(!cut) continue;
+      const runs=await problemPdfInkRuns(pages[r.page],r.x0,r.x1,cut.lastBodyBottom+1,cut.trailStart-2);
+      const figBottom=runs.length?Math.max(...runs.map(x=>x.bottom)):0;
+      const nb=Math.max(cut.lastBodyBottom,figBottom)+8;
+      const y1=Math.min(r.y1,Math.max(nb,r.y0+55));
+      if(y1<r.y1){ r.y1=y1; r.trailingTrimmed=true; }
+    }catch(e){ console.warn('problem region trailing trim skipped',e); }
+  }
+  return regions;
+}
+
 function problemPdfSourceMeta(fileName){
   const name=String(fileName||''), stem=name.replace(/\.pdf$/i,'');
   const grade=(name.match(/(초[4-6]|중[1-3]|고[1-3])/)||[])[1]||'';
@@ -8189,10 +8253,15 @@ function problemPdfAnswerNoKey(v){
   if(!Number.isFinite(n)||n<1||n>300) return '';
   return String(n).padStart(2,'0');
 }
+// NFKC 는 전각 숫자·공백 정리에는 좋지만 ²→2, ½→1⁄2, ③→3 처럼 정답의 뜻을 바꾸는 글자도 일반 글자로 바꾼다. 그런 글자는 그대로 둔다.
+const PROBLEM_PDF_KEEP_FORM_CHARS='\u00B2\u00B3\u00B9\u00BC-\u00BE\u2070-\u209F\u2150-\u215F\u2460-\u2473\u2776-\u2793';
+function problemPdfNfkcKeepMath(v){
+  return String(v||'').replace(new RegExp('[^'+PROBLEM_PDF_KEEP_FORM_CHARS+']+','g'),seg=>seg.normalize('NFKC'));
+}
 function problemPdfCleanAnswerText(v){
   const raw=problemPdfDecodeText(String(v||'')).trim();
   if(/^[①②③④⑤]$/.test(raw)) return raw;
-  let t=raw.normalize('NFKC').replace(/\s+/g,' ').trim();
+  let t=problemPdfNfkcKeepMath(raw).replace(/\s+/g,' ').trim();
   if(!t) return '';
   t=t.replace(/^(?:정답|답)\s*[:：]?\s*/,'').trim();
   if(!t || /^[-–—·•]+$/.test(t)) return '';
@@ -8345,6 +8414,7 @@ async function autoIngestProblemPdf(input){
       segmentationMeta={method:'ai-page-vision',quality:regions.length?1:0,detected:regions.length,layout:'vision'};
       textDetected=false;
     }
+    if(textDetected&&regions.length) regions=await problemPdfTrimTrailingRegions(pages,plans,regions);
     if(!regions.length) throw new Error('문항을 찾지 못했습니다. 텍스트 탐지와 AI 이미지 탐지를 모두 확인해주세요.');
     say(`문항 ${regions.length}개 탐지 · ${segmentationMeta.layout||''} · 경계품질 ${Math.round(Number(segmentationMeta.quality||0)*100)}% · 정답표 확인 중…`);
     const answerMap=await problemPdfExtractAnswerCandidates(pdf), sourceMeta=problemPdfSourceMeta(file.name);

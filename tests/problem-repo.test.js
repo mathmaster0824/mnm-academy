@@ -84,7 +84,7 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
       if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: cors });
       if (worker.fail) return r.fulfill({ status: 404, headers: cors, contentType: 'application/json', body: '{"error":"not found"}' });
       if (u.pathname === '/upload') { worker.uploads.push(1); return r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ storageKey: 'problem-crop/test-' + worker.uploads.length + '.jpg', contentType: 'image/jpeg' }) }); }
-      if (u.pathname === '/photo') { worker.deletes++; return r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: '{}' }); }
+      if (u.pathname === '/photo') { if (r.request().method() === 'DELETE') worker.deletes++; return r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: '{}' }); }
       if (u.pathname === '/segment-problem-page' && worker.segByPage) { worker.segment++; const pg = JSON.parse(r.request().postData() || '{}').page; const nos = worker.segByPage[pg] || []; return r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ segments: nos.map((no, i) => ({ problemNo: String(no), left: .05, top: .08 + i * .22, right: .95, bottom: .28 + i * .22 })) }) }); }
       if (u.pathname === '/segment-problem-page') { worker.segment++; return r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ segments: [{ problemNo: '1', left: .05, top: .08, right: .95, bottom: .30 }, { problemNo: '2', left: .05, top: .30, right: .95, bottom: .50 }, { problemNo: '3', left: .05, top: .50, right: .95, bottom: .70 }] }) }); }
       r.fulfill({ status: 404, headers: cors, contentType: 'application/json', body: '{"error":"not found"}' });
@@ -375,6 +375,51 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
         oldSourceMarked: firstIds.every((id) => !!store.problemSources[id].supersededBy) };
     }, require('fs').readFileSync(path.join(__dirname, 'fixtures', 'sample-cid-ko.pdf')).toString('base64'));
     check('같은 파일 재수집: 이전 출처는 대체 표시, 이전 초안은 superseded, 이미 저장(saved)한 초안은 그대로', rRe.nowSources === rRe.firstSources + 1 && rRe.oldSourceMarked && rRe.savedKept === 1 && rRe.supersededCount === rRe.total - 1, JSON.stringify(rRe));
+
+    // 14-7) 쪽 아래쪽 안내 상자·꼬리말·쪽 번호가 마지막 문항에 섞이지 않는지 + 위첨자 정답(24cm²) 보존 (첨부 시험 PDF 와 같은 구조의 합성 파일)
+    const regionsOf = async (fixture) => page.evaluate(async (b64) => {
+      const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const pdfjs = await loadMnmPdfJs(); const pdf = await pdfjs.getDocument({ data: bin, cMapUrl: PROBLEM_PDF_CMAP_URL, cMapPacked: true }).promise;
+      const pages = [], plans = []; for (let n = 1; n <= pdf.numPages; n++) { const pg = await pdf.getPage(n); pages[n] = pg; plans.push(await problemPdfPagePlan(pg, n)); }
+      const built = problemPdfBuildRegions(plans); const untrimmed = built.regions.map((r) => Math.round(r.y1));
+      await problemPdfTrimTrailingRegions(pages, plans, built.regions);
+      return { untrimmed, trimmed: built.regions.map((r) => Math.round(r.y1)), flags: built.regions.map((r) => !!r.trailingTrimmed) };
+    }, fsx.readFileSync(path.join(__dirname, 'fixtures', fixture)).toString('base64'));
+    const rF = await ingestFile('sample-footer-ko.pdf', 'footer-sample.pdf');
+    const gF = await regionsOf('sample-footer-ko.pdf');
+    console.log('PROBLEM-REPO INFO 꼬리말 PDF: ' + JSON.stringify({ ...rF, geo: gF }));
+    check('꼬리말 PDF: 문항 3개, AI 분리 요청 0회, 정답 6·24cm²·5 연결(위첨자 ² 가 2 로 바뀌지 않음)', rF.n === 3 && rF.segCalls === 0 && rF.answers.map((x) => x.a).join() === '6,24cm²,5', JSON.stringify(rF.answers));
+    check('쪽 마지막 문항(3번) 본문에 안내 문구·꼬리말·쪽 번호가 섞이지 않고 문항 글만 남음', rF.texts[2].t === '25의 20%는 얼마인지 구하세요.' && rF.texts.every((x) => !/풀이 안내|안내 문장|가상 시험 자료|1쪽/.test(x.t)), JSON.stringify(rF.texts));
+    check('마지막 문항 영역만 아래쪽이 줄어듦(쪽 끝 820 → 문항 바로 아래, 최소 높이 55pt 유지), 앞 문항 영역은 그대로', gF.untrimmed[2] > 800 && gF.trimmed[2] < 340 && gF.trimmed[2] >= 285 && gF.trimmed[0] === gF.untrimmed[0] && gF.trimmed[1] === gF.untrimmed[1] && gF.flags.join() === 'false,false,true', JSON.stringify(gF));
+
+    // 그림이 있는 마지막 문항: 그림은 남기고 그 아래 안내·꼬리말만 제외
+    const rG = await ingestFile('sample-figure-ko.pdf', 'figure-sample.pdf');
+    const gG = await regionsOf('sample-figure-ko.pdf');
+    console.log('PROBLEM-REPO INFO 그림 PDF: ' + JSON.stringify({ n: rG.n, texts: rG.texts, geo: gG }));
+    check('그림이 있는 마지막 문항: 영역이 그림 아래 끝(쪽 위에서 약 412pt)까지는 포함하고 안내 상자(약 686pt) 앞에서 끝남', gG.trimmed[2] >= 412 && gG.trimmed[2] < 680 && gG.flags[2] === true, JSON.stringify(gG));
+    check('그림 PDF: 문항 3개, 3번 본문에 안내·꼬리말 없음, 정답 6·24cm²·5', rG.n === 3 && rG.texts[2].t === '25의 20%는 얼마인지 구하세요.' && rG.answers.map((x) => x.a).join() === '6,24cm²,5', JSON.stringify({ t: rG.texts, a: rG.answers }));
+
+    // 정리 규칙 단위 시험: 조건이 안 맞으면 자르지 않는다
+    const rT = await page.evaluate(() => {
+      const H = 842, reg = { x0: 0, x1: 595, y0: 100 };
+      const it = (str, topDownBaseline, x = 66) => ({ str, transform: [12, 0, 0, 12, x, H - topDownBaseline], height: 12 });
+      const cut = (items) => problemPdfTrailingCut(items, reg, H);
+      return {
+        noteFooter: cut([it('3. 본문', 280), it('풀이 안내', 710), it('꼬리말', 810)]),
+        smallGap: cut([it('3. 본문', 280), it('(1) 소문항', 360), it('(2) 소문항', 440)]),
+        gapButMidPage: cut([it('3. 본문', 200), it('(1) 그림 뒤 소문항', 520)]),
+        gapMidThenBottom: cut([it('3. 본문', 200), it('(1) 중간', 450), it('꼬리말', 810)]),
+        footerOnlyNoBigGap: cut([it('3. 본문', 600), it('꼬리말', 810)]),
+        onlyBody: cut([it('3. 본문', 280)]),
+      };
+    });
+    check('안내·꼬리말이 큰 빈틈(25%↑) 뒤 아래 20% 구역에만 있으면 자를 위치를 찾음', rT.noteFooter && rT.noteFooter.trailLines === 2 && rT.noteFooter.trailStart > 690, JSON.stringify(rT));
+    check('빈틈이 작거나, 큰 빈틈 뒤 글이 쪽 중간에 있거나, 본문만 있으면 자르지 않음(소문항·그림 뒤 글 보호)', rT.smallGap === null && rT.gapButMidPage === null && rT.onlyBody === null && rT.footerOnlyNoBigGap === null, JSON.stringify(rT));
+    check('쪽 중간 글 뒤에 큰 빈틈이 있고 그 뒤가 아래 구역뿐이면 그 틈에서 자름(중간 글은 본문으로 유지)', rT.gapMidThenBottom && rT.gapMidThenBottom.trailLines === 1 && rT.gapMidThenBottom.lastBodyBottom > 440 && rT.gapMidThenBottom.lastBodyBottom < 470, JSON.stringify(rT));
+
+    // 정답 글 정리 단위 시험: 위첨자·분수·동그라미 숫자는 유지, 전각 숫자·공백은 정리
+    const rC = await page.evaluate(() => { const f = problemPdfCleanAnswerText; return { sq: f('24cm²'), cube: f('8 cm³'), half: f('½'), circ: f('③'), circMulti: f('① ③'), full: f('１２'), sp: f('  12    34 '), pre: f('정답: 17'), x2: f('x²+1'), sub: f('H₂O') }; });
+    check('정답 글 정리: ², ³, ½, ①③, ₂ 는 그대로, 전각 숫자·공백만 정리, "정답:" 접두 제거', rC.sq === '24cm²' && rC.cube === '8 cm³' && rC.half === '½' && rC.circ === '③' && rC.circMulti === '① ③' && rC.full === '12' && rC.sp === '12 34' && rC.pre === '17' && rC.x2 === 'x²+1' && rC.sub === 'H₂O', JSON.stringify(rC));
   }
 
   // 15) 정답 표기 차이: PDF 정답표는 ③ 로 저장되지만 학생 답지 입력은 1~5 숫자 → 같은 답으로 채점되어야 한다
