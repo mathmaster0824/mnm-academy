@@ -218,6 +218,10 @@ const LESSON = '2026-10-14', MON = '2026-10-12', TUE = '2026-10-13';
   const after = { D1: strip(await both(D1)), D2: strip(await both(D2)) };
   check('실제 새로고침 후에도 저장된 상태가 유지되고 반별 카드·상세 표가 서로 일치(D1 인증 ↔ D2 인증)', JSON.stringify(after) === JSON.stringify(expectD) && after.D1.dt.includes('선생님 직접 확인') && after.D2.dt.includes('선생님 직접 확인') && after.D1.c.includes('직접'), JSON.stringify({ expectD, after }));
 
+  // 재제출: submitHomework 는 status 를 HW_AUTO_SUBMITTED('제출완료')로 저장한다. 미인증(×)이 된 기록이 그 값으로 바뀌면 다시 인증(○)으로 보이고 완료로 집계된다(함수 수준 확인, 제출 화면 전체 흐름은 아님).
+  const resub = await page.evaluate(() => { const before = { studentId: 'stu_b', date: '2026-10-19', status: '미인증', hwPhotos: ['photo-b.jpg'], submittedAt: '2026-10-19T10:00:00.000Z' }; const after = { ...before, status: HW_AUTO_SUBMITTED }; return { b: homeworkCountsAsCompleted(before, '2026-10-19'), a: homeworkCountsAsCompleted(after, '2026-10-19'), mark: homeworkReviewMark(after, '2026-10-19', 'stu_b') }; });
+  check('미인증(×)이 된 기록이 재제출 상태(제출완료)로 바뀌면 다시 인증(○)·완료로 집계(함수 수준)', resub.b === false && resub.a === true && resub.mark === '○', JSON.stringify(resub));
+
   // 9-9) 기기로 제출한 학생 B: 반별 카드에서 O→X 저장 → 실제 새로고침 → 저장값만으로 다시 그려도 ×, 사진·제출시각 보존
   await mountBoth(); await page.evaluate(() => { window.__who = 'stu_b'; window.__draw2(); });
   const bBefore = await store('stu_b_' + D1);
