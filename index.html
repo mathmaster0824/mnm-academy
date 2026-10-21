@@ -7793,6 +7793,8 @@ async function loadMnmPdfJs(){
   return mnmPdfJsPromise;
 }
 function problemPdfNumberCandidate(raw){
+  // 원문자(①②…, ⑴, ❶ 등)는 객관식 보기 번호이지 문항 번호가 아니다. NFKC 정규화 전에 걸러야 한다(정규화하면 ①→1 이 되어 문항 번호로 오인됨).
+  if(/^[\s]*[\u2460-\u2473\u2474-\u2487\u24EB-\u24F4\u2776-\u2793\u3251-\u325F\u32B1-\u32BF]/.test(String(raw||''))) return null;
   const s=String(raw||'').normalize('NFKC').replace(/\s+/g,'').trim();
   if(!s) return null;
 
@@ -7934,7 +7936,20 @@ function problemPdfBuildRegions(plans){
     }
     const markerTop=p.height-label.y;
     const top=Math.max(0,markerTop-14);
-    const bottom=next?Math.max(top+55,p.height-next.y-7):p.height-22;
+    // 다음 문항 번호 글자의 윗부분(큰 굵은 숫자는 기준선보다 7pt 넘게 올라온다)이 이 문항 이미지에 걸치지 않도록, 다음 문항 영역의 시작(기준선 위 14pt)까지 내려 자른다.
+    // 단, 이 영역 안 마지막 본문 글줄의 기준선 아래 3pt 밑으로는 올리지 않는다(밀집 조판에서 글자 잘림 방지). 기준선 위 7pt 아래로는 내려가지 않는다(기존 동작 하한).
+    let bottom=p.height-22;
+    if(next){
+      const nextTop=p.height-next.y, hi=nextTop-7;
+      let lo=nextTop-14;
+      for(const it of p.items||[]){
+        if(!String(it.str||'').trim()) continue;
+        const tr=it.transform||[], ix=Number(tr[4]||0), base=p.height-Number(tr[5]||0);
+        if(ix<x0+8||ix>x1-4||base<top+4||base>=nextTop-4) continue;
+        lo=Math.max(lo,base+3);
+      }
+      bottom=Math.max(top+55,Math.min(hi,lo));
+    }
     const printedNo=String(label.n).padStart(2,'0');
     const problemNo=hasDuplicatePrinted?String(i+1).padStart(3,'0'):printedNo;
     all.push({
@@ -7993,7 +8008,9 @@ function problemPdfTrailingCut(items,region,pageHeight,opts){
     const tr=it.transform||[], x=Number(tr[4]||0), yb=pageHeight-Number(tr[5]||0);
     const h=Math.abs(Number(it.height||tr[3]||10))||10;
     if(!Number.isFinite(x)||!Number.isFinite(yb)) continue;
-    if(x<region.x0+8||x>region.x1-4||yb<region.y0) continue;
+    // 쪽 가운데 정렬 꼬리말("M&m · 91")은 두 단 사이 경계를 가로지른다. 오른쪽 단에서는 글 시작점이 단 왼쪽 경계 바로 앞이라도, 쪽 아래 구역 글이 이 영역과 가로로 겹치면 꼬리말로 본다.
+    const w=Number(it.width)||0, inFooterBand=yb>=PROBLEM_PDF_FOOTER_BAND*pageHeight, overlapsRegion=inFooterBand&&x+w>region.x0+2&&x<region.x1-4;
+    if((x<region.x0+8&&!overlapsRegion)||x>region.x1-4||yb<region.y0) continue;
     rows.push({yb,x,str,top:yb-h*.9,bottom:yb+h*.25,recur:!!(recur&&recur(it))});
   }
   rows.sort((a,b)=>a.yb-b.yb||a.x-b.x);
@@ -8186,7 +8203,7 @@ async function problemPdfPagePlan(page,pageNo){
   const items=tc.items||[], pageText=items.map(x=>String(x.str||'')).join(' ');
   return {
     pageNo,width:viewport.width,height:viewport.height,items,pageText,
-    isAnswerPage:problemPdfIsAnswerPageText(pageText,problemPdfAnswerTextLines(items.map(x=>({text:x.str,x:x.transform?.[4],y:x.transform?.[5],w:x.width})))),
+    isAnswerPage:problemPdfIsAnswerPageText(pageText,problemPdfAnswerTextLines(items.map(x=>({text:x.str,x:x.transform?.[4],y:x.transform?.[5],w:x.width,h:x.height})))),
     candidates:problemPdfDetectNumberItems(items,viewport)
   };
 }
@@ -8316,7 +8333,8 @@ function problemPdfCleanAnswerText(v){
 }
 function problemPdfGroupAnswerRows(items){
   const clean=(items||[]).filter(x=>String(x.text||'').trim()).map(x=>({
-    text:String(x.text||'').trim(), x:Number(x.x||0), y:Number(x.y||0), w:Number.isFinite(Number(x.w))&&x.w!==null&&x.w!==''?Number(x.w):null
+    text:String(x.text||'').trim(), x:Number(x.x||0), y:Number(x.y||0), w:Number.isFinite(Number(x.w))&&x.w!==null&&x.w!==''?Number(x.w):null,
+    h:Number.isFinite(Number(x.h))&&x.h!==null&&x.h!==''?Number(x.h):null
   })).sort((a,b)=>Math.abs(a.y-b.y)>5?b.y-a.y:a.x-b.x);
   const rows=[];
   for(const it of clean){
@@ -8326,6 +8344,25 @@ function problemPdfGroupAnswerRows(items){
   }
   rows.forEach(r=>r.items.sort((a,b)=>a.x-b.x));
   return rows.sort((a,b)=>b.y-a.y);
+}
+// 한 칸의 답이 여러 text item 으로 쪼개진 경우 이어 붙인다. 앞 글자에 바짝 붙고 더 작고 약간 위에 있는 숫자는 위첨자(cm², x²)로 보고 ²·³ 같은 원래 표기로 되돌린다.
+const PROBLEM_PDF_SUPERSCRIPT_MAP={'0':'\u2070','1':'\u00B9','2':'\u00B2','3':'\u00B3','4':'\u2074','5':'\u2075','6':'\u2076','7':'\u2077','8':'\u2078','9':'\u2079'};
+function problemPdfJoinAnswerCells(cells){
+  let out='', prev=null;
+  for(const c of cells||[]){
+    const t=String(c.text||'').trim(); if(!t){continue;}
+    let piece=t, sep=' ';
+    if(prev){
+      const prevEnd=prev.w!==null&&prev.w!==undefined?prev.x+prev.w:null;
+      const gap=prevEnd===null?99:c.x-prevEnd, rise=c.y-prev.y;
+      const smaller=c.h!==null&&c.h!==undefined&&prev.h!==null&&prev.h!==undefined&&c.h<prev.h*.92;
+      if(gap<=1.5&&rise>=1.5&&rise<=8&&smaller&&/^[0-9]{1,2}$/.test(t)&&/[A-Za-z\uAC00-\uD7A3)\]]$/.test(out)){
+        piece=t.replace(/[0-9]/g,d=>PROBLEM_PDF_SUPERSCRIPT_MAP[d]); sep='';
+      }else if(gap<=0.8) sep='';
+    }else sep='';
+    out+=sep+piece; prev=c;
+  }
+  return out.trim();
 }
 function problemPdfExtractAnswerPairsFromItems(items){
   const out=new Map(), rows=problemPdfGroupAnswerRows(items);
@@ -8346,6 +8383,19 @@ function problemPdfExtractAnswerPairsFromItems(items){
         const ans=problemPdfCleanAnswerText(m[2]);
         if(ans) setPair(m[1],ans,0.97,/^[①②③④⑤]$/.test(ans)?'answer-table-choice':'answer-table-text');
       }
+    }
+
+    // C. 앞자리 0이 붙은 번호("001")가 한 행에 여러 개 있는 표: "유형01 대표 | ④ | 001 | a ≠ 2 | 002 | 4".
+    // 앞자리 0 번호는 답과 헷갈릴 일이 거의 없으므로 번호로 보고, 다음 번호 전까지의 모든 칸(여러 text item 으로 쪼개진 답 포함)을 그 번호의 답으로 모은다.
+    // 번호 앞의 칸(유형 이름, 원문자 대표 답)은 번호가 없는 문항의 것이라 이 단계에서는 쓰지 않는다.
+    const zeroIdx=[]; xs.forEach((x,i)=>{ if(/^0\d{1,2}$/.test(String(x.text||'').normalize('NFKC').trim())&&problemPdfAnswerNoKey(x.text)) zeroIdx.push(i); });
+    if(zeroIdx.length){
+      zeroIdx.forEach((zi,k)=>{
+        const end=k+1<zeroIdx.length?zeroIdx[k+1]:xs.length;
+        const ans=problemPdfJoinAnswerCells(xs.slice(zi+1,end));
+        if(ans) setPair(xs[zi].text,ans,/^[①②③④⑤]$/.test(ans)?1:0.93,/^[①②③④⑤]$/.test(ans)?'answer-table-choice':'answer-table-text');
+      });
+      continue;
     }
 
     // B. "1 | ③ | 2 | ⑤ | 3 | 12"처럼 번호와 답이 별도 text item인 다열 표.
@@ -8395,7 +8445,8 @@ async function problemPdfExtractAnswerCandidates(pdf){
       text:String(it.str||'').trim(),
       x:Number(it.transform?.[4]||0),
       y:Number(it.transform?.[5]||0),
-      w:it.width
+      w:it.width,
+      h:it.height
     }));
     const pageText=items.map(x=>x.text).join(' ');
     if(!problemPdfIsAnswerPageText(pageText,problemPdfAnswerTextLines(items))) continue;

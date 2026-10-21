@@ -417,6 +417,25 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
     check('"풀이 과정을 …쓰고" 안내만으로 서술형으로 단정하지 않음(단답형), 증명·서술 지시와 객관식은 기존대로', rTy.proc === 'short' && rTy.procOnly === 'short' && rTy.prove === 'constructed' && rTy.mc === 'mc', JSON.stringify(rTy));
     check('경계 시험 PDF 3번(풀이 과정 안내 포함)은 단답형으로 저장되고 정답 원문(25cm², 24cm)은 변경 없이 저장됨', rB.answers[2].t === 'short' && rB.answers[1].a === '25cm²' && rB.answers[2].a === '24cm', JSON.stringify(rB.answers));
 
+    // 14-9) 2단 문제 쪽 · 앞자리 0 번호('001') · 번호 없는 대표 문항(원문자 보기) · 두 단 경계를 가로지르는 쪽 가운데 꼬리말 · 한 행에 번호 2개인 빠른 정답표(답이 여러 item, 위첨자)
+    // 실제 교재에서 재현된 오류를 가상 내용으로 본뜬 시험(실제 교재 파일은 저장소에 넣지 않음).
+    const rT2 = await ingestFile('sample-twocol-ko.pdf', 'twocol-sample.pdf');
+    const gT2 = await regionsOf('sample-twocol-ko.pdf');
+    console.log('PROBLEM-REPO INFO 2단 합성 PDF: ' + JSON.stringify({ n: rT2.n, answers: rT2.answers.map((x) => x.a), texts: rT2.texts.map((x) => x.t.slice(0, 30)), segCalls: rT2.segCalls, geo: gT2 }));
+    check('2단·앞자리 0 번호: 보기 ①~⑤ 를 문항 번호로 오인하지 않고 문항 8개(001~008), AI 분리 요청 0회', rT2.n === 8 && rT2.segCalls === 0 && !/중단/.test(rT2.status) && rT2.answers.map((x) => x.no).join() === '01,02,03,04,05,06,07,08', JSON.stringify({ n: rT2.n, s: rT2.status, no: rT2.answers.map((x) => x.no) }));
+    check('문항별 본문이 맞게 나뉨(번호 글자는 빠지고 각 문항 첫 글이 해당 문제)', rT2.texts[0].t.startsWith('직선 y') && rT2.texts[2].t.startsWith('둘레의 길이가 24 cm') && rT2.texts[3].t.startsWith('점 (1, 3)') && rT2.texts[7].t.startsWith('5의 제곱') && rT2.texts.every((x) => !/대표유형|다음 중 옳은 것은/.test(x.t)), JSON.stringify(rT2.texts));
+    check('한 행에 번호 2개인 정답표: 번호별 답 연결, 여러 칸으로 쪼개진 답 이어붙임, 작게 올린 숫자는 위첨자(²)로 보존', rT2.answers.map((x) => x.a).join('|') === 'a ≠ 2|4|36 cm²|(1, −3)|3|4|6 cm|25', JSON.stringify(rT2.answers));
+    check('쪽 가운데 꼬리말이 두 단 경계를 가로질러도 오른쪽 단 마지막 문항(004, 008) 영역이 꼬리말(약 798pt) 앞에서 끝남', gT2.trimmed[3] < 790 && gT2.trimmed[7] < 790 && gT2.flags[3] === true && gT2.flags[7] === true && gT2.untrimmed[3] > 800, JSON.stringify(gT2));
+    check('다음 문항 번호 글자가 앞 문항 영역에 걸치지 않음(001 영역 아래 끝이 002 번호 기준선 위 14pt 이내, 약 506pt)', gT2.untrimmed[0] <= 507 && gT2.untrimmed[2] <= 507, JSON.stringify(gT2));
+    const rU = await page.evaluate(() => ({
+      circ: problemPdfNumberCandidate('①'), circ3: problemPdfNumberCandidate('③ 2'), zero: problemPdfNumberCandidate('001'), plain: problemPdfNumberCandidate('3'),
+      sup: problemPdfJoinAnswerCells([{ text: '36 cm', x: 437, y: 363, w: 29, h: 10 }, { text: '2', x: 466, y: 366, w: 4, h: 7 }]),
+      noSup: problemPdfJoinAnswerCells([{ text: '36 cm', x: 437, y: 363, w: 29, h: 10 }, { text: '2', x: 466, y: 363, w: 5, h: 10 }]),
+      gapSpace: problemPdfJoinAnswerCells([{ text: 'a', x: 273, y: 710, w: 6, h: 10 }, { text: '≠ 2', x: 281, y: 710, w: 18, h: 10 }])
+    }));
+    check('원문자는 문항 번호 후보가 아니고 "001"·"3" 은 후보(기존 동작 유지)', rU.circ === null && rU.circ3 === null && rU.zero && rU.zero.n === 1 && rU.plain && rU.plain.n === 3, JSON.stringify(rU));
+    check('답 이어붙이기: 작고 위로 올라 바짝 붙은 숫자만 위첨자, 같은 크기·같은 높이의 숫자는 그대로, 떨어진 칸은 공백', rU.sup === '36 cm²' && rU.noSup === '36 cm2' && rU.gapSpace === 'a ≠ 2', JSON.stringify(rU));
+
     // 같은 줄이라도 가로로 멀리 떨어진 글은 다른 덩어리: 제목 판정 단위 시험
     const rL = await page.evaluate(() => {
       const L = (arr) => problemPdfAnswerTextLines(arr.map(([text, x, y, w]) => ({ text, x, y, w })));
