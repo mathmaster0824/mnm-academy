@@ -100,9 +100,10 @@ const OLD_FRI = '2026-09-18', OLD_MON = '2026-09-14', OLD_WED = '2026-09-16', OL
     render();
   }, { OLD_MON });
   await page.waitForFunction((week)=>fridayWeekLoads[week]?.status==='loaded', OLD_MON);
-  const board = await page.evaluate(()=>document.getElementById('mainArea').innerText);
+  const boardState = await page.evaluate(()=>({text:document.getElementById('mainArea').innerText, cache:db.fridaySupp, server:window.__store.fridaySupp}));
+  const board=boardState.text;
   check('보강 전용 페이지가 월수반·화목반 및 학생별 해야 할 일을 표시함',
-    board.includes('월수반') && board.includes('화목반') && board.includes('가짜D') && board.includes('오답 3개') && board.includes('서버에서 새로고침'), board.slice(-500));
+    board.includes('월수반') && board.includes('화목반') && board.includes('가짜D') && board.includes('오답 3개') && board.includes('서버에서 새로고침'), JSON.stringify(boardState).slice(-1600));
   const saveTask = await page.evaluate(async (week) => {
     const key='cls_x_'+week;
     const ok=await updateFriday(key,'stu_d','tasksText','틀린 문제 다시 풀기');
@@ -110,7 +111,7 @@ const OLD_FRI = '2026-09-18', OLD_MON = '2026-09-14', OLD_WED = '2026-09-16', OL
   }, OLD_MON);
   check('학생별 할 일만 고쳐도 기존 예약 시간·메모가 보존되고 서버에도 저장됨',
     saveTask.ok && saveTask.saved.tasksText==='틀린 문제 다시 풀기' && saveTask.saved.time==='15:00' && saveTask.saved.note==='숨김 메모', JSON.stringify(saveTask));
-  const dashboardSummary=await page.evaluate(()=>renderFridayDashboardSummary(OLD_MON));
+  const dashboardSummary=await page.evaluate((week)=>renderFridayDashboardSummary(week),OLD_MON);
   check('메인 요약은 같은 시간 학생을 한 번씩 집계하고, 메모·해야 할 일 내용은 노출하지 않음',
     dashboardSummary.includes('15:00 · 2명') && dashboardSummary.includes('가짜D') && dashboardSummary.includes('가짜F(다른 반)') && !dashboardSummary.includes('숨김 메모') && !dashboardSummary.includes('틀린 문제 다시 풀기'), dashboardSummary);
 
