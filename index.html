@@ -1737,10 +1737,15 @@ function renderFridayDashboardSummary(date){
   if(state.status==='error') return `<div class="card"><div class="row between"><h3 style="margin:0;">🕓 이번 주 금요일 보강 · ${fmtDate(friday)}</h3><button class="btn sm outline" onclick="goto('fridaySupp')">상세 기록</button></div><p style="color:var(--red);font-size:12px;">일부 반의 보강 기록을 서버에서 읽지 못했습니다. 빈 예약으로 처리하지 않았어요.</p><button class="btn sm outline" onclick="retryFridayWeekLoad('${week}')">다시 불러오기</button></div>`;
   const rows=getFridaySuppRows(week);
   const groups={};
-  rows.forEach(r=>{const slot=r.time||'시간 미정';(groups[slot]=groups[slot]||new Map()).set(r.stuId,r.studentName);});
+  rows.forEach(r=>{
+    const match=(r.time||'').match(/^([01]\d|2[0-3]):[0-5]\d$/);
+    const slot=match?`${match[1]}:00`:'시간 미정';
+    (groups[slot]=groups[slot]||new Map()).set(r.stuId,r.time?`${r.studentName} (${r.time})`:r.studentName);
+  });
   const content=Object.keys(groups).sort((a,b)=>a==='시간 미정'?1:b==='시간 미정'?-1:a.localeCompare(b)).map(slot=>{
     const names=[...groups[slot].values()];
-    return `<div style="padding:8px 0;border-bottom:1px solid var(--line);"><b>${escapeHtml(slot)} · ${names.length}명</b><div style="font-size:13px;margin-top:3px;">${names.map(escapeHtml).join(' · ')}</div></div>`;
+    const label=slot==='시간 미정'?slot:`${slot}–${slot.slice(0,2)}:59`;
+    return `<div style="padding:8px 0;border-bottom:1px solid var(--line);"><b>${escapeHtml(label)} · ${names.length}명</b><div style="font-size:13px;margin-top:3px;">${names.map(escapeHtml).join(' · ')}</div></div>`;
   }).join('');
   return `<div class="card"><div class="row between"><h3 style="margin:0;">🕓 이번 주 금요일 보강 · ${fmtDate(friday)}</h3><button class="btn sm outline" onclick="goto('fridaySupp')">상세 기록</button></div>${content||`<div class="empty" style="padding:14px;">예약된 학생이 없어요.</div>`}</div>`;
 }
