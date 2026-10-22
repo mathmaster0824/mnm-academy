@@ -479,6 +479,29 @@ function dateDaysAgoISO(days){
   const d=new Date(); d.setHours(12,0,0,0); d.setDate(d.getDate()-Number(days||0));
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
+function shiftISODate(dateISO,days){
+  const d=new Date(dateISO+'T12:00:00');
+  d.setDate(d.getDate()+Number(days||0));
+  return toLocalISODate(d);
+}
+function mergeFridaySuppData(preferred,legacy){
+  const merged={};
+  Object.entries(legacy||{}).forEach(([stuId,value])=>{ if(value&&typeof value==='object') merged[stuId]={...value}; });
+  Object.entries(preferred||{}).forEach(([stuId,value])=>{ if(value&&typeof value==='object') merged[stuId]={...(merged[stuId]||{}),...value}; });
+  return merged;
+}
+async function readFridaySuppWeek(clsId,weekStart){
+  const currentKey=clsId+'_'+weekStart;
+  // 예전 일요일 키 기록도 읽기만 해서 현재 주 보강에 합쳐 보여준다. 원본/Firestore 문서는 옮기거나 지우지 않는다.
+  const legacyKey=clsId+'_'+shiftISODate(weekStart,-1);
+  const [currentDoc,legacyDoc]=await Promise.all([
+    fsdb.collection('fridaySupp').doc(currentKey).get({source:'server'}),
+    fsdb.collection('fridaySupp').doc(legacyKey).get({source:'server'})
+  ]);
+  const current=currentDoc.exists?currentDoc.data():{};
+  const legacy=legacyDoc.exists?legacyDoc.data():{};
+  return {key:currentKey,exists:!!(currentDoc.exists||legacyDoc.exists),data:mergeFridaySuppData(current,legacy),legacyFound:!!legacyDoc.exists};
+}
 async function ensureClassDateData(clsId,date,force){
   if(!session || session.mode!=='director' || !clsId || !/^\d{4}-\d{2}-\d{2}$/.test(date||'')) return;
   const wk=weekStartISO(date);
@@ -489,8 +512,14 @@ async function ensureClassDateData(clsId,date,force){
     if(!force && db[col] && db[col][key]!==undefined) return;
     try{
       // v97: 반 페이지를 열 때는 캐시가 아니라 서버에서 직접 읽는다(일괄 적용 등 다른 경로로 저장된 기록이 빠지지 않게)
-      const doc=await fsdb.collection(col).doc(key).get({source:'server'});
-      if(doc.exists){ db[col][key]=doc.data(); }
+      if(col==='fridaySupp'){
+        const result=await readFridaySuppWeek(clsId,wk);
+        if(result.exists) db.fridaySupp[key]=result.data;
+        else delete db.fridaySupp[key];
+      }else{
+        const doc=await fsdb.collection(col).doc(key).get({source:'server'});
+        if(doc.exists){ db[col][key]=doc.data(); }
+      }
     }catch(e){
       console.error('[수업 데이터 조회 오류]',col,key,e);
       currentSubState.classLoadError='이 날짜의 수업 기록을 서버에서 불러오지 못했어요. 비어 보여도 기록이 없는 게 아닐 수 있으니 새로고침 후 다시 확인해주세요.';
@@ -1002,6 +1031,7 @@ const DIRECTOR_NAV = [
   {id:'students', label:'학생별 관리', icon:'🧑‍🎓', group:'수업'},
   {id:'curriculum', label:'커리큘럼 설정', icon:'🧭', group:'수업'},
   {id:'hwreview', label:'숙제 확인', icon:'📸', group:'오늘의 관리'},
+  {id:'fridaySupp', label:'금요일 보강', icon:'🕓', group:'오늘의 관리'},
   {id:'stadAdmin', label:'STAD', icon:'⏰', group:'오늘의 관리'},
   {id:'qna', label:'질문', icon:'💬', group:'오늘의 관리'},
   {id:'kmmMakeup', label:'KMM 보강', icon:'📐', group:'오늘의 관리'},
@@ -1622,6 +1652,7 @@ function renderInner(){
       case 'weekendStudy': html+=renderWeekendStudyAdmin(); break;
       case 'stadAdmin': html+=renderStadAdmin(); break;
       case 'hwreview': html+=renderHomeworkReview(); break;
+      case 'fridaySupp': html+=renderFridaySuppPage(); break;
       case 'qna': html+=renderQnaDirector(); break;
       case 'feedback': html+=renderFeedback(); break;
       case 'monthlyReport': html+=renderMonthlyReports(); break;
@@ -1641,7 +1672,37 @@ function renderInner(){
 
 /* ---------------- DASHBOARD ---------------- */
 function getTodaysFridaySupp(){
-  const thisWeek = weekStartISO(todayISO());
+  return getFridaySuppRows(todayISO());
+}
+const fridayWeekLoads={};
+function requestFridayWeekLoad(date){
+  const week=weekStartISO(date);
+  const existing=fridayWeekLoads[week];
+  if(existing && existing.status!=='idle') return;
+  fridayWeekLoads[week]={status:'loading',errors:[]};
+  Promise.all(sortedClasses().map(async cls=>{
+    try{
+      const result=await readFridaySuppWeek(cls.id,week);
+      if(result.exists) db.fridaySupp[result.key]=result.data;
+      else delete db.fridaySupp[result.key];
+    }catch(e){
+      console.error('[금요일 보강 주간 조회 오류]',cls.id,week,e);
+      fridayWeekLoads[week].errors.push(cls.name||cls.id);
+    }
+  })).then(()=>{
+    const state=fridayWeekLoads[week];
+    state.status=state.errors.length?'error':'loaded';
+    if(currentView==='dashboard'||currentView==='fridaySupp') render();
+  });
+}
+function retryFridayWeekLoad(date){
+  const week=weekStartISO(date);
+  delete fridayWeekLoads[week];
+  requestFridayWeekLoad(week);
+  render();
+}
+function getFridaySuppRows(date){
+  const thisWeek = weekStartISO(date);
   const rows = [];
   Object.entries(db.fridaySupp).forEach(([key, byStu])=>{
     const weekPart = key.slice(-10);
@@ -1651,7 +1712,7 @@ function getTodaysFridaySupp(){
     Object.entries(byStu||{}).forEach(([stuId, supp])=>{
       if(!supp || !supp.needed) return;
       const s = studentById(stuId);
-      rows.push({ key, stuId, studentName: s? s.name : '(삭제된 학생)', className: cls? cls.name : '-', time: supp.time||'', note: supp.note||'', done: !!supp.done });
+       rows.push({ key, stuId, studentName: s? s.name : '(삭제된 학생)', className: cls? cls.name : '-', time: supp.time||'', note: supp.note||'', tasksText:supp.tasksText||'', done: !!supp.done });
     });
   });
   rows.sort((a,b)=>{
@@ -1661,6 +1722,79 @@ function getTodaysFridaySupp(){
     return a.studentName.localeCompare(b.studentName);
   });
   return rows;
+}
+function getFridayDuplicateRows(date){
+  const byStudent={};
+  getFridaySuppRows(date).forEach(r=>{(byStudent[r.stuId]=byStudent[r.stuId]||[]).push(r);});
+  return Object.values(byStudent).filter(group=>group.length>1);
+}
+function renderFridayDashboardSummary(date){
+  const week=weekStartISO(date);
+  requestFridayWeekLoad(week);
+  const state=fridayWeekLoads[week];
+  const friday=weekDates(week)[4];
+  if(!state||state.status==='loading') return `<div class="card"><div class="row between"><h3 style="margin:0;">🕓 이번 주 금요일 보강 · ${fmtDate(friday)}</h3><button class="btn sm outline" onclick="goto('fridaySupp')">상세 기록</button></div><div class="empty" style="padding:14px;">예약 현황을 불러오는 중이에요.</div></div>`;
+  if(state.status==='error') return `<div class="card"><div class="row between"><h3 style="margin:0;">🕓 이번 주 금요일 보강 · ${fmtDate(friday)}</h3><button class="btn sm outline" onclick="goto('fridaySupp')">상세 기록</button></div><p style="color:var(--red);font-size:12px;">일부 반의 보강 기록을 서버에서 읽지 못했습니다. 빈 예약으로 처리하지 않았어요.</p><button class="btn sm outline" onclick="retryFridayWeekLoad('${week}')">다시 불러오기</button></div>`;
+  const rows=getFridaySuppRows(week);
+  const groups={};
+  rows.forEach(r=>{const slot=r.time||'시간 미정';(groups[slot]=groups[slot]||new Map()).set(r.stuId,r.studentName);});
+  const content=Object.keys(groups).sort((a,b)=>a==='시간 미정'?1:b==='시간 미정'?-1:a.localeCompare(b)).map(slot=>{
+    const names=[...groups[slot].values()];
+    return `<div style="padding:8px 0;border-bottom:1px solid var(--line);"><b>${escapeHtml(slot)} · ${names.length}명</b><div style="font-size:13px;margin-top:3px;">${names.map(escapeHtml).join(' · ')}</div></div>`;
+  }).join('');
+  return `<div class="card"><div class="row between"><h3 style="margin:0;">🕓 이번 주 금요일 보강 · ${fmtDate(friday)}</h3><button class="btn sm outline" onclick="goto('fridaySupp')">상세 기록</button></div>${content||`<div class="empty" style="padding:14px;">예약된 학생이 없어요.</div>`}</div>`;
+}
+function shiftFridayBoardWeek(days){
+  const week=weekStartISO(currentSubState.fridayBoardDate||todayISO());
+  currentSubState.fridayBoardDate=shiftISODate(week,days);
+  render();
+}
+function setFridayBoardWeek(date){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date||'')) return;
+  currentSubState.fridayBoardDate=weekStartISO(date);
+  render();
+}
+function openFridayBoard(date){
+  currentView='fridaySupp';
+  currentSubState={fridayBoardDate:weekStartISO(date||todayISO())};
+  attachDirectorViewListeners('fridaySupp'); buildNav(); render(); toggleSidebar(false);
+}
+function renderFridaySuppClass(cls,week){
+  const key=cls.id+'_'+week, saved=db.fridaySupp[key]||{};
+  const ids=new Set([...(cls.studentIds||[]),...Object.keys(saved).filter(stuId=>{
+    const x=saved[stuId]||{}; return x.needed||x.time||x.tasksText||x.note||x.done;
+  })]);
+  const students=[...ids].map(id=>({id,student:studentById(id)})).sort((a,b)=>(a.student?.name||'삭제된 학생').localeCompare(b.student?.name||'삭제된 학생','ko'));
+  if(!students.length) return `<div class="empty" style="padding:12px;">학생이 없어요.</div>`;
+  return `<div style="overflow-x:auto;"><table><tr><th>학생</th><th>예약</th><th>시간</th><th>학생별 해야 할 일 (한 줄에 하나씩)</th><th>메모</th><th>보강 완료</th></tr>${students.map(({id,student})=>{
+    const x=saved[id]||{};
+    return `<tr>
+      <td><b>${escapeHtml(student?.name||'(삭제된 학생 기록)')}</b></td>
+      <td><input type="checkbox" aria-label="${escapeHtml(student?.name||'학생')} 보강 예약" ${x.needed?'checked':''} onchange="updateFriday('${key}','${id}','needed',this.checked)"></td>
+      <td><input type="time" value="${/^\d{2}:\d{2}$/.test(x.time||'')?x.time:''}" onchange="updateFriday('${key}','${id}','time',this.value)"></td>
+      <td><textarea rows="2" style="min-width:190px;width:100%;" placeholder="예: 오답 3문제 다시 풀기" onchange="updateFriday('${key}','${id}','tasksText',this.value)">${escapeHtml(x.tasksText||'')}</textarea></td>
+      <td><input type="text" value="${escapeHtml(x.note||'')}" placeholder="메모" onchange="updateFriday('${key}','${id}','note',this.value)"></td>
+      <td style="text-align:center;"><input type="checkbox" aria-label="${escapeHtml(student?.name||'학생')} 보강 완료" ${x.done?'checked':''} onchange="toggleFridayDone('${key}','${id}',this.checked)"></td>
+    </tr>`;
+  }).join('')}</table></div>`;
+}
+function renderFridaySuppPage(){
+  const week=weekStartISO(currentSubState.fridayBoardDate||todayISO());
+  requestFridayWeekLoad(week);
+  const state=fridayWeekLoads[week], dates=weekDates(week), friday=dates[4];
+  let body='';
+  if(!state||state.status==='loading') body=`<div class="empty">이번 주 예약을 서버에서 불러오는 중이에요.</div>`;
+  else if(state.status==='error') body=`<div class="card" style="border-color:var(--red);"><p style="color:var(--red);">${escapeHtml(state.errors.join(', '))} 기록을 읽지 못했습니다. 빈 명단으로 처리하지 않았어요.</p><button class="btn sm outline" onclick="retryFridayWeekLoad('${week}')">다시 불러오기</button></div>`;
+  else body=['mon-wed','tue-thu'].map(group=>{
+    const label=group==='mon-wed'?'월수반':'화목반';
+    const classes=sortedClasses().filter(c=>c.dayGroup===group);
+    return `<section class="card"><h2 style="margin-top:0;">${label}</h2>${classes.length?classes.map(c=>`<div style="margin:12px 0 20px;"><h3>${escapeHtml(c.name)}</h3>${renderFridaySuppClass(c,week)}</div>`).join(''):`<div class="empty" style="padding:12px;">등록된 ${label}이 없어요.</div>`}</section>`;
+  }).join('');
+  const duplicates=state&&state.status==='loaded'?getFridayDuplicateRows(week):[];
+  const duplicateNotice=duplicates.length?`<div class="card" style="border-color:var(--red);color:#a83b32;"><b>중복 예약 확인</b><div style="font-size:12px;margin-top:5px;">${duplicates.map(g=>`${escapeHtml(g[0].studentName)}: ${g.map(x=>`${escapeHtml(x.className)} ${escapeHtml(x.time||'시간 미정')}`).join(' / ')}`).join('<br>')}</div></div>`:'';
+  return `<h1 class="page-title">금요일 보강</h1><p class="page-sub">월수반·화목반에서 예약하고, 같은 주의 금요일에 이어서 확인합니다.</p>
+    <div class="card"><div class="row between"><div class="row"><button class="btn sm outline" onclick="shiftFridayBoardWeek(-7)">이전 주</button><label>기준 주 <input type="date" value="${week}" onchange="setFridayBoardWeek(this.value)"></label><button class="btn sm outline" onclick="shiftFridayBoardWeek(7)">다음 주</button></div><b>금요일 ${fmtDate(friday)}</b></div>
+    <p style="font-size:12px;color:#8a8674;margin:8px 0 0;">이 주간 기록은 반별 페이지와 공유됩니다. 예약 인원은 체크된 학생을 기준으로 자동 집계돼요.</p></div>${duplicateNotice}${body}`;
 }
 
 // 경고 계산 시작일은 관리자 '전체 경고 초기화' 시 자동 갱신됩니다.
@@ -1720,7 +1854,6 @@ function renderDashboard(){
   const stadAttendanceDone = stadApprovedToday.filter(x=>{ const d=stadDailyFor(x.studentId,stadToday); return d && d.attended; }).length;
   const outStudents = db.students.filter(s=>verifiedWarnings(s).length>=3);
   const pwWarn = db.settings.isDefaultPassword;
-  const fridayRows = dow===5 ? getTodaysFridaySupp() : [];
   const today = todayISO();
   // v1: 관리자 대시보드에서는 '몇 개 제출'뿐 아니라 날짜별 제출/미제출을 함께 보여준다.
   // 기존 Firebase submissions 데이터는 읽기만 하며 저장/경고 로직은 건드리지 않는다.
@@ -1845,26 +1978,7 @@ function renderDashboard(){
       </div>`).join('')}
     </div>` : `<div class="empty" style="padding:16px;">표시할 숙제 검사기간이 없어요.</div>`}
   </div>` : ''}
-  ${dow===5 ? `<div class="card">
-    <h3 style="margin-top:0;">🕓 오늘 금요일 보강 (시간순)</h3>
-    ${fridayRows.length ? `<table><tr><th></th><th>시간</th><th>학생</th><th>반</th><th>메모</th></tr>
-      ${fridayRows.map(r=>`<tr>
-        <td><input type="checkbox" ${r.done?'checked':''} onchange="toggleFridayDone('${r.key}','${r.stuId}',this.checked)"></td>
-        <td><b style="${r.done?'text-decoration:line-through;color:#9c9880;':''}">${r.time||'시간 미정'}</b></td>
-        <td style="${r.done?'text-decoration:line-through;color:#9c9880;':''}">${r.studentName}</td>
-        <td style="${r.done?'color:#9c9880;':''}">${r.className}</td>
-        <td><input type="text" value="${r.note||''}" placeholder="메모" style="font-size:12px;width:100%;" onchange="updateFriday('${r.key}','${r.stuId}','note',this.value)"></td>
-      </tr>`).join('')}
-      </table>` : `<div class="empty" style="padding:20px;">오늘 보강이 필요한 학생이 없어요.</div>`}
-    <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);">
-      <div style="font-size:12px;color:#8a8674;margin-bottom:4px;">혹시 빠뜨린 학생 있으면 추가해주세요</div>
-      <div class="row">
-        <select id="fridayAddClass" onchange="onFridayAddClassChange()"><option value="">반 선택</option>${sortedClasses().map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
-        <select id="fridayAddStudent"><option value="">학생 선택 (반 먼저)</option></select>
-        <button class="btn sm gold" onclick="addFridayFromDashboard()">추가</button>
-      </div>
-    </div>
-  </div>` : ''}
+  ${renderFridayDashboardSummary(today)}
   ${pwWarn ? `<details style="margin-top:10px;border:1px solid #efc2bd;background:#fff8f6;border-radius:10px;padding:8px 12px;">
     <summary style="cursor:pointer;color:#a83b32;font-size:12px;font-weight:800;">⚠️ 기본 비밀번호 사용 중 · 눌러서 변경</summary>
     <div class="row" style="margin-top:9px;">
@@ -2119,7 +2233,7 @@ function renderClassDetail(cls){
   </div>
 
   <div class="card" style="overflow-x:auto;">
-    <h3 style="margin-top:0;">금요일 보강 체크</h3>
+    <div class="row between"><h3 style="margin:0;">금요일 보강 체크</h3><button class="btn sm outline" onclick="openFridayBoard('${date}')">전용 페이지에서 기록</button></div>
     ${renderFridaySupp(cls, date)}
   </div>
   `;
@@ -2967,8 +3081,16 @@ function renderFridaySupp(cls,date){
     }).join('')}
   </table>`;
 }
-async function updateFriday(key,stuId,field,val){ await fsSet('fridaySupp', key, {[stuId]: {[field]:val}}); }
-async function toggleFridayDone(key,stuId,checked){ await fsSet('fridaySupp', key, {[stuId]: {done:checked}}); }
+async function updateFriday(key,stuId,field,val){
+  const byStudent=db.fridaySupp[key]||{};
+  const updatedStudent={...(byStudent[stuId]||{}),[field]:val};
+  const ok=await fsSet('fridaySupp', key, {[stuId]:updatedStudent});
+  if(!ok) return false;
+  db.fridaySupp[key]={...byStudent,[stuId]:updatedStudent};
+  if(currentView==='dashboard'||currentView==='fridaySupp') scheduleRender();
+  return true;
+}
+async function toggleFridayDone(key,stuId,checked){ return updateFriday(key,stuId,'done',checked); }
 function onFridayAddClassChange(){
   const clsId = document.getElementById('fridayAddClass').value;
   const cls = classById(clsId);
