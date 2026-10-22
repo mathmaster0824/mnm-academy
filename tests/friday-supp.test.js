@@ -101,7 +101,7 @@ const OLD_FRI = '2026-09-18', OLD_MON = '2026-09-14', OLD_WED = '2026-09-16', OL
   await page.waitForFunction((week)=>fridayWeekLoads[week]?.status==='loaded', OLD_MON);
   const board = await page.evaluate(()=>document.getElementById('mainArea').innerText);
   check('보강 전용 페이지가 월수반·화목반 및 학생별 해야 할 일을 표시함',
-    board.includes('월수반') && board.includes('화목반') && board.includes('가짜D') && board.includes('오답 3개'), board.slice(-500));
+    board.includes('월수반') && board.includes('화목반') && board.includes('가짜D') && board.includes('오답 3개') && board.includes('서버에서 새로고침'), board.slice(-500));
   const saveTask = await page.evaluate(async () => {
     const key='cls_x_'+OLD_MON;
     const ok=await updateFriday(key,'stu_d','tasksText','틀린 문제 다시 풀기');
