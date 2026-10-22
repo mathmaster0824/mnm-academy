@@ -9,7 +9,7 @@ const results = [];
 const check = (name, ok, detail) => { results.push(ok); console.log(`FRIDAY-SUPP ${ok ? '✔' : '✖'} ${name}${ok ? '' : '  ← ' + (detail || '')}`); };
 
 // 가짜 데이터: 2026-09-14(월) 주의 금요일 = 2026-09-18. 시험 실행일(최근 7일 범위)보다 충분히 과거.
-const OLD_FRI = '2026-09-18', OLD_MON = '2026-09-14', OLD_WED = '2026-09-16', OLD_SUN = '2026-09-20';
+const OLD_FRI = '2026-09-18', OLD_MON = '2026-09-14', OLD_WED = '2026-09-16', OLD_SUN = '2026-09-20', OLD_SUN_KEY = '2026-09-13';
 (async () => {
   const browser = await chromium.launch({ args: ['--no-sandbox'] });
   const page = await browser.newPage();
@@ -73,11 +73,11 @@ const OLD_FRI = '2026-09-18', OLD_MON = '2026-09-14', OLD_WED = '2026-09-16', OL
 
   // 구형 일요일 키도 현재 주 보강으로 읽되, 서버의 두 원본 문서는 읽기 전용으로 남는다.
   await setup();
-  await page.evaluate(({ OLD_MON, OLD_SUN }) => {
-    window.__store.fridaySupp['cls_x_' + OLD_SUN] = { stu_d: { needed: true, time: '16:00', note: '일요일 키 기록' }, stu_e: { needed: true, time: '17:00' } };
+  await page.evaluate(({ OLD_MON, OLD_SUN_KEY }) => {
+    window.__store.fridaySupp['cls_x_' + OLD_SUN_KEY] = { stu_d: { needed: true, time: '16:00', note: '일요일 키 기록' }, stu_e: { needed: true, time: '17:00' } };
     window.__store.fridaySupp['cls_x_' + OLD_MON] = { stu_d: { needed: true, time: '15:00', note: '월요일 키 우선' } };
     window.__snapBefore = JSON.stringify(window.__store.fridaySupp);
-  }, { OLD_MON, OLD_SUN });
+  }, { OLD_MON, OLD_SUN_KEY });
   await page.evaluate(async (d) => { await ensureClassDateData('cls_x', d, true); }, OLD_WED);
   const compatible = await view('cls_x', OLD_WED);
   check('구형 일요일 키의 다른 학생 예약은 같은 주에 표시되고, 월요일 키의 동일 학생 값이 우선함',
@@ -94,6 +94,7 @@ const OLD_FRI = '2026-09-18', OLD_MON = '2026-09-14', OLD_WED = '2026-09-16', OL
       ['cls_y_'+OLD_MON]: { stu_f:{needed:true,time:'15:00',note:'다른 반 메모',tasksText:'연산 문제'} },
     };
     db.fridaySupp={};
+    delete fridayWeekLoads[OLD_MON];
     currentSubState={fridayBoardDate:OLD_MON};
     currentView='fridaySupp';
     render();
@@ -102,11 +103,11 @@ const OLD_FRI = '2026-09-18', OLD_MON = '2026-09-14', OLD_WED = '2026-09-16', OL
   const board = await page.evaluate(()=>document.getElementById('mainArea').innerText);
   check('보강 전용 페이지가 월수반·화목반 및 학생별 해야 할 일을 표시함',
     board.includes('월수반') && board.includes('화목반') && board.includes('가짜D') && board.includes('오답 3개') && board.includes('서버에서 새로고침'), board.slice(-500));
-  const saveTask = await page.evaluate(async () => {
-    const key='cls_x_'+OLD_MON;
+  const saveTask = await page.evaluate(async (week) => {
+    const key='cls_x_'+week;
     const ok=await updateFriday(key,'stu_d','tasksText','틀린 문제 다시 풀기');
     return {ok, saved:window.__store.fridaySupp[key].stu_d};
-  });
+  }, OLD_MON);
   check('학생별 할 일만 고쳐도 기존 예약 시간·메모가 보존되고 서버에도 저장됨',
     saveTask.ok && saveTask.saved.tasksText==='틀린 문제 다시 풀기' && saveTask.saved.time==='15:00' && saveTask.saved.note==='숨김 메모', JSON.stringify(saveTask));
   const dashboardSummary=await page.evaluate(()=>renderFridayDashboardSummary(OLD_MON));
