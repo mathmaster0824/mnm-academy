@@ -283,7 +283,7 @@ let unsubscribers = [];
 let roleUnsubscribers = [];
 let viewUnsubscribers = [];
 let loadedViewData = new Set(); // 로그인 이후(원장/학생)에만 붙는, 날짜별로 계속 쌓이는 데이터용 리스너
-let listenersReady = { settings:false, students:false };
+let listenersReady = { settings:false, students:false, classes:false };
 
 // local in-memory mirror, kept in sync by Firestore real-time listeners
 let db = {
@@ -427,7 +427,14 @@ function attachCoreListeners(){
       scheduleRender();
     }, err=>{ setConnStatus(false); }),
 
-    fsdb.collection('classes').onSnapshot(snap=>{ db.classes = snap.docs.map(d=>({id:d.id, ...d.data()})); scheduleRender(); }),
+    fsdb.collection('classes').onSnapshot(snap=>{
+      db.classes = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      listenersReady.classes = true;
+      Object.keys(fridayWeekLoads).forEach(week=>{
+        if(fridayWeekLoads[week]?.status==='waiting-classes') requestFridayWeekLoad(week);
+      });
+      scheduleRender();
+    }),
     fsdb.collection('courses').onSnapshot(snap=>{ db.courses = snap.docs.map(d=>({id:d.id, ...d.data()})); scheduleRender(); }),
     // videos는 첫 화면에 필요하지 않으므로 수업/영상 화면 진입 때만 불러온다.
     fsdb.collection('weekendSettings').doc('main').onSnapshot(doc=>{
@@ -1678,9 +1685,14 @@ const fridayWeekLoads={};
 function requestFridayWeekLoad(date){
   const week=weekStartISO(date);
   const existing=fridayWeekLoads[week];
-  if(existing && existing.status!=='idle') return;
+  if(existing && existing.status!=='idle' && existing.status!=='waiting-classes') return;
+  if(!listenersReady.classes){
+    fridayWeekLoads[week]={status:'waiting-classes',errors:[]};
+    return;
+  }
+  const classes=sortedClasses();
   fridayWeekLoads[week]={status:'loading',errors:[]};
-  Promise.all(sortedClasses().map(async cls=>{
+  Promise.all(classes.map(async cls=>{
     try{
       const result=await readFridaySuppWeek(cls.id,week);
       if(result.exists) db.fridaySupp[result.key]=result.data;
@@ -1733,7 +1745,7 @@ function renderFridayDashboardSummary(date){
   requestFridayWeekLoad(week);
   const state=fridayWeekLoads[week];
   const friday=weekDates(week)[4];
-  if(!state||state.status==='loading') return `<div class="card"><div class="row between"><h3 style="margin:0;">🕓 이번 주 금요일 보강 · ${fmtDate(friday)}</h3><button class="btn sm outline" onclick="goto('fridaySupp')">상세 기록</button></div><div class="empty" style="padding:14px;">예약 현황을 불러오는 중이에요.</div></div>`;
+  if(!state||state.status==='loading'||state.status==='waiting-classes') return `<div class="card"><div class="row between"><h3 style="margin:0;">🕓 이번 주 금요일 보강 · ${fmtDate(friday)}</h3><button class="btn sm outline" onclick="goto('fridaySupp')">상세 기록</button></div><div class="empty" style="padding:14px;">예약 현황을 불러오는 중이에요.</div></div>`;
   if(state.status==='error') return `<div class="card"><div class="row between"><h3 style="margin:0;">🕓 이번 주 금요일 보강 · ${fmtDate(friday)}</h3><button class="btn sm outline" onclick="goto('fridaySupp')">상세 기록</button></div><p style="color:var(--red);font-size:12px;">일부 반의 보강 기록을 서버에서 읽지 못했습니다. 빈 예약으로 처리하지 않았어요.</p><button class="btn sm outline" onclick="retryFridayWeekLoad('${week}')">다시 불러오기</button></div>`;
   const rows=getFridaySuppRows(week);
   const groups={};
