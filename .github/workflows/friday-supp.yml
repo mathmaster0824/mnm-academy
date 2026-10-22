@@ -1,0 +1,32 @@
+name: Friday makeup regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - index.html
+      - tests/friday-supp.test.js
+      - tests/helpers/firestore-stub.js
+      - .github/workflows/friday-supp.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  friday-supp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Playwright
+        run: npm install --no-save --package-lock=false playwright
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Check test syntax
+        run: node --check tests/friday-supp.test.js
+      - name: Run Friday makeup regression tests
+        run: node tests/friday-supp.test.js
