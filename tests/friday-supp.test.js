@@ -71,6 +71,27 @@ const OLD_FRI = '2026-09-18', OLD_MON = '2026-09-14', OLD_WED = '2026-09-16', OL
   const today = await page.evaluate(() => getTodaysFridaySupp().map((x) => x.studentName + '|' + x.time));
   check('대시보드 "오늘 금요일 보강"은 이번 주 기록을 그대로 모음', today.includes('가짜D|15:00'), JSON.stringify(today));
 
+  // 첫 진입에서 반 목록이 늦게 도착하는 순서를 재현한다. 미리 '빈 결과'로 확정되면 안 된다.
+  await setup();
+  await page.evaluate((week) => {
+    db.fridaySupp={};
+    delete fridayWeekLoads[week];
+    listenersReady.classes=false;
+    currentView='dashboard';
+    requestFridayWeekLoad(week);
+  }, OLD_MON);
+  const waitingSummary=await page.evaluate((week)=>renderFridayDashboardSummary(week), OLD_MON);
+  check('반 목록 로딩 전에는 빈 예약으로 확정하지 않고 대기 상태를 표시함',
+    waitingSummary.includes('예약 현황을 불러오는 중이에요.') && !waitingSummary.includes('예약된 학생이 없어요.'), waitingSummary);
+  await page.evaluate((week)=>{
+    listenersReady.classes=true;
+    requestFridayWeekLoad(week);
+  }, OLD_MON);
+  await page.waitForFunction((week)=>fridayWeekLoads[week]?.status==='loaded', OLD_MON);
+  const afterClassLoad=await page.evaluate((week)=>renderFridayDashboardSummary(week), OLD_MON);
+  check('반 목록 도착 후 서버 예약을 읽어 메인 요약에 학생 이름을 표시함',
+    afterClassLoad.includes('가짜D (15:00)') && afterClassLoad.includes('15:00–15:59 · 1명'), afterClassLoad);
+
   // 구형 일요일 키도 현재 주 보강으로 읽되, 서버의 두 원본 문서는 읽기 전용으로 남는다.
   await setup();
   await page.evaluate(({ OLD_MON, OLD_SUN_KEY }) => {
