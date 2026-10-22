@@ -1685,7 +1685,7 @@ const fridayWeekLoads={};
 function requestFridayWeekLoad(date){
   const week=weekStartISO(date);
   const existing=fridayWeekLoads[week];
-  if(existing && existing.status!=='idle') return;
+  if(existing && existing.status!=='idle' && existing.status!=='waiting-classes') return;
   if(!listenersReady.classes){
     fridayWeekLoads[week]={status:'waiting-classes',errors:[]};
     return;
