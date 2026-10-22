@@ -125,7 +125,7 @@ const EXPECT_ALL = [131, 151, 191].map(pad);
   await chip('key').click(); await settle();
   const keyShown = await shown();
   check('주요 문항 단독 필터: 저장소 전체(200개 중 첫 60개 밖 포함)에서 주요 문항만 모두 표시', same(keyShown.slice().sort(), KEY_IDS.slice().sort()) && firstPageIds.length === 60, JSON.stringify({ keyShown }));
-  check('요약: 조건에 맞는 문제 15개 · 저장소 전체 검사 완료, 칩은 눌림 상태', /\b15\b/.test(await page.locator('[role=status]').first().textContent()) && /전체 검사 완료/.test(await page.locator('[role=status]').first().textContent()) && (await chip('key').getAttribute('aria-pressed')) === 'true');
+  check('요약: 조건에 맞는 문제 15개 · 저장소 끝까지 검사했어요, 칩은 눌림 상태', /\b15\b/.test(await page.locator('[role=status]').first().textContent()) && /끝까지 검사했어요/.test(await page.locator('[role=status]').first().textContent()) && (await chip('key').getAttribute('aria-pressed')) === 'true');
   await chip('key').click(); await settle();
   check('같은 칩을 다시 누르면 개별 해제되어 전체 목록(첫 60개)으로 돌아옴', (await shown()).length === 60 && (await chip('key').getAttribute('aria-pressed')) === 'false');
 
@@ -166,10 +166,10 @@ const EXPECT_ALL = [131, 151, 191].map(pad);
   await chip('key').click(); await settle();
   const pageA = await shown();
   const btn = page.locator('button:has-text("조건에 맞는 문제 더 찾기")');
-  check(`주요 문항이 ${manyKey.length}개일 때 첫 화면은 60개 이상, "더 찾기" 버튼 표시, 아직 전체 검사 아님`, pageA.length >= 60 && pageA.length < manyKey.length && (await btn.count()) === 1 && !/전체 검사 완료/.test(await page.locator('[role=status]').first().textContent()), String(pageA.length));
+  check(`주요 문항이 ${manyKey.length}개일 때 첫 화면은 60개 이상, "더 찾기" 버튼 표시, 일부만 검사했다고 표시`, pageA.length >= 60 && pageA.length < manyKey.length && (await btn.count()) === 1 && /일부만 검사/.test(await page.locator('[role=status]').first().textContent()), String(pageA.length));
   let guard = 0; while ((await btn.count()) && guard++ < 6) { await btn.click(); await settle(); }
   const pageAll = await shown();
-  check(`"더 찾기"를 이어가면 ${manyKey.length}개 전부(중복·누락 없음) 표시되고 버튼이 사라지며 전체 검사 완료`, pageAll.length === manyKey.length && new Set(pageAll).size === manyKey.length && same(pageAll.slice().sort(), manyKey.slice().sort()) && (await btn.count()) === 0 && /전체 검사 완료/.test(await page.locator('[role=status]').first().textContent()), String(pageAll.length));
+  check(`"더 찾기"를 이어가면 ${manyKey.length}개 전부(중복·누락 없음) 표시되고 버튼이 사라지며 전체 검사 완료`, pageAll.length === manyKey.length && new Set(pageAll).size === manyKey.length && same(pageAll.slice().sort(), manyKey.slice().sort()) && (await btn.count()) === 0 && /끝까지 검사했어요/.test(await page.locator('[role=status]').first().textContent()), String(pageAll.length));
   check('정렬: 표시 순서는 저장소 순서(문서 ID 오름차순) 그대로 유지(필터를 켜도 뒤섞이지 않음)', same(pageAll, pageAll.slice().sort()));
   // 주요 문항 134여 개 중 앞쪽 60개에는 단원 조건에 맞는 문제가 없을 때: 버튼을 누르지 않아도 서버 페이지를 이어 읽어 저장소 끝까지 찾는다
   await setup(many);
@@ -192,6 +192,21 @@ const EXPECT_ALL = [131, 151, 191].map(pad);
   await page.locator('button:has-text("조건 모두 해제")').click(); await settle();
   check('"조건 모두 해제": 모든 필터·칩이 꺼지고 전체 목록으로 돌아옴', (await chip('key').getAttribute('aria-pressed')) === 'false' && (await shown()).length === 60 && (await page.locator('button:has-text("조건 모두 해제")').count()) === 0);
 
+  // 아주 큰 저장소(1300개): 한 번에 최대 10페이지(600개)만 검사하므로 "전체 검색"이라고 하지 않고, 버튼으로 이어서 끝까지 검사할 수 있어야 한다
+  const big = {};
+  for (let i = 1; i <= 1300; i++) big['q' + String(i).padStart(4, '0')] = { problemText: `가상 큰 저장소 ${i}`, type: 'short', points: 1, grade: '중1', semester: '1학기', majorUnit: i >= 1250 ? '3. 문자와 식' : '2. 정수와 유리수', middleUnit: '문자', status: 'active', isKeyProblem: true };
+  await setup(big);
+  await chip('key').click(); await settle();
+  await setTxt('대단원', '3. 문자와 식'); await settle();
+  const st1 = await page.locator('[role=status]').first().textContent(), bigBtn = page.locator('button:has-text("조건에 맞는 문제 더 찾기")');
+  check('1300개 저장소, 일치가 맨 뒤에만 있을 때: 10페이지(한 번에 최대 600개) 검사 후 0건이어도 "저장소 일부만 검사"·검사 개수·최대 검사 범위·이어 검사 방법을 표시하고 "전체 검색"이라 하지 않음', (await shown()).length === 0 && /일부만 검사/.test(st1) && /660개 검사/.test(st1) && /최대 600개/.test(st1) && /더 찾기/.test(st1) && (await bigBtn.count()) === 1 && !/끝까지 검사했어요/.test(st1) && /검사한 범위에는 조건에 맞는 문제가 없어요/.test(await page.locator('.empty').textContent()), st1 + ' | ' + (await page.locator('.empty').textContent()));
+  await bigBtn.click(); await settle();
+  const st2 = await page.locator('[role=status]').first().textContent();
+  check('"더 찾기"를 한 번 더 누르면 검사 개수(1260개)가 늘고 그 범위의 일치 문제(1250~1260번 11개)가 보이며 계속 이어서 검사할 수 있음', (await shown()).length === 11 && /1260개 검사/.test(st2) && /일부만 검사/.test(st2) && (await bigBtn.count()) === 1, st2);
+  await bigBtn.click(); await settle();
+  const st3 = await page.locator('[role=status]').first().textContent(), bigShown = await shown();
+  check('세 번째에서 10페이지 한계를 넘어 뒤쪽 일치 문제 51개(1250~1300번)를 모두 찾고, 저장소 끝까지 검사했다고 표시하며 버튼이 사라짐', bigShown.length === 51 && bigShown.every((x) => Number(x.slice(1)) >= 1250) && /끝까지 검사했어요\(1300개 검사\)/.test(st3) && (await bigBtn.count()) === 0, st3 + ' | ' + bigShown.length);
+
   // 기출 데이터가 저장소에 전혀 없을 때: 임의로 기출 처리하지 않고 안내
   const noPast = buildDocs(); Object.values(noPast).forEach((d) => delete d.isPastExam);
   await setup(noPast); await chip('past').click(); await settle();
@@ -200,7 +215,7 @@ const EXPECT_ALL = [131, 151, 191].map(pad);
   await setup(buildDocs());
   await page.evaluate(() => { const o = fsdb.collection; fsdb.collection = (c) => { const q = o(c); if (c !== 'problems') return q; const w = Object.create(q); w.where = () => { throw new Error('index required'); }; return w; }; });
   await chip('key').click(); await settle();
-  check('서버 검색이 실패하면 "전체 검색 아님"을 표시(일부만 검사한 결과를 전체 결과처럼 보이지 않음)', /전체 검색 아님/.test(await page.locator('[role=status]').first().textContent()));
+  check('서버 검색이 실패하면 "전체 검색이 아니에요"와 다시 시도 방법을 표시(일부만 검사한 결과를 전체 결과처럼 보이지 않음)', /전체 검색이 아니에요/.test(await page.locator('[role=status]').first().textContent()) && /새로고침/.test(await page.locator('[role=status]').first().textContent()));
   await page.evaluate(() => { fsdb.collection = window.__origCol || fsdb.collection; });
 
   // ───────── 6) 학생 과제 출제·기존 기능 회귀 ─────────

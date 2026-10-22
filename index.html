@@ -8935,9 +8935,19 @@ function problemKeyControl(p){
   return `<div class="pkey"><button type="button" class="btn sm ${on?'gold':'outline'} pkey-btn" data-pkey="${escapeHtml(p.id)}" aria-pressed="${on}" ${st.saving?'disabled':''} onclick="toggleProblemKey('${escapeHtml(p.id)}')">${label}</button>${st.error?`<div class="pkey-msg err" role="alert">저장 실패 · ${escapeHtml(st.error)}</div>`:st.ok?`<div class="pkey-msg ok" role="status">${escapeHtml(st.ok)}</div>`:''}</div>`;
 }
 function problemResultSummary(rows){
-  const f=problemStore.filter, total=problemStore.items.length;
-  const scope=problemStore.fallback?'<span style="color:#a56b25;">서버 검색에 실패해 처음 '+total+'개만 검사했어요(전체 검색 아님)</span>':problemStore.exhausted?`저장소 전체 검사 완료(${total}개 검사)`:`지금까지 ${total}개 검사 · 아직 더 있어요`;
-  return `<div style="font-size:12px;color:#6b6858;margin:0 0 8px;" role="status">조건에 맞는 문제 <b>${rows.length}</b>개 · ${scope}${problemFilterActive(f)?'':''}</div>`;
+  const f=problemStore.filter, total=problemStore.items.length, scanMax=PROBLEM_PAGE_SIZE*PROBLEM_MAX_SCAN_PAGES, active=problemFilterActive(f);
+  let scope, head=active?`조건에 맞는 문제 <b>${rows.length}</b>개`:`불러온 문제 <b>${rows.length}</b>개`;
+  if(problemStore.fallback){
+    // 서버 검색이 실패해 일반 목록 첫 페이지만 본 상태: 전체 검색이 아니다.
+    head=`지금 보이는 문제 <b>${rows.length}</b>개`;
+    scope=`<span style="color:#a56b25;"><b>전체 검색이 아니에요.</b> 서버 검색에 실패해 처음 ${total}개만 검사한 결과예요. 위 "새로고침"으로 다시 시도해 주세요.</span>`;
+  }else if(problemStore.exhausted){
+    scope=`저장소 끝까지 검사했어요(${total}개 검사).`;
+  }else{
+    head=active?`지금까지 찾은 문제 <b>${rows.length}</b>개`:head;
+    scope=`<span style="color:#a56b25;"><b>저장소 일부만 검사한 결과예요</b>(${total}개 검사, 한 번에 최대 ${scanMax}개까지 검사). 끝까지 보려면 아래 "${active?'조건에 맞는 문제 더 찾기':'다음 60개 더 불러오기'}" 버튼을 눌러 이어서 검사하세요.</span>`;
+  }
+  return `<div style="font-size:12px;color:#6b6858;margin:0 0 8px;line-height:1.5;" role="status">${head} · ${scope}</div>`;
 }
 function toggleProblemSelect(id){ problemStore.selected.has(id)?problemStore.selected.delete(id):problemStore.selected.add(id); render(); }
 function clearProblemSelection(){ problemStore.selected.clear(); render(); }
