@@ -70,6 +70,49 @@ const OLD_FRI = '2026-09-18', OLD_MON = '2026-09-14', OLD_WED = '2026-09-16', OL
   // 오늘 금요일 보강 목록(대시보드)은 이번 주 기록만 모은다(기존 동작)
   const today = await page.evaluate(() => getTodaysFridaySupp().map((x) => x.studentName + '|' + x.time));
   check('대시보드 "오늘 금요일 보강"은 이번 주 기록을 그대로 모음', today.includes('가짜D|15:00'), JSON.stringify(today));
+
+  // 구형 일요일 키도 현재 주 보강으로 읽되, 서버의 두 원본 문서는 읽기 전용으로 남는다.
+  await setup();
+  await page.evaluate(({ OLD_MON, OLD_SUN }) => {
+    window.__store.fridaySupp['cls_x_' + OLD_SUN] = { stu_d: { needed: true, time: '16:00', note: '일요일 키 기록' }, stu_e: { needed: true, time: '17:00' } };
+    window.__store.fridaySupp['cls_x_' + OLD_MON] = { stu_d: { needed: true, time: '15:00', note: '월요일 키 우선' } };
+    window.__snapBefore = JSON.stringify(window.__store.fridaySupp);
+  }, { OLD_MON, OLD_SUN });
+  await page.evaluate(async (d) => { await ensureClassDateData('cls_x', d, true); }, OLD_WED);
+  const compatible = await view('cls_x', OLD_WED);
+  check('구형 일요일 키의 다른 학생 예약은 같은 주에 표시되고, 월요일 키의 동일 학생 값이 우선함',
+    compatible.find(r=>r.name==='가짜D')?.time==='15:00' && compatible.find(r=>r.name==='가짜E')?.time==='17:00', JSON.stringify(compatible));
+  check('구형 키 호환 조회도 Firestore 원본을 이동·수정하지 않음',
+    await page.evaluate(()=>JSON.stringify(window.__store.fridaySupp)===window.__snapBefore));
+
+  // 전용 페이지: 월수/화목 반을 같은 주 기준으로 묶어 편집하고, 메인에는 시간/이름만 표시한다.
+  await setup();
+  await page.evaluate(({ OLD_MON }) => {
+    db.classes[1].dayGroup='tue-thu';
+    window.__store.fridaySupp={
+      ['cls_x_'+OLD_MON]: { stu_d:{needed:true,time:'15:00',note:'숨김 메모',tasksText:'오답 3개'}, stu_e:{needed:false,note:'미예약'} },
+      ['cls_y_'+OLD_MON]: { stu_f:{needed:true,time:'15:00',note:'다른 반 메모',tasksText:'연산 문제'} },
+    };
+    db.fridaySupp={};
+    currentSubState={fridayBoardDate:OLD_MON};
+    currentView='fridaySupp';
+    render();
+  }, { OLD_MON });
+  await page.waitForFunction((week)=>fridayWeekLoads[week]?.status==='loaded', OLD_MON);
+  const board = await page.evaluate(()=>document.getElementById('mainArea').innerText);
+  check('보강 전용 페이지가 월수반·화목반 및 학생별 해야 할 일을 표시함',
+    board.includes('월수반') && board.includes('화목반') && board.includes('가짜D') && board.includes('오답 3개'), board.slice(-500));
+  const saveTask = await page.evaluate(async () => {
+    const key='cls_x_'+OLD_MON;
+    const ok=await updateFriday(key,'stu_d','tasksText','틀린 문제 다시 풀기');
+    return {ok, saved:window.__store.fridaySupp[key].stu_d};
+  });
+  check('학생별 할 일만 고쳐도 기존 예약 시간·메모가 보존되고 서버에도 저장됨',
+    saveTask.ok && saveTask.saved.tasksText==='틀린 문제 다시 풀기' && saveTask.saved.time==='15:00' && saveTask.saved.note==='숨김 메모', JSON.stringify(saveTask));
+  const dashboardSummary=await page.evaluate(()=>renderFridayDashboardSummary(OLD_MON));
+  check('메인 요약은 같은 시간 학생을 한 번씩 집계하고, 메모·해야 할 일 내용은 노출하지 않음',
+    dashboardSummary.includes('15:00 · 2명') && dashboardSummary.includes('가짜D') && dashboardSummary.includes('가짜F(다른 반)') && !dashboardSummary.includes('숨김 메모') && !dashboardSummary.includes('틀린 문제 다시 풀기'), dashboardSummary);
+
   check('페이지 오류 없음', errs.length === 0, errs.join('|'));
   await browser.close();
   const fail = results.filter((x) => !x).length;
