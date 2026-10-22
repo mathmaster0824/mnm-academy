@@ -100,10 +100,10 @@ const OLD_FRI = '2026-09-18', OLD_MON = '2026-09-14', OLD_WED = '2026-09-16', OL
     render();
   }, { OLD_MON });
   await page.waitForFunction((week)=>fridayWeekLoads[week]?.status==='loaded', OLD_MON);
-  const boardState = await page.evaluate(()=>({text:document.getElementById('mainArea').innerText, cache:db.fridaySupp, server:window.__store.fridaySupp}));
+  const boardState = await page.evaluate(()=>({text:document.getElementById('mainArea').innerText, taskValues:[...document.querySelectorAll('#mainArea textarea')].map(x=>x.value), cache:db.fridaySupp, server:window.__store.fridaySupp}));
   const board=boardState.text;
   check('보강 전용 페이지가 월수반·화목반 및 학생별 해야 할 일을 표시함',
-    board.includes('월수반') && board.includes('화목반') && board.includes('가짜D') && board.includes('오답 3개') && board.includes('서버에서 새로고침'), JSON.stringify(boardState).slice(-1600));
+    board.includes('월수반') && board.includes('화목반') && board.includes('가짜D') && boardState.taskValues.includes('오답 3개') && board.includes('서버에서 새로고침'), JSON.stringify(boardState).slice(-1600));
   const saveTask = await page.evaluate(async (week) => {
     const key='cls_x_'+week;
     const ok=await updateFriday(key,'stu_d','tasksText','틀린 문제 다시 풀기');
