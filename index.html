@@ -3076,7 +3076,7 @@ function renderFridaySupp(cls,date){
         <td><b>${s.name}</b></td>
         <td><input type="checkbox" ${supp.needed?'checked':''} onchange="updateFriday('${key}','${s.id}','needed',this.checked)"></td>
         <td><input type="time" style="width:110px;" value="${/^\d{2}:\d{2}$/.test(supp.time||'')?supp.time:''}" onchange="updateFriday('${key}','${s.id}','time',this.value)"></td>
-        <td><input type="text" placeholder="내용 메모" style="width:100%;" value="${supp.note||''}" onchange="updateFriday('${key}','${s.id}','note',this.value)"></td>
+        <td><input type="text" placeholder="내용 메모" style="width:100%;" value="${escapeHtml(supp.note||'')}" onchange="updateFriday('${key}','${s.id}','note',this.value)"></td>
       </tr>`;
     }).join('')}
   </table>`;
