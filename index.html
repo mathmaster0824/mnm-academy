@@ -7519,6 +7519,7 @@ async function ensureOperationalProblemCandidate(meta){
       sourceKey:sourceKey||draft.sourceKey||'',
       originTypes:[...new Set([...(draft.originTypes||[]),meta.originType])],
       origins:hasOrigin?origins:[...origins,{type:meta.originType,id:meta.originId,at:new Date().toISOString()}],
+      ...(meta.originType==='learning-library'?{solutionAssetIds:[...new Set([...(draft.solutionAssetIds||[]),meta.originId])]}:{}),
       updatedAt:new Date().toISOString()
     };
     if(problemPhoto && !draft.cropKey){
