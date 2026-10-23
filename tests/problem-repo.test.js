@@ -678,6 +678,21 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
   check('같은 학습보관함 항목을 다시 동기화해도 후보·출처 연결이 중복 생성되지 않음', r13.repeatSameCandidate && r13.repeatOriginUnique, JSON.stringify(r13));
   check('다른 출처가 먼저 만든 후보에 학습보관함 자산을 나중에 연결해도 자산 ID와 양쪽 출처를 함께 보존', r13.mixedLinked && r13.mixedAssetRecorded && r13.mixedOriginsPreserved, JSON.stringify(r13));
 
+  // 14) 학습보관함 풀이자료는 질문의 교재·쪽·문항이 정확히 일치할 때만 표시
+  const r14 = await page.evaluate(() => {
+    const q = { id: 'q_exact', sourceType: 'TEXTBOOK', sourceCourseId: 'c1', sourceBook: '쎈', sourcePage: '12', sourceProblemNo: '3' };
+    db.questions = [q];
+    db.solutionPhotos = [
+      { id: 'sol_exact', courseId: 'c1', book: '쎈', page: '12', problemNo: '3', photo: { storageKey: 'solution/exact.jpg' } },
+      { id: 'sol_wrong_page', courseId: 'c1', book: '쎈', page: '13', problemNo: '3', photo: { storageKey: 'solution/wrong-page.jpg' } },
+      { id: 'sol_wrong_no', courseId: 'c1', book: '쎈', page: '12', problemNo: '4', photo: { storageKey: 'solution/wrong-no.jpg' } }
+    ];
+    const matches = autoSolutionMatchesForQuestion(q);
+    const html = renderAutoSolutionMatches(q.id);
+    return { ids: matches.map(x => x.id), htmlExact: html.includes('sol_exact'), htmlExcludesNear: !html.includes('sol_wrong_page') && !html.includes('sol_wrong_no'), directorOnly: html.includes('원장 화면에만 표시') };
+  });
+  check('학습보관함 자료는 교재·쪽·문항이 정확히 일치하는 질문에만 연결 후보로 나옴', r14.ids.join() === 'sol_exact' && r14.htmlExact && r14.htmlExcludesNear && r14.directorOnly, JSON.stringify(r14));
+
   check('페이지 오류 없음', errs.length === 0, errs.slice(0, 3).join(' | '));
   await browser.close();
   const bad = results.filter((x) => !x).length;
