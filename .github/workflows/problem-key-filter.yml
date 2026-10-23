@@ -1,0 +1,32 @@
+name: Problem repository key-filter regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - index.html
+      - tests/problem-key-filter.test.js
+      - tests/helpers/firestore-stub.js
+      - .github/workflows/problem-key-filter.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  key-filter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Playwright
+        run: npm install --no-save --package-lock=false playwright
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Check test syntax
+        run: node --check tests/problem-key-filter.test.js
+      - name: Run problem key-filter regression tests
+        run: node tests/problem-key-filter.test.js
