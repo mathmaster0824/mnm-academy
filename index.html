@@ -1795,6 +1795,47 @@ function renderFridaySuppClass(cls,week){
     </tr>`;
   }).join('')}</table></div>`;
 }
+// ---- 금요일 보강 "시간대별" 보기: 그 주 예약 학생을 1시간 단위 시간대로 묶어 보여 주고 보강 완료를 체크한다 ----
+// 반별 보기와 같은 데이터(db.fridaySupp)를 그대로 읽고 쓴다(별도 저장 구조 없음). 예약 체크·시간·할 일 입력은 반별 보기에서 한다.
+let fridayViewMode=''; // ''(자동) | 'time' | 'class' — 직접 고르면 앱을 닫기 전까지 유지
+function fridayViewModeFor(week){
+  if(fridayViewMode==='time'||fridayViewMode==='class') return fridayViewMode;
+  // 자동: 오늘이 금요일이고 오늘이 속한 주를 보고 있으면 시간대별(완료 체크용), 그 외에는 반별(예약 입력용)
+  const today=todayISO();
+  return (new Date(today+'T00:00:00').getDay()===5 && weekStartISO(today)===week)?'time':'class';
+}
+function setFridayViewMode(mode){ fridayViewMode=(mode==='time'||mode==='class')?mode:''; render(); }
+function fridaySlotOf(time){
+  const m=String(time||'').match(/^([01]\d|2[0-3]):[0-5]\d$/);
+  return m?`${m[1]}:00`:'';
+}
+function fridayTimeSlots(rows){
+  const slots=new Map();
+  rows.forEach(r=>{ const k=fridaySlotOf(r.time); if(!slots.has(k)) slots.set(k,[]); slots.get(k).push(r); });
+  return [...slots.entries()].sort((a,b)=>a[0]===''?1:b[0]===''?-1:a[0].localeCompare(b[0])).map(([k,list])=>({
+    slot:k, label:k?`${k}–${k.slice(0,2)}:59`:'시간 미정',
+    rows:[...list].sort((a,b)=>String(a.time||'').localeCompare(String(b.time||''))||a.studentName.localeCompare(b.studentName,'ko'))
+  }));
+}
+async function fridayDoneFromTime(el,key,stuId){
+  const want=el.checked; el.disabled=true;
+  const ok=await toggleFridayDone(key,stuId,want);
+  if(!ok){ el.checked=!want; el.disabled=false; alert('보강 완료 저장에 실패했어요. 다시 눌러주세요.'); }
+}
+function renderFridayTimeView(week){
+  const rows=getFridaySuppRows(week), slots=fridayTimeSlots(rows);
+  if(!rows.length) return `<div class="card"><div class="empty" style="padding:14px;">이 주에 보강 예약된 학생이 없어요. 반별 보기에서 예약을 체크하세요.</div></div>`;
+  const doneAll=rows.filter(r=>r.done).length;
+  return `<div class="card" data-friday-time-summary><b>보강 완료 ${doneAll}/${rows.length}명</b><span style="font-size:12px;color:#8a8674;margin-left:8px;">예약 체크·시간·할 일 입력은 "반별 보기"에서 해요.</span></div>`+slots.map(g=>{
+    const done=g.rows.filter(r=>r.done).length;
+    return `<section class="card" data-friday-slot="${escapeHtml(g.slot||'none')}"><div class="row between" style="margin-bottom:6px;"><h3 style="margin:0;">${escapeHtml(g.label)}</h3><span class="badge ${done===g.rows.length?'green':'gray'}">${done}/${g.rows.length}명 완료</span></div>
+      <div style="overflow-x:auto;"><table style="table-layout:fixed;width:100%;min-width:640px;"><colgroup><col style="width:70px"><col style="width:110px"><col style="width:120px"><col><col style="width:22%"><col style="width:90px"></colgroup><tr><th>시간</th><th>학생</th><th>반</th><th>해야 할 일</th><th>메모</th><th style="text-align:center;">보강 완료</th></tr>${g.rows.map(r=>`<tr data-friday-row="${escapeHtml(r.stuId)}" style="${r.done?'background:#eef8f0;':''}">
+        <td>${escapeHtml(r.time||'미정')}</td><td><b>${escapeHtml(r.studentName)}</b></td><td>${escapeHtml(r.className)}</td>
+        <td style="white-space:pre-wrap;">${escapeHtml(r.tasksText||'')}</td><td>${escapeHtml(r.note||'')}</td>
+        <td style="text-align:center;"><input type="checkbox" style="width:26px;height:26px;" aria-label="${escapeHtml(r.studentName)} 보강 완료" ${r.done?'checked':''} onchange="fridayDoneFromTime(this,'${r.key}','${r.stuId}')"></td>
+      </tr>`).join('')}</table></div></section>`;
+  }).join('');
+}
 function renderFridaySuppPage(){
   const week=weekStartISO(currentSubState.fridayBoardDate||todayISO());
   requestFridayWeekLoad(week);
@@ -1802,16 +1843,18 @@ function renderFridaySuppPage(){
   let body='';
   if(!state||state.status==='loading') body=`<div class="empty">이번 주 예약을 서버에서 불러오는 중이에요.</div>`;
   else if(state.status==='error') body=`<div class="card" style="border-color:var(--red);"><p style="color:var(--red);">${escapeHtml(state.errors.join(', '))} 기록을 읽지 못했습니다. 빈 명단으로 처리하지 않았어요.</p><button class="btn sm outline" onclick="retryFridayWeekLoad('${week}')">다시 불러오기</button></div>`;
+  else if(fridayViewModeFor(week)==='time') body=renderFridayTimeView(week);
   else body=['mon-wed','tue-thu'].map(group=>{
     const label=group==='mon-wed'?'월수반':'화목반';
     const classes=sortedClasses().filter(c=>c.dayGroup===group);
     return `<section class="card"><h2 style="margin-top:0;">${label}</h2>${classes.length?classes.map(c=>`<div style="margin:12px 0 20px;"><h3>${escapeHtml(c.name)}</h3>${renderFridaySuppClass(c,week)}</div>`).join(''):`<div class="empty" style="padding:12px;">등록된 ${label}이 없어요.</div>`}</section>`;
   }).join('');
+  const mode=fridayViewModeFor(week);
   const duplicates=state&&state.status==='loaded'?getFridayDuplicateRows(week):[];
   const duplicateNotice=duplicates.length?`<div class="card" style="border-color:var(--red);color:#a83b32;"><b>중복 예약 확인</b><div style="font-size:12px;margin-top:5px;">${duplicates.map(g=>`${escapeHtml(g[0].studentName)}: ${g.map(x=>`${escapeHtml(x.className)} ${escapeHtml(x.time||'시간 미정')}`).join(' / ')}`).join('<br>')}</div></div>`:'';
   return `<h1 class="page-title">금요일 보강</h1><p class="page-sub">월수반·화목반에서 예약하고, 같은 주의 금요일에 이어서 확인합니다.</p>
     <div class="card"><div class="row between"><div class="row"><button class="btn sm outline" onclick="shiftFridayBoardWeek(-7)">이전 주</button><label>기준 주 <input type="date" value="${week}" onchange="setFridayBoardWeek(this.value)"></label><button class="btn sm outline" onclick="shiftFridayBoardWeek(7)">다음 주</button><button class="btn sm outline" onclick="retryFridayWeekLoad('${week}')">서버에서 새로고침</button></div><b>금요일 ${fmtDate(friday)}</b></div>
-    <p style="font-size:12px;color:#8a8674;margin:8px 0 0;">이 주간 기록은 반별 페이지와 공유됩니다. 예약 인원은 체크된 학생을 기준으로 자동 집계돼요.</p></div>${duplicateNotice}${body}`;
+    <p style="font-size:12px;color:#8a8674;margin:8px 0 0;">이 주간 기록은 반별 페이지와 공유됩니다. 예약 인원은 체크된 학생을 기준으로 자동 집계돼요.</p></div>${duplicateNotice}<div class="tabs2" role="group" aria-label="보기 방식"><button type="button" data-fview="time" class="${mode==='time'?'active':''}" aria-pressed="${mode==='time'}" onclick="setFridayViewMode('time')">🕓 시간대별 (완료 체크)</button><button type="button" data-fview="class" class="${mode==='class'?'active':''}" aria-pressed="${mode==='class'}" onclick="setFridayViewMode('class')">📚 반별 (예약 입력)</button></div>${body}`;
 }
 
 // 경고 계산 시작일은 관리자 '전체 경고 초기화' 시 자동 갱신됩니다.
