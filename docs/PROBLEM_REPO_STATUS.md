@@ -317,5 +317,5 @@
 - 학습보관함 항목의 교재·쪽·문항 출처키가 기존 정식 문제와 일치하면 `solutionPhotos.problemId`로 연결한다.
 - 일치하는 정식 문제가 없으면 원본 ID와 출처키를 가진 `problemDrafts` 검토 후보로 연결하고, 답안 이미지 하나만으로 정식 문제를 만들지 않는다.
 - 다른 출처가 먼저 만든 후보에 풀이 자산이 나중에 합쳐져도 `solutionAssetIds`와 양쪽 출처를 보존하며, 반복 동기화로 후보·출처가 중복되지 않는다.
-- GitHub Actions `Problem repository PDF regression`: **98/98 통과**. 같은 커밋의 금요일 보강 회귀 시험도 통과했다.
+- GitHub Actions `Problem repository PDF regression`: **99/99 통과**. 같은 커밋의 금요일 보강 회귀 시험도 통과했다.
 - 모든 항목은 가짜 Firestore·합성 자료로 확인했다. 운영 데이터 동작은 확인하지 않았다.
