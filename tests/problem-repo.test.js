@@ -653,6 +653,12 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
     const draft1 = window.__store.problemDrafts[draftId];
     const second = await syncSolutionPhotoToProblemRepo('sol_candidate', window.__store.solutionPhotos.sol_candidate);
     const draft2 = window.__store.problemDrafts[draftId];
+    // 다른 출처(학생 질문)가 먼저 만든 후보에 학습보관함 풀이 사진이 나중에 연결되는 경우
+    const mixedKey = textbookSourceKey('c1', '쎈', '14', '2');
+    window.__store.problemDrafts.mixedDraft = { sourceKey: mixedKey, status: 'review', origins: [{ type: 'student-question', id: 'q_mixed' }], originTypes: ['student-question'], solutionAssetIds: [] };
+    window.__store.solutionPhotos.sol_mixed = { courseId: 'c1', book: '쎈', page: '14', problemNo: '2' };
+    const mixed = await syncSolutionPhotoToProblemRepo('sol_mixed', window.__store.solutionPhotos.sol_mixed);
+    const mixedDraft = window.__store.problemDrafts.mixedDraft;
     return {
       linkedStatus: linked.status, canonicalLink,
       candidateStatus: first.status, candidateRef: window.__store.solutionPhotos.sol_candidate.problemDraftId,
@@ -660,13 +666,17 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
       originRecorded: draft1 && (draft1.origins || []).some(o => o.type === 'learning-library' && o.id === 'sol_candidate'),
       assetRecorded: draft1 && (draft1.solutionAssetIds || []).includes('sol_candidate'),
       noFalseProblem: Object.keys(window.__store.problems).length === 1,
-      repeatSameCandidate: second.problemDraftId === draftId && Object.keys(window.__store.problemDrafts).length === 1,
-      repeatOriginUnique: (draft2.origins || []).filter(o => o.type === 'learning-library' && o.id === 'sol_candidate').length === 1
+      repeatSameCandidate: second.problemDraftId === draftId && Object.keys(window.__store.problemDrafts).length === 2,
+      repeatOriginUnique: (draft2.origins || []).filter(o => o.type === 'learning-library' && o.id === 'sol_candidate').length === 1,
+      mixedLinked: mixed.problemDraftId === 'mixedDraft' && window.__store.solutionPhotos.sol_mixed.problemDraftId === 'mixedDraft',
+      mixedAssetRecorded: (mixedDraft.solutionAssetIds || []).includes('sol_mixed'),
+      mixedOriginsPreserved: (mixedDraft.origins || []).some(o => o.type === 'student-question' && o.id === 'q_mixed') && (mixedDraft.origins || []).some(o => o.type === 'learning-library' && o.id === 'sol_mixed')
     };
   });
   check('학습보관함 자산의 교재·쪽·문항 키가 기존 정식 문제와 일치하면 problemId로 연결', r13.linkedStatus === 'linked' && r13.canonicalLink === 'canonical1', JSON.stringify(r13));
   check('정식 문제가 아직 없으면 학습보관함 자료는 자동 정식화하지 않고 검토 후보로 연결', r13.candidateStatus === 'candidate' && !!r13.candidateRef && r13.noFalseProblem && r13.sourceKeyMatches && r13.originRecorded && r13.assetRecorded, JSON.stringify(r13));
   check('같은 학습보관함 항목을 다시 동기화해도 후보·출처 연결이 중복 생성되지 않음', r13.repeatSameCandidate && r13.repeatOriginUnique, JSON.stringify(r13));
+  check('다른 출처가 먼저 만든 후보에 학습보관함 자산을 나중에 연결해도 자산 ID와 양쪽 출처를 함께 보존', r13.mixedLinked && r13.mixedAssetRecorded && r13.mixedOriginsPreserved, JSON.stringify(r13));
 
   check('페이지 오류 없음', errs.length === 0, errs.slice(0, 3).join(' | '));
   await browser.close();
