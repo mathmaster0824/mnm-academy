@@ -8076,7 +8076,17 @@ function problemPdfBuildRegions(plans){
   if(reps.length||advanced.length){
     all.push(...reps,...advanced);
     const rank=r=>r.column==='R'?1:0;
-    all.sort((a,b)=>a.page-b.page||rank(a)-rank(b)||a.y0-b.y0);
+    const advancedByPage=new Map();
+    for(const r of advanced){ const list=advancedByPage.get(r.page)||[]; list.push(r); advancedByPage.set(r.page,list); }
+    const gridPages=new Set();
+    for(const [page,list] of advancedByPage){
+      if(list.filter(r=>r.column==='L').length>=2&&list.filter(r=>r.column==='R').length>=2) gridPages.add(page);
+    }
+    all.sort((a,b)=>{
+      if(a.page!==b.page) return a.page-b.page;
+      if(gridPages.has(a.page)) return a.y0-b.y0||a.x0-b.x0;
+      return rank(a)-rank(b)||a.y0-b.y0;
+    });
   }
   return {
     regions:all,
