@@ -8006,7 +8006,7 @@ function problemPdfRepresentativeRegions(plans,rails,numbered){
 }
 // ---- '심화 01'처럼 유형/문항 번호와 별도 체계를 쓰는 심화문제 ----
 // 빠른정답 표가 '심화01' 답을 제공하는 교재에서는 문제 쪽의 '심화 01' 라벨도 같은 ID로 수집해야 한다.
-const PROBLEM_PDF_ADVANCED_MARK_RE=/^심화\\s*0*(\\d{1,2})$/;
+const PROBLEM_PDF_ADVANCED_MARK_RE=/^심화\s*0*(\d{1,2})$/;
 function problemPdfAdvancedRegions(plans,numbered){
   const events=[];
   for(const p of plans||[]){
