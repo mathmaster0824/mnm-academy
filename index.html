@@ -8657,11 +8657,13 @@ async function autoIngestProblemPdf(input,options={}){
         if(!answerMap.size) throw new Error('교사용 PDF에서 연결 가능한 정답표를 찾지 못했습니다. 두 파일은 수집하지 않았어요.');
         const dt=new DataTransfer(); dt.items.add(pair.student);
         await autoIngestProblemPdf({files:dt.files,value:''},{answerMap,answerSourceFile:pair.teacher.name,pairMode:true});
-        if(status&&!String(status.textContent||'').startsWith('자동분리 중단')){
-          status.textContent='짝 등록 완료 · 학생용 문항만 저장 · 교사용 정답표 '+answerMap.size+'개 연결 · '+pair.teacher.name;
+        const liveStatus=document.getElementById('problemPdfAutoStatus');
+        if(liveStatus&&!String(liveStatus.textContent||'').startsWith('자동분리 중단')){
+          liveStatus.textContent='짝 등록 완료 · 학생용 문항만 저장 · 교사용 정답표 '+answerMap.size+'개 연결 · '+pair.teacher.name;
         }
       }catch(e){
-        if(status) status.textContent='학생용·교사용 짝 처리 중단 · '+(e?.message||e);
+        const liveStatus=document.getElementById('problemPdfAutoStatus');
+        if(liveStatus) liveStatus.textContent='학생용·교사용 짝 처리 중단 · '+(e?.message||e);
         alert('학생용·교사용 PDF를 처리하지 못했습니다.\\n'+(e?.message||e));
       }
       return;
