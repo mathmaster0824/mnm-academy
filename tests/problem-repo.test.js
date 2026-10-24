@@ -478,13 +478,19 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
     }, [studentPairB64, teacherPairB64, studentPairName, teacherPairName]);
     check('짝 PDF 업로드는 학생용 문제 12개만 수집하고 교사용 PDF의 정답표를 연결(정답 출처 파일·쪽 기록)', rPair.n === 12 && rPair.answers.every(x => x.asf === teacherPairName && x.asp === 5 && !!x.basis) && rPair.status.includes('짝 등록 완료'), JSON.stringify({ n: rPair.n, status: rPair.status, answerSources: rPair.answers.slice(0, 2) }));
     check('짝 PDF에서 학생용 문제 본문·크롭만 저장(교사용 풀이/정답 줄 및 교사용 source 미포함)', rPair.cropCount === 12 && rPair.sourceFiles.length === 1 && rPair.sourceFiles[0] === studentPairName && rPair.texts.every(t => !/정답|가상 풀이/.test(t)) && worker.uploads.length - pairWorker0.up === 12, JSON.stringify({ n: rPair.n, sources: rPair.sourceFiles, uploads: worker.uploads.length - pairWorker0.up, textTail: rPair.texts.map(t => t.slice(-18)) }));
-    check('짝 업로드 파일명이 서로 다른 교재·단원을 가리키면 자동으로 가져오지 않고 중단', await page.evaluate(async ([sb, tb]) => {
+    const mismatchWorker0 = worker.uploads.length;
+    const mismatchedPairRejected = await page.evaluate(async ([sb, tb]) => {
       const make = (b64, name) => new File([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], name, { type: 'application/pdf' });
       const files = new DataTransfer(); files.items.add(make(sb, 'unit-a-student.pdf')); files.items.add(make(tb, 'unit-b-teacher.pdf'));
-      const before = Object.keys(window.__store.problemSources || {}).length;
+      const beforeSources = Object.keys(window.__store.problemSources || {}).length;
+      const beforeDrafts = Object.keys(window.__store.problemDrafts || {}).length;
+      const rejected = problemPdfFindStudentTeacherPair(Array.from(files.files)) === null;
       await autoIngestProblemPdf({ files: files.files, value: '' });
-      return document.getElementById('problemPdfAutoStatus').textContent.includes('짝으로 확인할 수 없어') && Object.keys(window.__store.problemSources || {}).length === before;
-    }, [studentPairB64, teacherPairB64]));
+      return rejected &&
+        Object.keys(window.__store.problemSources || {}).length === beforeSources &&
+        Object.keys(window.__store.problemDrafts || {}).length === beforeDrafts;
+    }, [studentPairB64, teacherPairB64]);
+    check('짝 업로드 파일명이 서로 다른 교재·단원을 가리키면 자동으로 가져오지 않고 중단', mismatchedPairRejected && worker.uploads.length === mismatchWorker0, JSON.stringify({ rejected: mismatchedPairRejected, workerUploads: worker.uploads.length - mismatchWorker0 }));
     const rIA = await page.evaluate(() => {
       const mk = (rows) => ({ pageNo: 1, height: 800, width: 600, items: rows.map(([str, x, ytop]) => ({ str, transform: [1, 0, 0, 1, x, 800 - ytop] })) });
       const reg = () => ({ page: 1, x0: 0, y0: 100, x1: 600, y1: 400, markerX: 52, markerY: 120 });
