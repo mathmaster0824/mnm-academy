@@ -8571,7 +8571,7 @@ function problemPdfInferType(rawText,answerCandidate){
   return 'short';
 }
 function problemPdfExtractQuickAnswerPairsFromItems(items){
-  const out=new Map(), rows=problemPdfGroupAnswerRows(items);
+  const out=new Map(), rows=problemPdfGroupAnswerRows(items), allItems=rows.flatMap(r=>r.items);
   const typeHeads=[];
   for(const row of rows){
     for(const it of row.items){
@@ -8612,10 +8612,19 @@ function problemPdfExtractQuickAnswerPairsFromItems(items){
         put(key,problemPdfJoinAnswerCells(cells),'정답표 문항번호 '+key);
         continue;
       }
-      const advanced=t.match(/^심화\s*0*(\d{1,2})\s*[:：]\s*(.+)$/);
+      const advanced=t.match(/^심화\s*0*(\d{1,2})\s*[:：]\s*(.*)$/);
       if(advanced){
-        const key='심화'+String(Number(advanced[1])).padStart(2,'0');
-        put(key,advanced[2],'정답표 심화 문항번호 '+key);
+        const key='심화'+String(Number(advanced[1])).padStart(2,'0'), col=nearestColumn(it.x);
+        let answer=advanced[2].trim();
+        if(!answer){
+          const fragments=allItems.filter(x=>x!==it&&x.x>=it.x+(it.w||0)-1&&Math.abs(x.x-col.x)<90&&x.y<=it.y+1&&x.y>=it.y-14).sort((a,b)=>b.y-a.y||a.x-b.x);
+          const numeric=fragments.filter(x=>/^\d+(?:\.\d+)?$/.test(String(x.text||'').trim()));
+          if(numeric.length===2&&Math.abs(numeric[0].x-numeric[1].x)<=12&&Math.abs(numeric[0].y-numeric[1].y)>=3&&Math.abs(numeric[0].y-numeric[1].y)<=10){
+            const [top,bottom]=numeric[0].y>numeric[1].y?numeric:numeric.slice().reverse();
+            answer=String(top.text).trim()+'/'+String(bottom.text).trim();
+          }else answer=problemPdfJoinAnswerCells(fragments);
+        }
+        put(key,answer,'정답표 심화 문항번호 '+key);
       }
     }
   }
@@ -8634,8 +8643,8 @@ async function problemPdfExtractAnswerCandidates(pdf){
     }));
     const pageText=items.map(x=>x.text).join(' ');
     if(!problemPdfIsAnswerPageText(pageText,problemPdfAnswerTextLines(items))) continue;
-    const pairs=problemPdfExtractAnswerPairsFromItems(items);
-    for(const [key,val] of problemPdfExtractQuickAnswerPairsFromItems(items)) pairs.set(key,val);
+    const quickPairs=problemPdfExtractQuickAnswerPairsFromItems(items);
+    const pairs=quickPairs.size?quickPairs:problemPdfExtractAnswerPairsFromItems(items);
     for(const [key,val] of pairs.entries()){
       if(!out.has(key)) out.set(key,{...val,answerPage:n});
     }
