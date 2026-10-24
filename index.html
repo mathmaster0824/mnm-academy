@@ -8570,6 +8570,57 @@ function problemPdfInferType(rawText,answerCandidate){
   if(/증명하시오|서술하시오|이유를\s*쓰시오/.test(t)) return 'constructed';
   return 'short';
 }
+function problemPdfExtractQuickAnswerPairsFromItems(items){
+  const out=new Map(), rows=problemPdfGroupAnswerRows(items);
+  const typeHeads=[];
+  for(const row of rows){
+    for(const it of row.items){
+      const m=String(it.text||'').trim().match(/^유형\\s*0*(\\d{1,2})$/);
+      if(m) typeHeads.push({typeNo:Number(m[1]),x:it.x,y:it.y});
+    }
+  }
+  if(!typeHeads.length) return out;
+  const nearestColumn=x=>typeHeads.reduce((best,h)=>!best||Math.abs(h.x-x)<Math.abs(best.x-x)?h:best,null);
+  const put=(key,answer,basis,representative=false)=>{
+    const clean=problemPdfCleanAnswerText(answer);
+    if(!key||!clean) return;
+    const choice=/^[①②③④⑤]$/.test(clean);
+    out.set(key,{answer:clean,confidence:choice?1:0.95,method:choice?'answer-table-choice':'answer-table-text',basis,representative});
+  };
+  for(const row of rows){
+    for(const it of row.items){
+      const t=String(it.text||'').trim();
+      const rep=t.match(/^대표\\s*([①②③④⑤])$/);
+      if(rep){
+        const col=nearestColumn(it.x);
+        const head=typeHeads.filter(h=>Math.abs(h.x-col.x)<=2&&h.y>it.y&&h.y-it.y<=36).sort((a,b)=>a.y-b.y)[0];
+        if(head) put(`유형${String(head.typeNo).padStart(2,'0')}-대표`,rep[1],`정답표 '유형${String(head.typeNo).padStart(2,'0')} 대표' 행`,true);
+        continue;
+      }
+      const q=t.match(/^(0\\d{2})\\s+(.+)$/);
+      if(q){
+        const key=problemPdfAnswerNoKey(q[1]), col=nearestColumn(it.x);
+        const suffix=q[2].trim(), suffixWidth=Math.min(it.w||0,Math.max(4,suffix.length*6));
+        const startX=it.x+Math.max(0,(it.w||0)-suffixWidth);
+        const cells=[{text:suffix,x:startX,y:it.y,w:suffixWidth,h:it.h}];
+        for(const fragment of row.items.filter(x=>x.x>=it.x+(it.w||0)-1&&Math.abs(x.x-col.x)<90&&x.x>it.x).sort((a,b)=>a.x-b.x)){
+          if(fragment===it) continue;
+          const prev=cells[cells.length-1], prevEnd=prev.x+(prev.w||0);
+          if(fragment.x-prevEnd>18) break;
+          cells.push(fragment);
+        }
+        put(key,problemPdfJoinAnswerCells(cells),`정답표 문항번호 ${key}`);
+        continue;
+      }
+      const advanced=t.match(/^심화\\s*0*(\\d{1,2})\\s*[:：]\\s*(.+)$/);
+      if(advanced){
+        const key=`심화${String(Number(advanced[1])).padStart(2,'0')}`;
+        put(key,advanced[2],`정답표 심화 문항번호 ${key}`);
+      }
+    }
+  }
+  return out;
+}
 async function problemPdfExtractAnswerCandidates(pdf){
   const out=new Map();
   for(let n=1;n<=pdf.numPages;n++){
@@ -8584,6 +8635,7 @@ async function problemPdfExtractAnswerCandidates(pdf){
     const pageText=items.map(x=>x.text).join(' ');
     if(!problemPdfIsAnswerPageText(pageText,problemPdfAnswerTextLines(items))) continue;
     const pairs=problemPdfExtractAnswerPairsFromItems(items);
+    for(const [key,val] of problemPdfExtractQuickAnswerPairsFromItems(items)) pairs.set(key,val);
     for(const [key,val] of pairs.entries()){
       if(!out.has(key)) out.set(key,{...val,answerPage:n});
     }
