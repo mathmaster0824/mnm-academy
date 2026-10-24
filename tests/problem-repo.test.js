@@ -528,6 +528,7 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
       const byNo = Object.fromEntries(regions.map(r=>[r.problemNo,r]));
       return {
         ids: regions.map(r=>r.problemNo).sort(),
+        order: regions.map(r=>r.problemNo).join(),
         sources: regions.every(r=>r.idSource==='printed-advanced-number'),
         columns: regions.filter(r=>r.page===21).map(r=>r.column).sort(),
         leftEnd: Math.round(byNo['심화01']?.y1||0),
@@ -537,6 +538,7 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
       };
     });
     check('심화 01~08 라벨을 빠른정답과 같은 심화01~심화08 식별자로 8개 인식', rAdvancedRegions.ids.join() === '심화01,심화02,심화03,심화04,심화05,심화06,심화07,심화08' && rAdvancedRegions.sources, JSON.stringify(rAdvancedRegions));
+    check('2×2 심화문항은 좌우 단 순서가 아니라 인쇄된 번호 순서로 목록화', rAdvancedRegions.order === '심화01,심화02,심화03,심화04,심화05,심화06,심화07,심화08', JSON.stringify(rAdvancedRegions));
     check('심화문제는 두 단을 따로 자르고, 본문에는 라벨을 중복해 넣지 않으며 다음 줄 문항을 침범하지 않음', rAdvancedRegions.columns.join() === 'L,L,R,R' && rAdvancedRegions.leftText.includes('문제 본문 01') && rAdvancedRegions.rightText.includes('문제 본문 02') && !/심화/.test(rAdvancedRegions.leftText+rAdvancedRegions.rightText) && rAdvancedRegions.leftEnd <= rAdvancedRegions.nextLeftStart, JSON.stringify(rAdvancedRegions));
     const rIA = await page.evaluate(() => {
       const mk = (rows) => ({ pageNo: 1, height: 800, width: 600, items: rows.map(([str, x, ytop]) => ({ str, transform: [1, 0, 0, 1, x, 800 - ytop] })) });
