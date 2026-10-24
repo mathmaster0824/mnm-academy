@@ -8589,6 +8589,34 @@ async function problemPdfExtractAnswerCandidates(pdf){
   return out;
 }
 
+function problemPdfPairedRole(fileName){
+  const name=String(fileName||'').replace(/\\.pdf$/i,'');
+  const token=/(^|[^A-Za-z0-9가-힣])(?:학생용|학생|student)(?=$|[^A-Za-z0-9가-힣])/i;
+  const teacherToken=/(^|[^A-Za-z0-9가-힣])(?:교사용|교사|teacher)(?=$|[^A-Za-z0-9가-힣])/i;
+  const student=token.test(name), teacher=teacherToken.test(name);
+  return student===teacher?'':student?'student':'teacher';
+}
+function problemPdfPairStem(fileName){
+  return String(fileName||'').replace(/\\.pdf$/i,'').normalize('NFKC').toLowerCase()
+    .replace(/학생용|교사용|학생|교사|student|teacher/gi,'')
+    .replace(/[^a-z0-9가-힣]+/g,'');
+}
+function problemPdfFindStudentTeacherPair(files){
+  if(!Array.isArray(files)||files.length!==2) return null;
+  const student=files.filter(f=>problemPdfPairedRole(f.name)==='student');
+  const teacher=files.filter(f=>problemPdfPairedRole(f.name)==='teacher');
+  if(student.length!==1||teacher.length!==1) return null;
+  const studentStem=problemPdfPairStem(student[0].name), teacherStem=problemPdfPairStem(teacher[0].name);
+  if(!studentStem||studentStem!==teacherStem) return null;
+  return {student:student[0],teacher:teacher[0]};
+}
+async function problemPdfExtractAnswerMapFromFile(file){
+  const pdfjs=await loadMnmPdfJs(), bytes=new Uint8Array(await file.arrayBuffer());
+  const pdf=await pdfjs.getDocument({data:bytes,cMapUrl:PROBLEM_PDF_CMAP_URL,cMapPacked:true}).promise;
+  const map=await problemPdfExtractAnswerCandidates(pdf);
+  return new Map([...map.entries()].map(([key,value])=>[key,{...value,sourceFile:file.name}]));
+}
+
 async function supersedeOlderProblemSourceDrafts(fileName,newSourceId){
   if(!fileName||!newSourceId) return;
   try{
@@ -8612,9 +8640,30 @@ async function supersedeOlderProblemSourceDrafts(fileName,newSourceId){
   }
 }
 
-async function autoIngestProblemPdf(input){
+async function autoIngestProblemPdf(input,options={}){
   const files=Array.from(input?.files||[]); if(!files.length) return; input.value='';
   if(files.length>1){
+    if(files.some(f=>problemPdfPairedRole(f.name))){
+      const pair=problemPdfFindStudentTeacherPair(files), status=document.getElementById('problemPdfAutoStatus');
+      if(!pair){
+        if(status) status.textContent='학생용·교사용 PDF 이름을 한 쌍으로 확인할 수 없어 처리를 멈췄어요. 같은 교재·단원 이름 뒤에 학생용/교사용을 붙여 각각 올려 주세요.';
+        return;
+      }
+      try{
+        if(status) status.textContent='교사용 PDF 정답표 확인 중…';
+        const answerMap=await problemPdfExtractAnswerMapFromFile(pair.teacher);
+        if(!answerMap.size) throw new Error('교사용 PDF에서 연결 가능한 정답표를 찾지 못했습니다. 두 파일은 수집하지 않았어요.');
+        const dt=new DataTransfer(); dt.items.add(pair.student);
+        await autoIngestProblemPdf({files:dt.files,value:''},{answerMap,answerSourceFile:pair.teacher.name,pairMode:true});
+        if(status&&!String(status.textContent||'').startsWith('자동분리 중단')){
+          status.textContent='짝 등록 완료 · 학생용 문항만 저장 · 교사용 정답표 '+answerMap.size+'개 연결 · '+pair.teacher.name;
+        }
+      }catch(e){
+        if(status) status.textContent='학생용·교사용 짝 처리 중단 · '+(e?.message||e);
+        alert('학생용·교사용 PDF를 처리하지 못했습니다.\\n'+(e?.message||e));
+      }
+      return;
+    }
     for(let i=0;i<files.length;i++){
       const dt=new DataTransfer(); dt.items.add(files[i]);
       const proxy={files:dt.files,value:''};
@@ -8646,7 +8695,7 @@ async function autoIngestProblemPdf(input){
     if(textDetected&&regions.length){ regions=problemPdfCutInlineAnswers(plans,regions); regions=await problemPdfTrimTrailingRegions(pages,plans,regions); }
     if(!regions.length) throw new Error('문항을 찾지 못했습니다. 텍스트 탐지와 AI 이미지 탐지를 모두 확인해주세요.');
     say(`문항 ${regions.length}개 탐지 · ${segmentationMeta.layout||''} · 경계품질 ${Math.round(Number(segmentationMeta.quality||0)*100)}% · 정답표 확인 중…`);
-    const answerMap=await problemPdfExtractAnswerCandidates(pdf), sourceMeta=problemPdfSourceMeta(file.name);
+    const answerMap=options.answerMap instanceof Map?options.answerMap:await problemPdfExtractAnswerCandidates(pdf), sourceMeta=problemPdfSourceMeta(file.name);
     // 정답표에는 있는데 문제 쪽에서 짝을 못 찾은 대표 항목은 추측해 붙이지 않고 기록만 한다(쪽 포함).
     const usedRepIds=new Set(regions.filter(r=>r.representative&&r.idSource==='printed-type-number').map(r=>r.problemNo));
     const unmatchedRep=[...answerMap.entries()].filter(([k,v])=>v&&v.representative&&!usedRepIds.has(k)).map(([k,v])=>({id:k,answerPage:v.answerPage||null}));
@@ -8671,7 +8720,7 @@ async function autoIngestProblemPdf(input){
       if(!reviewReason&&r.representative&&r.idSource==='printed-type-number'&&!key) reviewReason='answer-table-entry-missing';
       if(!reviewReason&&key?.conflict) reviewReason='answer-table-conflict';
       const rawText=plan?problemPdfRegionText(plan.items,r,plan.height):'';
-      problems.push({problemNo:r.problemNo,printedProblemNo:printedNo,idSource:r.representative?r.idSource:'printed-number',typeNo:r.typeNo||'',reviewReason,answerSourcePage:key&&key.answerPage?key.answerPage:null,answerLinkBasis:key&&key.basis?key.basis:'',answerSourceFile:key&&key.answerPage?file.name:'',page:r.page,rawText,rawTextDecoded:true,type:problemPdfInferType(rawText,key),grade:sourceMeta.grade,semester:sourceMeta.semester,majorUnit:sourceMeta.majorUnit,middleUnit:sourceMeta.middleUnit,cropUrl:'',cropKey,cropHash,media:photo?[photo]:[],segmentationMethod:r.segmentationMethod||segmentationMeta.method||'',segmentationQuality:Number(segmentationMeta.quality||0),answer:key?.answer||'',answerConfidence:key?.confidence||0,answerMethod:key?.method||'needs-review',status:'review'});
+      problems.push({problemNo:r.problemNo,printedProblemNo:printedNo,idSource:r.representative?r.idSource:'printed-number',typeNo:r.typeNo||'',reviewReason,answerSourcePage:key&&key.answerPage?key.answerPage:null,answerLinkBasis:key&&key.basis?key.basis:'',answerSourceFile:key&&key.answerPage?(key.sourceFile||options.answerSourceFile||file.name):'',page:r.page,rawText,rawTextDecoded:true,type:problemPdfInferType(rawText,key),grade:sourceMeta.grade,semester:sourceMeta.semester,majorUnit:sourceMeta.majorUnit,middleUnit:sourceMeta.middleUnit,cropUrl:'',cropKey,cropHash,media:photo?[photo]:[],segmentationMethod:r.segmentationMethod||segmentationMeta.method||'',segmentationQuality:Number(segmentationMeta.quality||0),answer:key?.answer||'',answerConfidence:key?.confidence||0,answerMethod:key?.method||'needs-review',status:'review'});
     }
     say('수집 대기열 저장 중…');
     const ingestOut=await createProblemDraftsFromManifest({source:{title:file.name.replace(/\.pdf$/i,''),fileName:file.name,sourceType:'pdf',pageCount:pdf.numPages,grade:sourceMeta.grade,semester:sourceMeta.semester,majorUnit:sourceMeta.majorUnit,middleUnit:sourceMeta.middleUnit,ingestMethod:'browser-pdfjs-v3-rail-sequence',segmentationMeta},problems},{confirmWarnings:false});
