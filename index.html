@@ -8575,7 +8575,7 @@ function problemPdfExtractQuickAnswerPairsFromItems(items){
   const typeHeads=[];
   for(const row of rows){
     for(const it of row.items){
-      const m=String(it.text||'').trim().match(/^유형\\s*0*(\\d{1,2})$/);
+      const m=String(it.text||'').trim().match(/^유형\s*0*(\d{1,2})$/);
       if(m) typeHeads.push({typeNo:Number(m[1]),x:it.x,y:it.y});
     }
   }
@@ -8590,14 +8590,14 @@ function problemPdfExtractQuickAnswerPairsFromItems(items){
   for(const row of rows){
     for(const it of row.items){
       const t=String(it.text||'').trim();
-      const rep=t.match(/^대표\\s*([①②③④⑤])$/);
+      const rep=t.match(/^대표\s*([①②③④⑤])$/);
       if(rep){
         const col=nearestColumn(it.x);
         const head=typeHeads.filter(h=>Math.abs(h.x-col.x)<=2&&h.y>it.y&&h.y-it.y<=36).sort((a,b)=>a.y-b.y)[0];
-        if(head) put(`유형${String(head.typeNo).padStart(2,'0')}-대표`,rep[1],`정답표 '유형${String(head.typeNo).padStart(2,'0')} 대표' 행`,true);
+        if(head) put('유형'+String(head.typeNo).padStart(2,'0')+'-대표',rep[1],"정답표 '유형"+String(head.typeNo).padStart(2,'0')+" 대표' 행",true);
         continue;
       }
-      const q=t.match(/^(0\\d{2})\\s+(.+)$/);
+      const q=t.match(/^(0\d{2})\s+(.+)$/);
       if(q){
         const key=problemPdfAnswerNoKey(q[1]), col=nearestColumn(it.x);
         const suffix=q[2].trim(), suffixWidth=Math.min(it.w||0,Math.max(4,suffix.length*6));
@@ -8609,13 +8609,13 @@ function problemPdfExtractQuickAnswerPairsFromItems(items){
           if(fragment.x-prevEnd>18) break;
           cells.push(fragment);
         }
-        put(key,problemPdfJoinAnswerCells(cells),`정답표 문항번호 ${key}`);
+        put(key,problemPdfJoinAnswerCells(cells),'정답표 문항번호 '+key);
         continue;
       }
-      const advanced=t.match(/^심화\\s*0*(\\d{1,2})\\s*[:：]\\s*(.+)$/);
+      const advanced=t.match(/^심화\s*0*(\d{1,2})\s*[:：]\s*(.+)$/);
       if(advanced){
-        const key=`심화${String(Number(advanced[1])).padStart(2,'0')}`;
-        put(key,advanced[2],`정답표 심화 문항번호 ${key}`);
+        const key='심화'+String(Number(advanced[1])).padStart(2,'0');
+        put(key,advanced[2],'정답표 심화 문항번호 '+key);
       }
     }
   }
