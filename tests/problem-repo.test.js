@@ -501,7 +501,7 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
       add('003 80점', 176, 706);
       add('023 Q', 430, 585, 24);
       add('₁', 454, 585, 5); add('= 5, Q', 459, 585, 24); add('₃', 483, 585, 5); add('= 13', 488, 585, 20);
-      add('심화 01 : 10', 48, 470);
+      add('심화 01 :', 48, 470); add('10', 87, 470, 12); add('3', 89, 464, 5);
       add('심화 05 : 3가지', 176, 470);
       const map = problemPdfExtractQuickAnswerPairsFromItems(items);
       const get = k => map.get(k)?.answer || '';
@@ -509,7 +509,7 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
         q1:get('01'), q2:get('02'), q3:get('03'), q23:get('23'),
         advanced1:get('심화01'), advanced5:get('심화05') };
     });
-    check('4단 빠른정답 표에서 유형 대표·앞자리 0 문항·심화 답을 각각 올바른 ID와 연결하고 분리된 수식 조각을 보존', rQuickAnswers.size === 10 && rQuickAnswers.rep1 === '③' && rQuickAnswers.rep4 === '⑤' && rQuickAnswers.q1 === '중앙값 16, 최빈값 15' && rQuickAnswers.q2 === '평균 33.8, 중앙값 33.5' && rQuickAnswers.q3 === '80점' && /Q₁\s*=\s*5,?\s*Q₃\s*=\s*13/.test(rQuickAnswers.q23) && rQuickAnswers.advanced1 === '10' && rQuickAnswers.advanced5 === '3가지', JSON.stringify(rQuickAnswers));
+    check('4단 빠른정답 표에서 유형 대표·앞자리 0 문항·심화 답을 각각 올바른 ID와 연결하고 분리된 수식 조각을 보존', rQuickAnswers.size === 10 && rQuickAnswers.rep1 === '③' && rQuickAnswers.rep4 === '⑤' && rQuickAnswers.q1 === '중앙값 16, 최빈값 15' && rQuickAnswers.q2 === '평균 33.8, 중앙값 33.5' && rQuickAnswers.q3 === '80점' && /Q₁\s*=\s*5,?\s*Q₃\s*=\s*13/.test(rQuickAnswers.q23) && rQuickAnswers.advanced1 === '10/3' && rQuickAnswers.advanced5 === '3가지', JSON.stringify(rQuickAnswers));
     const rIA = await page.evaluate(() => {
       const mk = (rows) => ({ pageNo: 1, height: 800, width: 600, items: rows.map(([str, x, ytop]) => ({ str, transform: [1, 0, 0, 1, x, 800 - ytop] })) });
       const reg = () => ({ page: 1, x0: 0, y0: 100, x1: 600, y1: 400, markerX: 52, markerY: 120 });
