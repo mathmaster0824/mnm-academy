@@ -510,6 +510,34 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
         advanced1:get('심화01'), advanced5:get('심화05') };
     });
     check('4단 빠른정답 표에서 유형 대표·앞자리 0 문항·심화 답을 각각 올바른 ID와 연결하고 분리된 수식 조각을 보존', rQuickAnswers.size === 10 && rQuickAnswers.rep1 === '③' && rQuickAnswers.rep4 === '⑤' && rQuickAnswers.q1 === '중앙값 16, 최빈값 15' && rQuickAnswers.q2 === '평균 33.8, 중앙값 33.5' && rQuickAnswers.q3 === '80점' && /Q₁\s*=\s*5,?\s*Q₃\s*=\s*13/.test(rQuickAnswers.q23) && rQuickAnswers.advanced1 === '10/3' && rQuickAnswers.advanced5 === '3가지', JSON.stringify(rQuickAnswers));
+    const rAdvancedRegions = await page.evaluate(() => {
+      const mk = (pageNo, labels) => {
+        const height = 842, items = [];
+        for (const [no, x, top] of labels) {
+          items.push({ str: '심화 ' + String(no).padStart(2,'0'), transform: [1,0,0,1,x,height-top], width: 30, height: 10 });
+          items.push({ str: '문제 본문 ' + String(no).padStart(2,'0'), transform: [1,0,0,1,x+63,height-top], width: 70, height: 10 });
+          items.push({ str: '이어지는 설명', transform: [1,0,0,1,x,height-(top+16)], width: 60, height: 10 });
+        }
+        return { pageNo, width: 595, height, items, pageText: items.map(x=>x.str).join(' '), isAnswerPage: false, candidates: [] };
+      };
+      const plans = [
+        mk(21, [[1,53,111],[2,311,111],[3,53,460],[4,311,460]]),
+        mk(22, [[5,53,111],[6,311,111],[7,53,460],[8,311,460]])
+      ];
+      const regions = problemPdfBuildRegions(plans).regions.filter(r=>r.advanced);
+      const byNo = Object.fromEntries(regions.map(r=>[r.problemNo,r]));
+      return {
+        ids: regions.map(r=>r.problemNo).sort(),
+        sources: regions.every(r=>r.idSource==='printed-advanced-number'),
+        columns: regions.filter(r=>r.page===21).map(r=>r.column).sort(),
+        leftEnd: Math.round(byNo['심화01']?.y1||0),
+        nextLeftStart: Math.round(byNo['심화03']?.y0||0),
+        leftText: byNo['심화01'] ? problemPdfRegionText(plans[0].items,byNo['심화01'],842) : '',
+        rightText: byNo['심화02'] ? problemPdfRegionText(plans[0].items,byNo['심화02'],842) : ''
+      };
+    });
+    check('심화 01~08 라벨을 빠른정답과 같은 심화01~심화08 식별자로 8개 인식', rAdvancedRegions.ids.join() === '심화01,심화02,심화03,심화04,심화05,심화06,심화07,심화08' && rAdvancedRegions.sources, JSON.stringify(rAdvancedRegions));
+    check('심화문제는 두 단을 따로 자르고, 본문에는 라벨을 중복해 넣지 않으며 다음 줄 문항을 침범하지 않음', rAdvancedRegions.columns.join() === 'L,L,R,R' && rAdvancedRegions.leftText.includes('문제 본문 01') && rAdvancedRegions.rightText.includes('문제 본문 02') && !/심화/.test(rAdvancedRegions.leftText+rAdvancedRegions.rightText) && rAdvancedRegions.leftEnd < rAdvancedRegions.nextLeftStart, JSON.stringify(rAdvancedRegions));
     const rIA = await page.evaluate(() => {
       const mk = (rows) => ({ pageNo: 1, height: 800, width: 600, items: rows.map(([str, x, ytop]) => ({ str, transform: [1, 0, 0, 1, x, 800 - ytop] })) });
       const reg = () => ({ page: 1, x0: 0, y0: 100, x1: 600, y1: 400, markerX: 52, markerY: 120 });
