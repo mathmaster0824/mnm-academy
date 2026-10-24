@@ -8004,6 +8004,46 @@ function problemPdfRepresentativeRegions(plans,rails,numbered){
   }
   return out;
 }
+// ---- '심화 01'처럼 유형/문항 번호와 별도 체계를 쓰는 심화문제 ----
+// 빠른정답 표가 '심화01' 답을 제공하는 교재에서는 문제 쪽의 '심화 01' 라벨도 같은 ID로 수집해야 한다.
+const PROBLEM_PDF_ADVANCED_MARK_RE=/^심화\\s*0*(\\d{1,2})$/;
+function problemPdfAdvancedRegions(plans,numbered){
+  const events=[];
+  for(const p of plans||[]){
+    if(p.isAnswerPage) continue;
+    for(const it of p.items||[]){
+      const str=String(it.str||'').normalize('NFKC').trim(), m=str.match(PROBLEM_PDF_ADVANCED_MARK_RE);
+      if(!m) continue;
+      const tr=it.transform||[], x=Number(tr[4]||0), top=p.height-Number(tr[5]||0), xn=x/Math.max(1,p.width);
+      if(!Number.isFinite(x)||!Number.isFinite(top)||xn<.04||xn>.82||top<p.height*.03||top>p.height*.96) continue;
+      events.push({p,page:p.pageNo,n:Number(m[1]),x,top,xn,side:xn>=.48?'R':'L',item:it});
+    }
+  }
+  if(!events.length) return [];
+  events.sort((a,b)=>a.page-b.page||(a.side===b.side?a.top-b.top:(a.side==='L'?-1:1)));
+  const counts=new Map(); for(const e of events) counts.set(e.n,(counts.get(e.n)||0)+1);
+  const pageHasRight=new Set(events.filter(e=>e.side==='R').map(e=>e.page));
+  return events.map((e,i)=>{
+    const twoCol=pageHasRight.has(e.page), x0=twoCol?(e.side==='L'?0:e.p.width*.495):0, x1=twoCol?(e.side==='L'?e.p.width*.505:e.p.width):e.p.width;
+    const top=Math.max(0,e.top-14), id='심화'+String(e.n).padStart(2,'0');
+    let nextTop=null;
+    for(const n of events) if(n.page===e.page&&n.side===e.side&&n.top>e.top+4) nextTop=nextTop===null?n.top:Math.min(nextTop,n.top);
+    for(const n of numbered||[]){
+      const sameColumn=n.column===e.side||(e.side==='L'&&n.column==='FULL'&&!twoCol);
+      if(n.page===e.page&&sameColumn&&Number.isFinite(n.markerY)&&n.markerY>e.top+4) nextTop=nextTop===null?n.markerY:Math.min(nextTop,n.markerY);
+    }
+    const bottom=nextTop!==null?problemPdfRegionBottom(e.p,x0,x1,top,nextTop):e.p.height-22;
+    const duplicate=counts.get(e.n)>1;
+    return {
+      problemNo:duplicate?id+'@p'+e.page+e.side:id,
+      printedProblemNo:id,page:e.page,x0,y0:top,x1,y1:Math.min(e.p.height,bottom),
+      column:twoCol?e.side:'FULL',markerX:e.x,markerY:e.top,
+      segmentationMethod:'text-rail-sequence',markerPrefixLen:0,
+      idSource:duplicate?'unresolved':'printed-advanced-number',typeNo:id,advanced:true,
+      reviewReason:duplicate?'advanced-number-duplicate':''
+    };
+  });
+}
 function problemPdfBuildRegions(plans){
   const rails=problemPdfClusterRails(plans);
   const seq=problemPdfSequentialLabels(plans,rails);
@@ -8032,8 +8072,9 @@ function problemPdfBuildRegions(plans){
     usedPrinted.add(printedNo);
   }
   const reps=problemPdfRepresentativeRegions(plans,rails,all);
-  if(reps.length){
-    all.push(...reps);
+  const advanced=problemPdfAdvancedRegions(plans,all);
+  if(reps.length||advanced.length){
+    all.push(...reps,...advanced);
     const rank=r=>r.column==='R'?1:0;
     all.sort((a,b)=>a.page-b.page||rank(a)-rank(b)||a.y0-b.y0);
   }
@@ -8041,6 +8082,7 @@ function problemPdfBuildRegions(plans){
     regions:all,
     meta:{
       representative:reps.length,
+      advanced:advanced.length,
       method:'text-rail-sequence',
       quality:seq.quality,
       detected:all.length,
