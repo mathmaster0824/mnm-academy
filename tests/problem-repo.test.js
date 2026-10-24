@@ -501,7 +501,7 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
       add('003 80점', 176, 706);
       add('023 Q', 430, 585, 24);
       add('₁', 454, 585, 5); add('= 5, Q', 459, 585, 24); add('₃', 483, 585, 5); add('= 13', 488, 585, 20);
-      add('심화 01 :', 48, 470); add('10', 87, 470, 12); add('3', 89, 464, 5);
+      add('심화 01 :', 48, 470, 33); add('10', 87, 470, 12); add('3', 89, 464, 5);
       add('심화 05 : 3가지', 176, 470);
       const map = problemPdfExtractQuickAnswerPairsFromItems(items);
       const get = k => map.get(k)?.answer || '';
