@@ -171,7 +171,7 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
 
   // 7) 수집 초안 → 저장소 저장(saveProblemDraft), 같은 문제 재저장 시 중복 연결, 수집 대기열 화면 렌더
   const r7 = await page.evaluate(async () => {
-    const mk = (id, no) => ({ id, status: 'review', problemText: '삼각형 ABC 에서 외심은?', problemNo: no, grade: '중2', semester: '1학기', majorUnit: '삼각형의 성질', middleUnit: '삼각형의 외심과 내심', type: 'short', answer: '5', points: 2, cropKey: 'crop/' + id, cropHash: 'samehash0001', createdAt: new Date().toISOString() });
+    const mk = (id, no) => ({ id, status: 'review', problemText: '삼각형 ABC 에서 외심은?', problemNo: no, grade: '중2', semester: '1학기', majorUnit: '삼각형의 성질', middleUnit: '삼각형의 외심과 내심', type: 'short', answer: '5', answerSourceFile: 'teacher-source.pdf', answerSourcePage: 9, answerLinkBasis: '정답표 문항번호 01', points: 2, cropKey: 'crop/' + id, cropHash: 'samehash0001', createdAt: new Date().toISOString() });
     const d1 = mk('draftA', '1'), d2 = mk('draftB', '1');
     for (const d of [d1, d2]) window.__store.problemDrafts = { ...(window.__store.problemDrafts || {}), [d.id]: d };
     problemStore.ingest.drafts = [d1, d2]; problemStore.ingest.sources = []; problemStore.ingest.loaded = true;
@@ -181,10 +181,11 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
     const after = Object.keys(window.__store.problems).length;
     const pid = a.problemId;
     let html = ''; try { session = { mode: 'director' }; problemStore.tab = 'ingest'; html = renderProblemIngest(); } catch (e) { html = 'ERR ' + e.message; }
-    return { a: a.status, b: b.status, added: after - before, key: window.__store.problemKeys[pid] && window.__store.problemKeys[pid].answer,
+    return { a: a.status, b: b.status, added: after - before, key: window.__store.problemKeys[pid] && window.__store.problemKeys[pid].answer, keySource: window.__store.problemKeys[pid] && [window.__store.problemKeys[pid].answerSourceFile, window.__store.problemKeys[pid].answerSourcePage, window.__store.problemKeys[pid].answerLinkBasis],
       draftSaved: window.__store.problemDrafts.draftA.status, publicHasAnswer: JSON.stringify(window.__store.problems[pid]).includes('"answer"'), htmlOk: typeof html === 'string' && !/^ERR/.test(html) && html.length > 200, html: html.slice(0, 80) };
   });
   check('수집 초안 저장 → 저장소 문제 1건 신규 + 정답키 저장', r7.a === 'saved' && r7.key === '5', JSON.stringify(r7));
+  check('정식 저장 후 교사용 정답 파일명·쪽·연결 근거는 비공개 problemKeys 에 보존', JSON.stringify(r7.keySource) === JSON.stringify(['teacher-source.pdf', 9, '정답표 문항번호 01']), JSON.stringify(r7));
   check('같은 문제 초안을 다시 저장 → 중복으로 연결(문제 추가 없음)', r7.b === 'duplicate' && r7.added === 1, JSON.stringify(r7));
   check('저장소 문제 문서에 정답이 노출되지 않음', !r7.publicHasAnswer);
   check('수집 대기열 화면 렌더', r7.htmlOk, r7.html);
@@ -292,7 +293,7 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
         await autoIngestProblemPdf({ files: dt.files, value: '' });
         const drafts = Object.entries(window.__store.problemDrafts || {}).filter(([id]) => !before.has(id)).map(([, d]) => d);
         return { status: document.getElementById('problemPdfAutoStatus').textContent, n: drafts.length,
-          answers: drafts.map((d) => ({ no: d.problemNo, a: d.answer, m: d.answerMethod, t: d.type, src: d.idSource, asp: d.answerSourcePage, basis: d.answerLinkBasis, rr: d.reviewReason, pno: d.printedProblemNo, tn: d.typeNo, pg: d.page })).sort((x, y) => String(x.no).localeCompare(String(y.no))),
+          answers: drafts.map((d) => ({ no: d.problemNo, a: d.answer, m: d.answerMethod, t: d.type, src: d.idSource, asp: d.answerSourcePage, asf: d.answerSourceFile||'', basis: d.answerLinkBasis, rr: d.reviewReason, pno: d.printedProblemNo, tn: d.typeNo, pg: d.page })).sort((x, y) => String(x.no).localeCompare(String(y.no))),
           texts: drafts.map((d) => ({ no: d.problemNo, t: String(d.problemText || d.rawText || '') })).sort((x, y) => String(x.no).localeCompare(String(y.no))),
           crops: drafts.filter((d) => JSON.stringify(d).includes('problem-crop/')).length };
       }, [b64, uploadName]);
@@ -454,6 +455,36 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
     // 14-12) 정답 값이 한글로 시작하는 문항(실제 교사용 교재 23·25·26번: '최댓값 2, 최솟값 −2', '제3사분면', '제1, 2사분면'): 공백을 지운 글로 "정답" 뒤 글자를 보면 한글이라 정답 줄로 못 알아봐 잘리지 않던 문제
     const hangulIdx = [2, 4, 5];
     check('정답이 한글로 시작하는 문항(003·005·006)도 정답 줄이 잘리고 본문은 문제 문장까지 보존, 정답표 값이 그대로 연결', hangulIdx.every((i) => !/정답|가상 풀이/.test(rFT.texts[i].t) && rFT.texts[i].t.endsWith('의 값을 구하시오.')) && rFT.answers[2].a === '최댓값 7, 최솟값 1' && rFT.answers[4].a === '제3사분면' && rFT.answers[5].a === '제1, 2사분면', JSON.stringify(hangulIdx.map((i) => [rFT.texts[i].t.slice(-30), rFT.answers[i].a])));
+    // 14-11b) 학생용·교사용 파일을 함께 선택하면 문제는 학생용에서만 만들고 정답표는 교사용 파일에서 연결한다.
+    const studentPairName = 'sample-fullchapter-student.pdf', teacherPairName = 'sample-fullchapter-teacher.pdf';
+    const studentPairB64 = fsx.readFileSync(path.join(__dirname, 'fixtures', 'sample-fullchapter-student-ko.pdf')).toString('base64');
+    const teacherPairB64 = fsx.readFileSync(path.join(__dirname, 'fixtures', 'sample-fullchapter-teacher-ko.pdf')).toString('base64');
+    const pairWorker0 = { up: worker.uploads.length, seg: worker.segment };
+    const rPair = await page.evaluate(async ([sb, tb, sn, tn]) => {
+      const makeFile = (b64, name) => new File([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], name, { type: 'application/pdf' });
+      const files = new DataTransfer(); files.items.add(makeFile(sb, sn)); files.items.add(makeFile(tb, tn));
+      const beforeDrafts = new Set(Object.keys(window.__store.problemDrafts || {}));
+      const beforeSources = new Set(Object.keys(window.__store.problemSources || {}));
+      await autoIngestProblemPdf({ files: files.files, value: '' });
+      const drafts = Object.entries(window.__store.problemDrafts || {}).filter(([id]) => !beforeDrafts.has(id)).map(([, d]) => d);
+      const sources = Object.entries(window.__store.problemSources || {}).filter(([id]) => !beforeSources.has(id)).map(([, s]) => s);
+      return {
+        status: document.getElementById('problemPdfAutoStatus').textContent, n: drafts.length,
+        answers: drafts.map(d => ({ no: d.problemNo, a: d.answer, asf: d.answerSourceFile || '', asp: d.answerSourcePage || null, basis: d.answerLinkBasis || '' })).sort((a,b) => String(a.no).localeCompare(String(b.no))),
+        texts: drafts.map(d => String(d.problemText || d.rawText || '')),
+        sourceFiles: sources.map(s => s.fileName || ''),
+        cropCount: drafts.filter(d => !!d.cropKey).length
+      };
+    }, [studentPairB64, teacherPairB64, studentPairName, teacherPairName]);
+    check('짝 PDF 업로드는 학생용 문제 12개만 수집하고 교사용 PDF의 정답표를 연결(정답 출처 파일·쪽 기록)', rPair.n === 12 && rPair.answers.every(x => x.asf === teacherPairName && x.asp === 5 && !!x.basis) && rPair.status.includes('짝 등록 완료'), JSON.stringify({ n: rPair.n, status: rPair.status, answerSources: rPair.answers.slice(0, 2) }));
+    check('짝 PDF에서 학생용 문제 본문·크롭만 저장(교사용 풀이/정답 줄 및 교사용 source 미포함)', rPair.cropCount === 12 && rPair.sourceFiles.length === 1 && rPair.sourceFiles[0] === studentPairName && rPair.texts.every(t => !/정답|가상 풀이/.test(t)) && worker.uploads.length - pairWorker0.up === 12, JSON.stringify({ n: rPair.n, sources: rPair.sourceFiles, uploads: worker.uploads.length - pairWorker0.up, textTail: rPair.texts.map(t => t.slice(-18)) }));
+    check('짝 업로드 파일명이 서로 다른 교재·단원을 가리키면 자동으로 가져오지 않고 중단', await page.evaluate(async ([sb, tb]) => {
+      const make = (b64, name) => new File([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], name, { type: 'application/pdf' });
+      const files = new DataTransfer(); files.items.add(make(sb, 'unit-a-student.pdf')); files.items.add(make(tb, 'unit-b-teacher.pdf'));
+      const before = Object.keys(window.__store.problemSources || {}).length;
+      await autoIngestProblemPdf({ files: files.files, value: '' });
+      return document.getElementById('problemPdfAutoStatus').textContent.includes('짝으로 확인할 수 없어') && Object.keys(window.__store.problemSources || {}).length === before;
+    }, [studentPairB64, teacherPairB64]));
     const rIA = await page.evaluate(() => {
       const mk = (rows) => ({ pageNo: 1, height: 800, width: 600, items: rows.map(([str, x, ytop]) => ({ str, transform: [1, 0, 0, 1, x, 800 - ytop] })) });
       const reg = () => ({ page: 1, x0: 0, y0: 100, x1: 600, y1: 400, markerX: 52, markerY: 120 });
