@@ -1,0 +1,32 @@
+name: Problem repository PDF regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - index.html
+      - tests/problem-repo.test.js
+      - tests/fixtures/**
+      - .github/workflows/problem-repo-regression.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pdf-ingestion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install test dependencies
+        run: npm install --no-save --package-lock=false playwright pdfjs-dist@4.10.38
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Check test syntax
+        run: node --check tests/problem-repo.test.js
+      - name: Run problem repository PDF regression tests
+        run: node tests/problem-repo.test.js
