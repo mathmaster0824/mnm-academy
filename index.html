@@ -7656,7 +7656,9 @@ async function saveProblemDraft(draftId,options={}){
         if(!existingKey.exists){
           const answer=String(d.answer||'').trim();
           if(!answer) throw new Error('duplicate problem has no private answer key and draft answer is empty');
-          await problemSetDoc('problemKeys',existingId,{problemId:existingId,answer,acceptedAnswers:Array.isArray(d.acceptedAnswers)&&d.acceptedAnswers.length?d.acceptedAnswers:[answer],explanation:d.explanation||'',sourceDraftId:d.id,repairedFromDuplicate:true,updatedAt:new Date().toISOString()});
+          await problemSetDoc('problemKeys',existingId,{problemId:existingId,answer,acceptedAnswers:Array.isArray(d.acceptedAnswers)&&d.acceptedAnswers.length?d.acceptedAnswers:[answer],explanation:d.explanation||'',sourceDraftId:d.id,repairedFromDuplicate:true,answerSourceFile:d.answerSourceFile||'',answerSourcePage:d.answerSourcePage||null,answerLinkBasis:d.answerLinkBasis||'',updatedAt:new Date().toISOString()});
+        }else if(d.answerSourceFile){
+          await problemSetDoc('problemKeys',existingId,{answerSourceFile:d.answerSourceFile,answerSourcePage:d.answerSourcePage||null,answerLinkBasis:d.answerLinkBasis||'',updatedAt:new Date().toISOString()});
         }
       }
       await problemUpdateDoc('problemDrafts',d.id,{status:'saved',canonicalProblemId:existingId,duplicateOf:existingId,savedAt:new Date().toISOString(),confidence:problemDraftConfidence(d)});
@@ -7669,7 +7671,7 @@ async function saveProblemDraft(draftId,options={}){
     if((d.type||'short')!=='constructed'){
       const answer=String(d.answer||'').trim();
       try{
-        await problemSetDoc('problemKeys',problemId,{problemId,answer,acceptedAnswers:Array.isArray(d.acceptedAnswers)&&d.acceptedAnswers.length?d.acceptedAnswers:(answer?[answer]:[]),explanation:d.explanation||'',sourceDraftId:d.id,updatedAt:new Date().toISOString()});
+        await problemSetDoc('problemKeys',problemId,{problemId,answer,acceptedAnswers:Array.isArray(d.acceptedAnswers)&&d.acceptedAnswers.length?d.acceptedAnswers:(answer?[answer]:[]),explanation:d.explanation||'',sourceDraftId:d.id,answerSourceFile:d.answerSourceFile||'',answerSourcePage:d.answerSourcePage||null,answerLinkBasis:d.answerLinkBasis||'',updatedAt:new Date().toISOString()});
       }catch(keyErr){
         try{ await problemDeleteDoc('problems',problemId); }catch(_){}
         throw new Error('정답키 저장 실패 · '+problemErrorText(keyErr));
