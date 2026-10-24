@@ -491,6 +491,25 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`PROBLEM-REP
         Object.keys(window.__store.problemDrafts || {}).length === beforeDrafts;
     }, [studentPairB64, teacherPairB64]);
     check('짝 업로드 파일명이 서로 다른 교재·단원을 가리키면 자동으로 가져오지 않고 중단', mismatchedPairRejected && worker.uploads.length === mismatchWorker0, JSON.stringify({ rejected: mismatchedPairRejected, workerUploads: worker.uploads.length - mismatchWorker0 }));
+    const rQuickAnswers = await page.evaluate(() => {
+      const items = [];
+      const add = (text, x, y, w = String(text).length * 6) => items.push({ text, x, y, w, h: 10 });
+      [[1,48],[2,176],[3,303],[4,430]].forEach(([n,x]) => add('유형 ' + String(n).padStart(2,'0'), x, 732));
+      [[48,'③'],[176,'④'],[303,'②'],[430,'⑤']].forEach(([x,a]) => add('대표 ' + a, x, 720));
+      add('001 중앙값 16, 최빈값 15', 48, 706);
+      add('002 평균 33.8, 중앙값 33.5', 48, 693);
+      add('003 80점', 176, 706);
+      add('023 Q', 430, 585, 24);
+      add('₁', 454, 585, 5); add('= 5, Q', 459, 585, 24); add('₃', 483, 585, 5); add('= 13', 488, 585, 20);
+      add('심화 01 : 10', 48, 470);
+      add('심화 05 : 3가지', 176, 470);
+      const map = problemPdfExtractQuickAnswerPairsFromItems(items);
+      const get = k => map.get(k)?.answer || '';
+      return { size: map.size, rep1:get('유형01-대표'), rep4:get('유형04-대표'),
+        q1:get('01'), q2:get('02'), q3:get('03'), q23:get('23'),
+        advanced1:get('심화01'), advanced5:get('심화05') };
+    });
+    check('4단 빠른정답 표에서 유형 대표·앞자리 0 문항·심화 답을 각각 올바른 ID와 연결하고 분리된 수식 조각을 보존', rQuickAnswers.size === 10 && rQuickAnswers.rep1 === '③' && rQuickAnswers.rep4 === '⑤' && rQuickAnswers.q1 === '중앙값 16, 최빈값 15' && rQuickAnswers.q2 === '평균 33.8, 중앙값 33.5' && rQuickAnswers.q3 === '80점' && /Q₁\\s*=\\s*5,?\\s*Q₃\\s*=\\s*13/.test(rQuickAnswers.q23) && rQuickAnswers.advanced1 === '10' && rQuickAnswers.advanced5 === '3가지', JSON.stringify(rQuickAnswers));
     const rIA = await page.evaluate(() => {
       const mk = (rows) => ({ pageNo: 1, height: 800, width: 600, items: rows.map(([str, x, ytop]) => ({ str, transform: [1, 0, 0, 1, x, 800 - ytop] })) });
       const reg = () => ({ page: 1, x0: 0, y0: 100, x1: 600, y1: 400, markerX: 52, markerY: 120 });
