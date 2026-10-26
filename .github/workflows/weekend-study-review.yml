@@ -1,0 +1,31 @@
+name: Weekend study confirmation regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - index.html
+      - tests/weekend-study-review.test.js
+      - .github/workflows/weekend-study-review.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  weekend-study-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Playwright
+        run: npm install --no-save --package-lock=false playwright
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Check test syntax
+        run: node --check tests/weekend-study-review.test.js
+      - name: Run weekend study review regression
+        run: node tests/weekend-study-review.test.js

@@ -574,6 +574,7 @@ function attachRoleListeners(){
   const subs=[];
   const recentStart=recentRecordStartISO();
   const currentWeek=weekStartISO(todayISO());
+  clearWeekendAdminWeekListener();
 
   // 수업기록/주간계획/금요보강:
   // 로그인 때 전체 역사를 실시간 구독하지 않는다.
@@ -670,12 +671,10 @@ function attachRoleListeners(){
     },roleListenerError('submissions')));
   }
 
-  // 주말학습 인증: 이번 주만.
+  // 주말학습 인증: 학생은 이번 주, 원장은 선택한 확인 주만 조회.
   db.weekendSubmissions={};
   if(isDirector){
-    subs.push(fsdb.collection('weekendSubmissions').where('weekStart','>=',currentWeek).onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>m[d.id]=d.data()); db.weekendSubmissions=m; scheduleRender();
-    },roleListenerError('weekendSubmissions')));
+    subscribeWeekendAdminWeek(currentSubState.weekendWeek || weekendReviewWeekStart(academicTodayISO()));
   }else if(stuId){
     subs.push(idRecentRangeQuery('weekendSubmissions',stuId+'_',currentWeek).onSnapshot(snap=>{
       const m={}; snap.docs.forEach(d=>m[d.id]=d.data()); db.weekendSubmissions=m; scheduleRender();
@@ -3182,6 +3181,48 @@ function weekendWeekStart(dateISO){
   d.setDate(d.getDate()+delta);
   return toLocalISODate(d);
 }
+// 원장 확인 화면은 가장 최근에 끝난 주말(토·일)을 기본으로 연다.
+// 월~금에는 직전 주의 토·일, 토·일에는 현재 주말을 가리킨다.
+function weekendReviewWeekStart(dateISO){
+  const d=new Date((dateISO||academicTodayISO())+'T00:00:00');
+  const day=d.getDay();
+  if(day>=1 && day<=5) d.setDate(d.getDate()-7);
+  return weekendWeekStart(toLocalISODate(d));
+}
+let weekendAdminQueryWeek='', weekendAdminQueryUnsub=null, weekendAdminQueryVersion=0;
+let weekendAdminLoadState={week:'',status:'idle'};
+function clearWeekendAdminWeekListener(){
+  weekendAdminQueryVersion++;
+  if(weekendAdminQueryUnsub){ try{weekendAdminQueryUnsub();}catch(e){} }
+  weekendAdminQueryUnsub=null;
+  weekendAdminQueryWeek='';
+}
+function subscribeWeekendAdminWeek(wk){
+  if(!session || session.mode!=='director' || !wk || weekendAdminQueryWeek===wk) return;
+  clearWeekendAdminWeekListener();
+  const version=weekendAdminQueryVersion;
+  weekendAdminQueryWeek=wk;
+  weekendAdminLoadState={week:wk,status:'loading'};
+  db.weekendSubmissions={};
+  weekendAdminQueryUnsub=fsdb.collection('weekendSubmissions').where('weekStart','==',wk).onSnapshot(snap=>{
+    if(version!==weekendAdminQueryVersion) return;
+    const m={}; snap.docs.forEach(d=>m[d.id]=d.data());
+    db.weekendSubmissions=m;
+    weekendAdminLoadState={week:wk,status:'ready'};
+    scheduleRender();
+  },e=>{
+    if(version!==weekendAdminQueryVersion) return;
+    weekendAdminLoadState={week:wk,status:'error'};
+    roleListenerError('weekendSubmissions')(e);
+    scheduleRender();
+  });
+}
+function setWeekendAdminWeek(dateISO){
+  const wk=weekendWeekStart(dateISO);
+  currentSubState.weekendWeek=wk;
+  subscribeWeekendAdminWeek(wk);
+  render();
+}
 async function toggleWeekendManualApprove(stuId, wk, slot){
   const key = weekendSubmissionKey(stuId, wk, slot);
   const existing = db.weekendSubmissions[key];
@@ -3231,7 +3272,13 @@ async function toggleWeekendStudent(classId,stuId,checked){
 }
 function renderWeekendStudyAdmin(){
   const enabled=!!(db.weekendSettings&&db.weekendSettings.enabled);
-  const wk=currentSubState.weekendWeek || weekendWeekStart(academicTodayISO());
+  const wk=currentSubState.weekendWeek || weekendReviewWeekStart(academicTodayISO());
+  subscribeWeekendAdminWeek(wk);
+  const loadStatus=weekendAdminLoadState.week!==wk || weekendAdminLoadState.status==='loading'
+    ? '기록 불러오는 중 — 완료될 때까지 ×를 미인증으로 판단하지 마세요.'
+    : weekendAdminLoadState.status==='error'
+      ? '기록 조회 실패 — ×는 미인증 결과가 아닙니다. 연결을 확인해주세요.'
+      : '기록 불러오기 완료';
   const eligible=sortedStudents(db.students.filter(s=>s.status!=='withdrawn'&&isMiddleHighStudent(s)));
   const createOpen=!!currentSubState.weekendCreateOpen;
   return `
@@ -3252,9 +3299,9 @@ function renderWeekendStudyAdmin(){
     <div class="card">
       <div class="row between">
         <h3 style="margin:0;">이번 주 인증 현황</h3>
-        <input type="date" value="${wk}" onchange="currentSubState.weekendWeek=weekendWeekStart(this.value);render();">
+        <input type="date" value="${wk}" onchange="setWeekendAdminWeek(this.value)">
       </div>
-      <div style="font-size:12px;color:#8a8674;margin:6px 0 12px;">주 시작 ${wk} · ○ 사진인증 / ○ 수동인정(원장이 직접 처리) / × 미인증 — ×를 누르면 사진 없이 바로 인정 처리, 수동인정을 다시 누르면 취소돼요.</div>
+      <div style="font-size:12px;color:#8a8674;margin:6px 0 12px;">주 시작 ${wk} · <b>${loadStatus}</b><br>○ 사진인증 / ○ 수동인정(원장이 직접 처리) / × 미인증 — ×를 누르면 사진 없이 바로 인정 처리, 수동인정을 다시 누르면 취소돼요.</div>
       ${(db.weekendClasses||[]).map(c=>{
         const students=(c.studentIds||[]).map(studentById).filter(Boolean);
         return `<div style="margin-top:14px;">
