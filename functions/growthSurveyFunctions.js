@@ -50,6 +50,17 @@ function requireDirector(request) {
   }
   return auth.uid;
 }
+function shiftDate(dateISO, days) {
+  const d = new Date(dateISO + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + Number(days));
+  return d.toISOString().slice(0, 10);
+}
+function weekStartKST(dateISO) {
+  const d = new Date(dateISO + 'T12:00:00Z');
+  const day = d.getUTCDay();
+  d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day));
+  return d.toISOString().slice(0, 10);
+}
 function requireMonth(value) {
   if (!core.isMonth(value)) throw new HttpsError('invalid-argument', '월 형식이 올바르지 않습니다.');
   return value;
@@ -101,6 +112,76 @@ async function findStudentByCode(fs, code) {
 
 function createGrowthSurveyHandlers(admin, fs) {
   return {
+    getStudentBootstrap: onCall({ region: REGION }, async request => {
+      const { studentId } = requireStudent(request);
+      const today = kstDate();
+      const start = shiftDate(today, -6);
+      const endEx = shiftDate(today, 1);
+      const studentSnap = await fs.collection('students').doc(studentId).get();
+      if (!studentSnap.exists || studentSnap.data().status === 'withdrawn') {
+        throw new HttpsError('permission-denied', '학생 정보를 확인할 수 없습니다.');
+      }
+      const rawStudent = studentSnap.data();
+      const classSnap = await fs.collection('classes')
+        .where('studentIds', 'array-contains', studentId).limit(10).get();
+      const classDocs = new Map(classSnap.docs.map(d => [d.id, d]));
+      if (rawStudent.classId && !classDocs.has(rawStudent.classId)) {
+        const legacy = await fs.collection('classes').doc(String(rawStudent.classId)).get();
+        if (legacy.exists) classDocs.set(legacy.id, legacy);
+      }
+      const classes = [...classDocs.values()].slice(0, 5).map(d => ({
+        id: d.id,
+        name: String(d.data().name || ''),
+        dayGroup: String(d.data().dayGroup || ''),
+        studentIds: [studentId]
+      }));
+      const FieldPath = admin.firestore.FieldPath;
+      const recordTasks = classes.map(async cls => {
+        const [records, suppCurrent, suppLegacy, plan, weekend] = await Promise.all([
+          fs.collection('classRecords')
+            .where(FieldPath.documentId(), '>=', cls.id + '_' + start)
+            .where(FieldPath.documentId(), '<', cls.id + '_' + endEx).get(),
+          fs.collection('fridaySupp').doc(cls.id + '_' + weekStartKST(today)).get(),
+          fs.collection('fridaySupp').doc(cls.id + '_' + shiftDate(weekStartKST(today), -1)).get(),
+          fs.collection('weeklyPlans').doc(cls.id + '_' + weekStartKST(today)).get(),
+          Promise.resolve(null)
+        ]);
+        const outRecords = {};
+        records.docs.forEach(d => {
+          const mine = d.data()[studentId];
+          if (mine) outRecords[d.id] = { [studentId]: mine };
+        });
+        const current = suppCurrent.exists ? suppCurrent.data()[studentId] : null;
+        const legacy = suppLegacy.exists ? suppLegacy.data()[studentId] : null;
+        const supp = Object.assign({}, legacy || {}, current || {});
+        const fridaySupp = Object.keys(supp).length ? { [cls.id + '_' + weekStartKST(today)]: { [studentId]: supp } } : {};
+        const rawPlan = plan.exists ? plan.data()[studentId] : null;
+        const weeklyPlans = rawPlan ? { [cls.id + '_' + weekStartKST(today)]: { [studentId]: rawPlan } } : {};
+        return { outRecords, fridaySupp, weeklyPlans };
+      });
+      const [perClass, weekendClassSnap, weekendSettingsSnap, stadSettingsSnap] = await Promise.all([
+        Promise.all(recordTasks),
+        fs.collection('weekendClasses').where('studentIds', 'array-contains', studentId).limit(10).get(),
+        fs.collection('weekendSettings').doc('main').get(),
+        fs.collection('stadSettings').doc('main').get()
+      ]);
+      const classRecords = {}, fridaySupp = {}, weeklyPlans = {};
+      perClass.forEach(x => { Object.assign(classRecords, x.outRecords); Object.assign(fridaySupp, x.fridaySupp); Object.assign(weeklyPlans, x.weeklyPlans); });
+      const student = {
+        id: studentId, name: String(rawStudent.name || ''), grade: String(rawStudent.grade || ''),
+        classId: String(rawStudent.classId || ''), status: String(rawStudent.status || 'active')
+      };
+      const weekendClasses = weekendClassSnap.docs.map(d => {
+        const data = d.data();
+        return { id: d.id, name: String(data.name || ''), school: String(data.school || ''), grade: String(data.grade || ''), level: String(data.level || ''), studentIds: [studentId] };
+      });
+      return {
+        student, classes, classRecords, weeklyPlans, fridaySupp, weekendClasses,
+        weekendSettings: weekendSettingsSnap.exists ? weekendSettingsSnap.data() : { enabled: false },
+        stadSettings: stadSettingsSnap.exists ? stadSettingsSnap.data() : { enabled: false, infoText: '', applyOpen: '', applyClose: '', zoomLink: '' }
+      };
+    }),
+
     studentGrowthSurveyLogin: onCall({ region: REGION }, async request => {
       const code = String(request.data && request.data.code || '').trim();
       if (!/^\d{4}$/.test(code)) throw new HttpsError('invalid-argument', '학생 코드를 확인해주세요.');
