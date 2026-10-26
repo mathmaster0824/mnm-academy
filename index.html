@@ -2883,6 +2883,12 @@ function renderVideoAssignPicker(clsId, date, stuId){
     if(draft.type==='유형' && draft.book && v.book!==draft.book) return false;
     if(draft.unit && v.unit!==draft.unit) return false;
     return true;
+  }).sort((a,b)=>{
+    const ua = (a.unit||'').localeCompare(b.unit||'');
+    if(ua!==0) return ua;
+    const oa = a.order ?? 999, ob = b.order ?? 999;
+    if(oa!==ob) return oa-ob;
+    return (a.title||'').localeCompare(b.title||'');
   });
 
   const history = videoAssignHistoryForStudent(stuId)
