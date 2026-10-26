@@ -803,7 +803,7 @@ async function tryStudentLogin(){
   const input=document.getElementById('codeInput'),err=document.getElementById('codeErr');
   const code=String(input?input.value:'').trim(),button=document.querySelector('#studentLogin button');
   if(err)err.textContent='';
-  if(!/^\\d{4}$/.test(code)){if(err)err.textContent='4자리 학생 코드를 입력해주세요.';return}
+  if(!/^\d{4}$/.test(code)){if(err)err.textContent='4자리 학생 코드를 입력해주세요.';return}
   if(button)button.disabled=true;
   try{
     const result=await ffunctions.httpsCallable('studentGrowthSurveyLogin')({code});
