@@ -103,7 +103,7 @@ function createGrowthSurveyHandlers(admin, fs) {
   return {
     studentGrowthSurveyLogin: onCall({ region: REGION }, async request => {
       const code = String(request.data && request.data.code || '').trim();
-      if (!/^\\d{4}$/.test(code)) throw new HttpsError('invalid-argument', '학생 코드를 확인해주세요.');
+      if (!/^\d{4}$/.test(code)) throw new HttpsError('invalid-argument', '학생 코드를 확인해주세요.');
       await takeLoginAttempt(fs, request);
       const studentId = await findStudentByCode(fs, code);
       if (!studentId) throw new HttpsError('unauthenticated', '학생 코드를 확인해주세요.');
