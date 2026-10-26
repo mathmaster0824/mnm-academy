@@ -186,7 +186,8 @@
       <button id="tabStudent" onclick="setLoginMode('student')">학생 모드</button>
     </div>
     <div id="directorLogin">
-      <input type="password" id="pwInput" placeholder="비밀번호를 입력해주세요" maxlength="20">
+      <input type="email" id="directorEmail" placeholder="원장 이메일" autocomplete="username">
+      <input type="password" id="pwInput" placeholder="비밀번호를 입력해주세요" maxlength="64" autocomplete="current-password">
       <div class="login-err" id="pwErr"></div>
       <button class="btn-gold" onclick="tryDirectorLogin()">원장 모드로 입장</button>
       <div class="setup-note" id="pwSetupNote"></div>
@@ -373,30 +374,30 @@ async function initFirebase(){
   try{
     await firestorePersistenceReady;
     try{await fauth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)}catch(e){}
-    if(!fauth.currentUser) await fauth.signInAnonymously();
   }catch(e){
     showFatalError('로그인 서버에 연결하지 못했어요. 인터넷 연결을 확인한 뒤 새로고침 해주세요.');
     return;
   }
-  if(fauth.currentUser && !fauth.currentUser.isAnonymous){
-    if(await restoreStudentSessionFromToken()) return;
-  }
-  // 로그인 전에는 설정만 읽는다. 학생 명단·수업자료·기록 구독은 로그인 뒤 시작한다.
-  attachLoginSettingsListener();
-  startLoadingTimeoutWatchdog();
+  document.getElementById('loadingScreen').style.display='none';
+  document.getElementById('loginScreen').style.display='flex';
+  fauth.onAuthStateChanged(async user=>{
+    if(!user)return;
+    try{
+      const token=await user.getIdTokenResult();
+      if(token.claims.role==='student'&&token.claims.studentId){
+        session={mode:'student',studentId:token.claims.studentId,auth:'firebase'};
+        await loadStudentBootstrap(session.studentId);enterApp();return;
+      }
+      if(token.claims.firebase?.sign_in_provider==='password'&&await verifyDirectorAccess(user)){
+        session={mode:'director',auth:'firebase'};enterApp();return;
+      }
+    }catch(e){console.warn('[인증 세션 복원]',e)}
+  });
 }
-function attachLoginSettingsListener(){
-  if(loginSettingsUnsub) return;
-  loginSettingsUnsub=fsdb.collection('meta').doc('settings').onSnapshot(async doc=>{
-    if(doc.exists) db.settings=doc.data();
-    else{
-      db.settings={adminPassword:'0000',isDefaultPassword:true};
-      try{await fsdb.collection('meta').doc('settings').set(db.settings)}catch(e){}
-    }
-    listenersReady.settings=true;
-    maybeFinishLoading();
-    scheduleRender();
-  },err=>{setConnStatus(false)});
+async function verifyDirectorAccess(user){
+  if(!user||user.isAnonymous)return false;
+  try{await fsdb.collection('meta').doc('_directorCheck').get({source:'server'});return true}
+  catch(e){return false}
 }
 
 function showFatalError(msg){
@@ -426,18 +427,8 @@ function setConnStatus(ok){
 // 로그인 전부터 필요하고, 시간이 지나도 크게 늘어나지 않는 "기준정보" 컬렉션들.
 // 원장/학생 구분 없이 항상 전체를 구독해도 안전함 (읽기량이 크지 않음).
 function attachCoreListeners(){
+  db.settings={isDefaultPassword:false};listenersReady.settings=true;
   const subs = [
-    fsdb.collection('meta').doc('settings').onSnapshot(async doc=>{
-      if(doc.exists){ db.settings = doc.data(); }
-      else{
-        db.settings = { adminPassword:'0000', isDefaultPassword:true };
-        try{ await fsdb.collection('meta').doc('settings').set(db.settings); }catch(e){}
-      }
-      listenersReady.settings = true;
-      maybeFinishLoading();
-      scheduleRender();
-    }, err=>{ setConnStatus(false); }),
-
     fsdb.collection('students').onSnapshot(snap=>{
       db.students = snap.docs.map(d=>({id:d.id, ...d.data()}));
       listenersReady.students = true;
@@ -794,11 +785,24 @@ function setLoginMode(m){
   document.getElementById('directorLogin').style.display = m==='director' ? 'block':'none';
   document.getElementById('studentLogin').style.display = m==='student' ? 'block':'none';
 }
-function tryDirectorLogin(){
-  const v = document.getElementById('pwInput').value;
-  if(v === db.settings.adminPassword){ session = {mode:'director'}; saveSessionLocal(); enterApp(); }
-  else{ document.getElementById('pwErr').textContent = '비밀번호가 올바르지 않아요. 다시 확인해주세요.'; }
+async function tryDirectorLogin(){
+  const err=document.getElementById('pwErr'),email=(document.getElementById('directorEmail')?.value||'').trim(),password=document.getElementById('pwInput').value;
+  err.textContent='';
+  if(!email||!password){err.textContent='원장 이메일과 비밀번호를 입력해주세요.';return}
+  const button=document.querySelector('#directorLogin button');if(button)button.disabled=true;
+  try{
+    const credential=await fauth.signInWithEmailAndPassword(email,password);
+    if(!(await verifyDirectorAccess(credential.user))){
+      await fauth.signOut();err.textContent='이 계정에는 원장 권한이 없어요.';return;
+    }
+    document.getElementById('pwInput').value='';
+    session={mode:'director',auth:'firebase'};saveSessionLocal();enterApp();
+  }catch(e){
+    const code=String(e?.code||'');
+    err.textContent=code==='auth/too-many-requests'?'시도가 너무 많아요. 잠시 뒤 다시 해주세요.':code==='auth/network-request-failed'?'인터넷 연결을 확인해주세요.':'로그인 정보를 확인해주세요.';
+  }finally{if(button)button.disabled=false}
 }
+
 async function tryStudentLogin(){
   const input=document.getElementById('codeInput'),err=document.getElementById('codeErr');
   const code=String(input?input.value:'').trim(),button=document.querySelector('#studentLogin button');
@@ -816,7 +820,7 @@ async function tryStudentLogin(){
     saveSessionLocal();enterApp();
   }catch(e){
     if(err)err.textContent=e.code==='functions/resource-exhausted'?'시도가 많습니다. 잠시 뒤 다시 시도해주세요.':(e.message||'학생 코드를 확인할 수 없습니다.');
-    try{await fauth.signOut();await fauth.signInAnonymously();attachLoginSettingsListener()}catch(_){}
+    try{await fauth.signOut()}catch(_){}
   }finally{if(button)button.disabled=false}
 }
 async function loadStudentBootstrap(studentId){
@@ -849,8 +853,7 @@ async function logout(){
   session=null;appEntered=false;studentBootstrapLoadedFor='';
   db.students=[];db.classes=[];db.classRecords={};db.weeklyPlans={};db.fridaySupp={};db.submissions={};db.weekendSubmissions={};db.questions=[];db.kmm=[];
   try{localStorage.removeItem('mnm_session')}catch(e){}
-  try{await fauth.signOut();await fauth.signInAnonymously()}catch(e){}
-  attachLoginSettingsListener();
+  try{await fauth.signOut()}catch(e){}
   document.getElementById('appShell').style.display='none';document.getElementById('loginScreen').style.display='flex';
   document.getElementById('pwInput').value='';document.getElementById('codeInput').value='';
   document.getElementById('pwErr').textContent='';document.getElementById('codeErr').textContent='';
