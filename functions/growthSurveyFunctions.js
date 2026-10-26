@@ -123,13 +123,13 @@ function createGrowthSurveyHandlers(admin, fs) {
       }
       const rawStudent = studentSnap.data();
       const classSnap = await fs.collection('classes')
-        .where('studentIds', 'array-contains', studentId).limit(10).get();
+        .where('studentIds', 'array-contains', studentId).limit(5).get();
       const classDocs = new Map(classSnap.docs.map(d => [d.id, d]));
       if (rawStudent.classId && !classDocs.has(rawStudent.classId)) {
         const legacy = await fs.collection('classes').doc(String(rawStudent.classId)).get();
         if (legacy.exists) classDocs.set(legacy.id, legacy);
       }
-      const classes = [...classDocs.values()].slice(0, 5).map(d => ({
+      const classes = [...classDocs.values()].sort((a,b) => (a.id === String(rawStudent.classId || '') ? -1 : b.id === String(rawStudent.classId || '') ? 1 : a.id.localeCompare(b.id))).slice(0, 5).map(d => ({
         id: d.id,
         name: String(d.data().name || ''),
         dayGroup: String(d.data().dayGroup || ''),
@@ -137,14 +137,13 @@ function createGrowthSurveyHandlers(admin, fs) {
       }));
       const FieldPath = admin.firestore.FieldPath;
       const recordTasks = classes.map(async cls => {
-        const [records, suppCurrent, suppLegacy, plan, weekend] = await Promise.all([
+        const [records, suppCurrent, suppLegacy, plan] = await Promise.all([
           fs.collection('classRecords')
             .where(FieldPath.documentId(), '>=', cls.id + '_' + start)
             .where(FieldPath.documentId(), '<', cls.id + '_' + endEx).get(),
           fs.collection('fridaySupp').doc(cls.id + '_' + weekStartKST(today)).get(),
           fs.collection('fridaySupp').doc(cls.id + '_' + shiftDate(weekStartKST(today), -1)).get(),
-          fs.collection('weeklyPlans').doc(cls.id + '_' + weekStartKST(today)).get(),
-          Promise.resolve(null)
+          fs.collection('weeklyPlans').doc(cls.id + '_' + weekStartKST(today)).get()
         ]);
         const outRecords = {};
         records.docs.forEach(d => {
