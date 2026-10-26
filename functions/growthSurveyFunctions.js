@@ -36,7 +36,7 @@ function requireAuth(request) {
 function requireStudent(request) {
   const auth = requireAuth(request);
   const claims = auth.token || {};
-  if (claims.role !== 'student' || !validStudentId(claims.studentId)) {
+  if (claims.role !== 'student' || !validStudentId(claims.studentId) || auth.uid !== claims.studentId) {
     throw new HttpsError('permission-denied', '학생 권한이 확인되지 않았습니다.');
   }
   return { uid: auth.uid, studentId: claims.studentId };
