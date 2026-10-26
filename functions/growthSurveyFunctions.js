@@ -194,7 +194,7 @@ function createGrowthSurveyHandlers(admin, fs) {
     getGrowthSurvey: onCall({ region: REGION }, async request => {
       const auth = requireAuth(request);
       const month = requireMonth(request.data && request.data.month);
-      const isStudent = auth.token.role === 'student' && validStudentId(auth.token.studentId);
+      const isStudent = auth.token.role === 'student' && validStudentId(auth.token.studentId) && auth.uid === auth.token.studentId;
       const isOwner = isStudent ? false : (() => { requireDirector(request); return true; })();
       const studentId = isStudent ? auth.token.studentId : String(request.data && request.data.studentId || '');
       if (!validStudentId(studentId)) throw new HttpsError('invalid-argument', '학생을 확인해주세요.');
