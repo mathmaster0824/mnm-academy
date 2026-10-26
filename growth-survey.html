@@ -53,8 +53,8 @@ input,select,textarea{border:1px solid #d8d6cc;border-radius:8px;padding:10px;ba
   <div class="card no-print"><div class="row between"><div><h1 id="studentHeading">이번 달 학습 돌아보기</h1><div id="studentStatus" class="muted"></div></div><button class="btn secondary" onclick="logout()">로그아웃</button></div></div>
   <div id="studentArea"></div>
 </section>
-<section id="directorApp" class="hidden no-print">
-  <div class="card"><div class="row between"><div><h1>성장 설문 관리</h1><div class="muted">한 번에 학생 10명씩 불러옵니다. 학생을 선택하면 해당 월 문서와 직전 월 평가만 확인합니다.</div></div><button class="btn secondary" onclick="logout()">로그아웃</button></div>
+<section id="directorApp" class="hidden">
+  <div class="card no-print"><div class="row between"><div><h1>성장 설문 관리</h1><div class="muted">한 번에 학생 10명씩 불러옵니다. 학생을 선택하면 해당 월 문서와 직전 월 평가만 확인합니다.</div></div><button class="btn secondary" onclick="logout()">로그아웃</button></div>
     <div class="row" style="margin-top:14px"><label>대상 월 <input type="month" id="monthInput"></label><button class="btn secondary" onclick="loadStudents(true)">목록 불러오기</button><button class="btn secondary" id="nextPage" onclick="loadStudents(false)">다음 10명</button></div>
     <div id="listStatus" class="muted" style="margin:8px 0"></div><div id="studentList" class="studentlist"></div>
   </div>
