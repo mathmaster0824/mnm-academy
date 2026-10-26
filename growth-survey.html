@@ -88,7 +88,6 @@ function showLogin(which){$('studentLogin').classList.toggle('hidden',which!=='s
 function setBusy(button,busy,label){if(button){button.disabled=busy;if(busy)button.dataset.old=button.textContent;button.textContent=busy?label:(button.dataset.old||button.textContent)}}
 function showError(id,e){$(id).textContent=(e&&e.message||'요청을 처리하지 못했어요.').replace(/^FirebaseError:\s*/,'')}
 async function loginStudent(){
- authEntryInProgress=true;
  const code=$('studentCode').value.trim(),button=$('studentLogin').querySelector('button');
  $('studentError').textContent='';
  if(!/^\d{4}$/.test(code)){ $('studentError').textContent='4자리 학생 코드를 입력해주세요.';return; }
