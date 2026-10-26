@@ -598,8 +598,10 @@ function attachRoleListeners(){
   // 수업기록/주간계획/금요보강:
   // 로그인 때 전체 역사를 실시간 구독하지 않는다.
   // 최근 7일만 1회 읽고, 특정 과거 날짜는 화면에서 선택할 때 exact doc 1건을 읽는다.
-  ['classRecords','weeklyPlans','fridaySupp'].forEach(col=>{ db[col]={}; });
-  const classIds=isDirector?(db.classes||[]).map(c=>c.id):studentClassIds;
+  if(isDirector) ['classRecords','weeklyPlans','fridaySupp'].forEach(col=>{db[col]={};});
+  if(isDirector){
+  ['classRecords','weeklyPlans','fridaySupp'].forEach(col=>{db[col]={};});
+  const classIds=(db.classes||[]).map(c=>c.id);
   Promise.all(classIds.flatMap(cid=>[
     fsdb.collection('classRecords')
       .where(firebase.firestore.FieldPath.documentId(),'>=',cid+'_'+recentStart)
@@ -612,6 +614,7 @@ function attachRoleListeners(){
       .where(firebase.firestore.FieldPath.documentId(),'<',cid+'_\uf8ff').get()
       .then(snap=>snap.docs.forEach(d=>{db.fridaySupp[d.id]=d.data();}))
   ])).then(()=>scheduleRender()).catch(e=>console.error('[최근 7일 수업기록 조회]',e));
+  }
 
   // 숙제: 원장은 학생별 N개 리스너 대신 최근 7일 전체를 단일 쿼리로 구독한다.
   db.submissions={};
@@ -796,41 +799,63 @@ function tryDirectorLogin(){
   if(v === db.settings.adminPassword){ session = {mode:'director'}; saveSessionLocal(); enterApp(); }
   else{ document.getElementById('pwErr').textContent = '비밀번호가 올바르지 않아요. 다시 확인해주세요.'; }
 }
-function tryStudentLogin(){
-  const input = document.getElementById('codeInput');
-  const err = document.getElementById('codeErr');
-  const v = String(input ? input.value : '').trim();
-
-  // 기존 학생 code 값 자체는 절대 수정하지 않는다.
-  // Firestore에 숫자/문자열 어느 형식으로 저장돼 있어도 입력 코드와 같은 값이면 로그인한다.
-  const stu = (db.students||[]).find(s => String(s.code ?? '').trim() === v);
-
-  if(stu && stu.status==='withdrawn'){
-    if(err) err.textContent = '더 이상 사용할 수 없는 코드예요. 선생님께 문의해주세요.';
-    return;
-  }
-  if(stu){
-    session = {mode:'student', studentId:stu.id};
-    saveSessionLocal();
-    enterApp();
-  }else{
-    if(err) err.textContent = '등록되지 않은 코드예요. 선생님께 코드를 다시 확인해주세요.';
-  }
+async function tryStudentLogin(){
+  const input=document.getElementById('codeInput'),err=document.getElementById('codeErr');
+  const code=String(input?input.value:'').trim(),button=document.querySelector('#studentLogin button');
+  if(err)err.textContent='';
+  if(!/^\\d{4}$/.test(code)){if(err)err.textContent='4자리 학생 코드를 입력해주세요.';return}
+  if(button)button.disabled=true;
+  try{
+    const result=await ffunctions.httpsCallable('studentGrowthSurveyLogin')({code});
+    if(loginSettingsUnsub){loginSettingsUnsub();loginSettingsUnsub=null}
+    await fauth.signInWithCustomToken(result.data.token);
+    const token=await fauth.currentUser.getIdTokenResult(true),studentId=token.claims.studentId;
+    if(token.claims.role!=='student'||!studentId)throw new Error('학생 권한을 확인하지 못했어요.');
+    session={mode:'student',studentId,auth:'firebase'};
+    await loadStudentBootstrap(studentId);
+    saveSessionLocal();enterApp();
+  }catch(e){
+    if(err)err.textContent=e.code==='functions/resource-exhausted'?'시도가 많습니다. 잠시 뒤 다시 시도해주세요.':(e.message||'학생 코드를 확인할 수 없습니다.');
+    try{await fauth.signOut();await fauth.signInAnonymously();attachLoginSettingsListener()}catch(_){}
+  }finally{if(button)button.disabled=false}
 }
+async function loadStudentBootstrap(studentId){
+  const result=await ffunctions.httpsCallable('getStudentBootstrap')({});
+  const d=result.data||{};
+  if(d.student?.id!==studentId)throw new Error('학생 정보를 확인하지 못했어요.');
+  db.students=[d.student];db.classes=d.classes||[];
+  db.classRecords=d.classRecords||{};db.weeklyPlans=d.weeklyPlans||{};db.fridaySupp=d.fridaySupp||{};
+  db.weekendClasses=d.weekendClasses||[];db.weekendSettings=d.weekendSettings||{enabled:false};
+  db.stadSettings=d.stadSettings||{enabled:false,infoText:'',applyOpen:'',applyClose:'',zoomLink:''};
+  db.courses=[];
+  studentBootstrapLoadedFor=studentId;listenersReady.students=true;listenersReady.classes=true;
+}
+async function restoreStudentSessionFromToken(){
+  try{
+    const token=await fauth.currentUser.getIdTokenResult();
+    if(token.claims.role!=='student'||!token.claims.studentId)return false;
+    session={mode:'student',studentId:token.claims.studentId,auth:'firebase'};
+    await loadStudentBootstrap(session.studentId);enterApp();return true;
+  }catch(e){console.error('[학생 세션 복원]',e);return false}
+}
+
 function saveSessionLocal(){ try{ localStorage.setItem('mnm_session', JSON.stringify(session)); }catch(e){} }
-function logout(){
-  homeworkLoadGen++; homeworkRecentLoadState='idle'; homeworkKnownDates.clear(); homeworkKnownStudents.clear();
-  roleUnsubscribers.forEach(u=>{ try{ u(); }catch(e){} });
-  roleUnsubscribers = [];
-  clearViewListeners();
-  loadedViewData.clear();
-  session = null;
-  try{ localStorage.removeItem('mnm_session'); }catch(e){}
-  document.getElementById('appShell').style.display='none';
-  document.getElementById('loginScreen').style.display='flex';
-  document.getElementById('pwInput').value=''; document.getElementById('codeInput').value='';
-  document.getElementById('pwErr').textContent=''; document.getElementById('codeErr').textContent='';
+async function logout(){
+  homeworkLoadGen++;homeworkRecentLoadState='idle';homeworkKnownDates.clear();homeworkKnownStudents.clear();
+  roleUnsubscribers.forEach(u=>{try{u()}catch(e){}});roleUnsubscribers=[];
+  unsubscribers.forEach(u=>{try{u()}catch(e){}});unsubscribers=[];
+  clearViewListeners();loadedViewData.clear();
+  if(loginSettingsUnsub){loginSettingsUnsub();loginSettingsUnsub=null}
+  session=null;appEntered=false;studentBootstrapLoadedFor='';
+  db.students=[];db.classes=[];db.classRecords={};db.weeklyPlans={};db.fridaySupp={};db.submissions={};db.weekendSubmissions={};db.questions=[];db.kmm=[];
+  try{localStorage.removeItem('mnm_session')}catch(e){}
+  try{await fauth.signOut();await fauth.signInAnonymously()}catch(e){}
+  attachLoginSettingsListener();
+  document.getElementById('appShell').style.display='none';document.getElementById('loginScreen').style.display='flex';
+  document.getElementById('pwInput').value='';document.getElementById('codeInput').value='';
+  document.getElementById('pwErr').textContent='';document.getElementById('codeErr').textContent='';
 }
+
 function studentLessonRecords(stuId){
   const seen = new Set();
   const recs = [];
@@ -1025,13 +1050,15 @@ function verifiedWarnings(s){
   return ((s&&s.warnings)||[]).filter(w => w.auto!==true && !((w.reason||'').includes('자동 기록')));
 }
 function enterApp(){
-  appEntered = true;
+  appEntered=true;
+  if(session.mode==='director'){
+    if(loginSettingsUnsub){loginSettingsUnsub();loginSettingsUnsub=null}
+    attachCoreListeners();
+  }
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appShell').style.display='block';
-  currentView = session.mode==='director' ? 'dashboard' : 'studentHome';
-  attachRoleListeners();
-  buildNav();
-  render();
+  currentView=session.mode==='director'?'dashboard':'studentHome';
+  attachRoleListeners();buildNav();render();
 }
 
 /* ---------------- NAV ---------------- */
@@ -7169,19 +7196,27 @@ function renderWeekPlanGrids(stuId,title){
     </div>
   </div>`;}).join('');
 }
+let studentGrowthSummaryState={month:'',loading:false,survey:null,error:''};
+function renderStudentGrowthSummary(){
+  const date=todayISO(),month=date.slice(0,7);
+  if(Number(date.slice(8,10))<20)return `<div class="card"><h3>🌱 이번 달 성장 설문</h3><div class="muted">매월 20일부터 열려요.</div></div>`;
+  const st=studentGrowthSummaryState;
+  if(st.month!==month){st.month=month;st.loading=false;st.survey=null;st.error='';}
+  if(!st.loading&&!st.survey&&!st.error){
+    st.loading=true;
+    ffunctions.httpsCallable('getGrowthSurvey')({month}).then(r=>{st.survey=r.data.survey||{};st.loading=false;scheduleRender()}).catch(e=>{st.error='성장 기록을 불러오지 못했어요.';st.loading=false;scheduleRender()});
+  }
+  if(st.loading)return `<div class="card"><h3>🌱 이번 달 성장 설문</h3><div class="muted">불러오는 중…</div></div>`;
+  const s=st.survey||{},teacher=s.teacher||{},student=s.student||{},published=s.status==='published';
+  return `<div class="card" style="border-left:4px solid #416d58;"><div class="row between"><div><h3 style="margin:0">🌱 ${Number(month.slice(5))}월 학습 성장</h3><div class="muted">${published?'선생님이 이번 달 성장 기록을 게시했어요.':student.submittedAt?'제출 완료 · 선생님 확인 중':'나의 학습을 돌아보고 작은 목표를 정해보세요.'}</div></div><a class="btn sm gold" href="growth-survey.html">${published?'성장 기록 보기':student.submittedAt?'내 응답 확인':'설문 시작하기'}</a></div>${published?`<div style="margin-top:10px;padding:11px;background:#f6f4ec;border-radius:9px;"><b>선생님이 전하는 메모</b><div style="margin-top:5px;line-height:1.6;">${escapeHtml(teacher.studentMemo||'')}</div><div class="muted" style="margin-top:8px;">나의 다음 달 목표: ${escapeHtml(student.smallGoal||'')}</div><div class="muted">선생님의 지원 약속: ${escapeHtml(teacher.supportCommitment||'')}</div></div>`:''}${st.error?`<div class="muted">${escapeHtml(st.error)}</div>`:''}</div>`;
+}
 function renderStudentHome(){
-  const stuId = session.studentId;
-  const s = studentById(stuId);
-  if(!s) return `<div class="empty">학생 정보를 찾을 수 없어요.</div>`;
-  const cls = classById(s.classId);
-  return `
-    <div class="card">
-      <h2 style="margin:0 0 4px;">${s.name} <span style="font-size:14px;color:#9c9880;">(${s.grade})</span></h2>
-      <span class="studentcode">${s.code}</span> · ${escapeHtml(classNamesForStudent(stuId))}
-    </div>
-    ${renderStudentHomeworkSummary(stuId)}
-    ${renderStudentQuestionSummary(stuId)}
-  `;
+  const stuId=session.studentId,s=studentById(stuId);
+  if(!s)return `<div class="empty">학생 정보를 찾을 수 없어요.</div>`;
+  return `<div class="card"><h2 style="margin:0 0 4px;">${escapeHtml(s.name)} <span style="font-size:14px;color:#9c9880;">(${escapeHtml(s.grade)})</span></h2><span class="studentcode">M&amp;m 학습 성장 기록</span> · ${escapeHtml(classNamesForStudent(stuId))}</div>
+  ${renderStudentGrowthSummary()}
+  ${renderStudentHomeworkSummary(stuId)}
+  ${renderStudentQuestionSummary(stuId)}`;
 }
 
 // 학생 첫 화면 전용: 기존 Firestore 데이터를 읽어서 요약만 보여준다. 저장/수정 없음.
