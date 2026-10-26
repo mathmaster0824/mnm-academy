@@ -288,6 +288,8 @@ let loadedViewData = new Set(); // 로그인 이후(원장/학생)에만 붙는,
 let listenersReady = { settings:false, students:false, classes:false };
 let loginSettingsUnsub = null;
 let studentBootstrapLoadedFor = "";
+let authFlowInProgress = false;
+let directorRoleListenersAttached = false;
 
 // local in-memory mirror, kept in sync by Firestore real-time listeners
 let db = {
@@ -381,7 +383,7 @@ async function initFirebase(){
   document.getElementById('loadingScreen').style.display='none';
   document.getElementById('loginScreen').style.display='flex';
   fauth.onAuthStateChanged(async user=>{
-    if(!user)return;
+    if(!user||authFlowInProgress)return;
     try{
       const token=await user.getIdTokenResult();
       if(token.claims.role==='student'&&token.claims.studentId){
@@ -433,12 +435,14 @@ function attachCoreListeners(){
       db.students = snap.docs.map(d=>({id:d.id, ...d.data()}));
       listenersReady.students = true;
       maybeFinishLoading();
+      maybeAttachDirectorRoleListeners();
       scheduleRender();
     }, err=>{ setConnStatus(false); }),
 
     fsdb.collection('classes').onSnapshot(snap=>{
       db.classes = snap.docs.map(d=>({id:d.id, ...d.data()}));
       listenersReady.classes = true;
+      maybeAttachDirectorRoleListeners();
       Object.keys(fridayWeekLoads).forEach(week=>{
         if(fridayWeekLoads[week]?.status==='waiting-classes') requestFridayWeekLoad(week);
       });
@@ -786,6 +790,7 @@ function setLoginMode(m){
   document.getElementById('studentLogin').style.display = m==='student' ? 'block':'none';
 }
 async function tryDirectorLogin(){
+  authFlowInProgress=true;
   const err=document.getElementById('pwErr'),email=(document.getElementById('directorEmail')?.value||'').trim(),password=document.getElementById('pwInput').value;
   err.textContent='';
   if(!email||!password){err.textContent='원장 이메일과 비밀번호를 입력해주세요.';return}
@@ -800,7 +805,7 @@ async function tryDirectorLogin(){
   }catch(e){
     const code=String(e?.code||'');
     err.textContent=code==='auth/too-many-requests'?'시도가 너무 많아요. 잠시 뒤 다시 해주세요.':code==='auth/network-request-failed'?'인터넷 연결을 확인해주세요.':'로그인 정보를 확인해주세요.';
-  }finally{if(button)button.disabled=false}
+  }finally{if(button)button.disabled=false;authFlowInProgress=false}
 }
 
 async function tryStudentLogin(){
@@ -809,9 +814,9 @@ async function tryStudentLogin(){
   if(err)err.textContent='';
   if(!/^\d{4}$/.test(code)){if(err)err.textContent='4자리 학생 코드를 입력해주세요.';return}
   if(button)button.disabled=true;
+  authFlowInProgress=true;
   try{
     const result=await ffunctions.httpsCallable('studentGrowthSurveyLogin')({code});
-    if(loginSettingsUnsub){loginSettingsUnsub();loginSettingsUnsub=null}
     await fauth.signInWithCustomToken(result.data.token);
     const token=await fauth.currentUser.getIdTokenResult(true),studentId=token.claims.studentId;
     if(token.claims.role!=='student'||!studentId)throw new Error('학생 권한을 확인하지 못했어요.');
@@ -821,7 +826,7 @@ async function tryStudentLogin(){
   }catch(e){
     if(err)err.textContent=e.code==='functions/resource-exhausted'?'시도가 많습니다. 잠시 뒤 다시 시도해주세요.':(e.message||'학생 코드를 확인할 수 없습니다.');
     try{await fauth.signOut()}catch(_){}
-  }finally{if(button)button.disabled=false}
+  }finally{if(button)button.disabled=false;authFlowInProgress=false}
 }
 async function loadStudentBootstrap(studentId){
   const result=await ffunctions.httpsCallable('getStudentBootstrap')({});
@@ -844,13 +849,13 @@ async function restoreStudentSessionFromToken(){
 }
 
 function saveSessionLocal(){ try{ localStorage.setItem('mnm_session', JSON.stringify(session)); }catch(e){} }
-async function logout(){
+async async function logout(){
   homeworkLoadGen++;homeworkRecentLoadState='idle';homeworkKnownDates.clear();homeworkKnownStudents.clear();
   roleUnsubscribers.forEach(u=>{try{u()}catch(e){}});roleUnsubscribers=[];
   unsubscribers.forEach(u=>{try{u()}catch(e){}});unsubscribers=[];
   clearViewListeners();loadedViewData.clear();
-  if(loginSettingsUnsub){loginSettingsUnsub();loginSettingsUnsub=null}
-  session=null;appEntered=false;studentBootstrapLoadedFor='';
+  session=null;appEntered=false;studentBootstrapLoadedFor='';directorRoleListenersAttached=false;
+  listenersReady={settings:false,students:false,classes:false};
   db.students=[];db.classes=[];db.classRecords={};db.weeklyPlans={};db.fridaySupp={};db.submissions={};db.weekendSubmissions={};db.questions=[];db.kmm=[];
   try{localStorage.removeItem('mnm_session')}catch(e){}
   try{await fauth.signOut()}catch(e){}
@@ -1054,14 +1059,17 @@ function verifiedWarnings(s){
 }
 function enterApp(){
   appEntered=true;
-  if(session.mode==='director'){
-    if(loginSettingsUnsub){loginSettingsUnsub();loginSettingsUnsub=null}
-    attachCoreListeners();
-  }
+  if(session.mode==='director')attachCoreListeners();
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appShell').style.display='block';
   currentView=session.mode==='director'?'dashboard':'studentHome';
-  attachRoleListeners();buildNav();render();
+  if(session.mode==='student')attachRoleListeners();else maybeAttachDirectorRoleListeners();
+  buildNav();render();
+}
+function maybeAttachDirectorRoleListeners(){
+  if(appEntered&&session?.mode==='director'&&!directorRoleListenersAttached&&listenersReady.students&&listenersReady.classes){
+    directorRoleListenersAttached=true;attachRoleListeners();
+  }
 }
 
 /* ---------------- NAV ---------------- */
