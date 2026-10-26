@@ -124,6 +124,22 @@ function createGrowthSurveyHandlers(admin, fs) {
       return { survey: isStudent ? safeStudentView(value) : value, isOwner };
     }),
 
+    listGrowthSurveyStudents: onCall({ region: REGION }, async request => {
+      requireDirector(request);
+      const cursor = String(request.data && request.data.cursor || '');
+      let query = fs.collection('students').orderBy(admin.firestore.FieldPath.documentId()).limit(PAGE_SIZE);
+      if (cursor) {
+        if (!validStudentId(cursor)) throw new HttpsError('invalid-argument', '페이지 위치가 올바르지 않습니다.');
+        query = query.startAfter(cursor);
+      }
+      const snap = await query.get();
+      const rows = snap.docs.map(d => {
+        const s = d.data();
+        return { id: d.id, name: String(s.name || ''), grade: String(s.grade || ''), classId: String(s.classId || ''), status: String(s.status || 'active') };
+      }).filter(s => s.status !== 'withdrawn');
+      return { rows, nextCursor: snap.size === PAGE_SIZE ? snap.docs[snap.docs.length - 1].id : null, limit: PAGE_SIZE };
+    }),
+
     prepareGrowthSurveyDraft: onCall({ region: REGION }, async request => {
       requireDirector(request);
       const month = requireMonth(request.data && request.data.month);
@@ -193,17 +209,21 @@ function createGrowthSurveyHandlers(admin, fs) {
       const ref = fs.collection(COLLECTION).doc(docId(studentId, month));
       await fs.runTransaction(async tx => {
         const snap = await tx.get(ref);
-        if (!snap.exists) throw new HttpsError('failed-precondition', '학생 응답이 아직 없습니다.');
-        const old = snap.data();
+        const old = snap.exists ? snap.data() : {};
         if (publish && (!old.student || !old.student.submittedAt)) {
           throw new HttpsError('failed-precondition', '학생 응답을 받은 뒤 게시할 수 있습니다.');
         }
-        tx.update(ref, {
+        const patch = {
+          studentId, month, templateVersion: 1,
           teacher: valid.value,
           status: publish ? 'published' : (old.status === 'published' ? 'published' : 'open'),
+          evidenceRefs: old.evidenceRefs || [],
+          createdAt: old.createdAt || new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           ...(publish ? { publishedAt: new Date().toISOString() } : {})
-        });
+        };
+        if (snap.exists) tx.update(ref, patch);
+        else tx.set(ref, Object.assign({ student: {} }, patch));
       });
       return { ok: true, published: publish };
     })
