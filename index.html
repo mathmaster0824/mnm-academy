@@ -4652,7 +4652,7 @@ function renderHomeworkReview(){
         </div>
       </div>
       <div style="margin-top:8px;font-size:12px;color:#8a8674;">
-        숙제 상태 · 검사 ${homeworkReviewCount(r)}/${HOMEWORK_MAX_REVIEWS}
+        검사 ${homeworkReviewCount(r)}/${HOMEWORK_MAX_REVIEWS}
         ${!submissionIsApproved(r,r.date)&&!submissionIsFinalRejected(r)?` · 남은 기회 <b>${homeworkReviewsRemaining(r)}회</b>`:''}
       </div>
       <div style="margin-top:6px;font-size:12px;color:#8a8674;">숙제 사진</div>
@@ -4727,7 +4727,7 @@ function renderSubmissionCard(stuId, directorView, previewAsStudent){
 function renderSubmissionReadonly(sub,stuId,date){
   return `
   <div class="row between">
-    <div>숙제 상태 · 상태:
+    <div>상태:
       <span class="badge ${homeworkCountsAsCompleted(sub,date)?'green':submissionIsPending(sub,date)?'yellow':'red'}">${submissionIsFinalRejected(sub)?'최종 불합격':homeworkReviewLabel(sub,date)}</span>
       · 검사 ${homeworkReviewCount(sub)}/${HOMEWORK_MAX_REVIEWS}
       ${!submissionIsApproved(sub,date)&&!submissionIsFinalRejected(sub)?` · 남은 기회 ${homeworkReviewsRemaining(sub)}회`:''}
