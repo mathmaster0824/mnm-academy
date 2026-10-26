@@ -121,7 +121,6 @@
   .legend{font-size:12px;display:flex;flex-direction:column;gap:5px;}
   .legend .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;}
   .studentcode{font-family:monospace;font-weight:700;letter-spacing:1px;background:#f1efe4;padding:2px 7px;border-radius:6px;}
-  .stopwatch{font-size:38px;font-family:monospace;font-weight:700;color:var(--navy);text-align:center;}
   .weekgrid{display:grid;grid-template-columns:70px repeat(7,1fr);gap:4px;font-size:12px;}
   .weekgrid .hd{font-weight:700;text-align:center;color:#8a8674;padding:4px;}
   .weekgrid textarea{width:100%;height:50px;font-size:11px;padding:4px;}
@@ -454,7 +453,7 @@ function attachCoreListeners(){
 }
 
 // 문서ID가 'prefix'로 시작하는 문서만 가져오는 범위 쿼리.
-// (classRecords/weeklyPlans/fridaySupp는 '반ID_날짜', submissions/timerState/weekendSubmissions는
+// (classRecords/weeklyPlans/fridaySupp는 '반ID_날짜', submissions/weekendSubmissions는
 //  '학생ID_날짜' 형태의 키를 쓰므로, 이 방식으로 "내 것"만 정확히 걸러낼 수 있음)
 function idRangeQuery(colName, prefix){
   const fp = firebase.firestore.FieldPath.documentId();
@@ -669,16 +668,6 @@ function attachRoleListeners(){
       });
       Object.assign(db.submissions,keep); scheduleRender();
     },roleListenerError('submissions')));
-  }
-
-  // 타이머는 현재 학생/오늘 문서만 필요하다. 원장 로그인에는 아예 읽지 않는다.
-  db.timerState={};
-  if(!isDirector&&stuId){
-    const key=stuId+'_'+academicTodayISO();
-    subs.push(fsdb.collection('timerState').doc(key).onSnapshot(doc=>{
-      db.timerState=doc.exists?{[key]:doc.data()}:{};
-      scheduleRender();
-    },roleListenerError('timerState')));
   }
 
   // 주말학습 인증: 이번 주만.
@@ -4660,7 +4649,7 @@ function renderHomeworkReview(){
         </div>
       </div>
       <div style="margin-top:8px;font-size:12px;color:#8a8674;">
-        실측 시간: <b>${r.time||'-'}</b> · 검사 ${homeworkReviewCount(r)}/${HOMEWORK_MAX_REVIEWS}
+        검사 ${homeworkReviewCount(r)}/${HOMEWORK_MAX_REVIEWS}
         ${!submissionIsApproved(r,r.date)&&!submissionIsFinalRejected(r)?` · 남은 기회 <b>${homeworkReviewsRemaining(r)}회</b>`:''}
       </div>
       <div style="margin-top:6px;font-size:12px;color:#8a8674;">숙제 사진</div>
@@ -4669,6 +4658,9 @@ function renderHomeworkReview(){
       <div style="margin-top:6px;font-size:12px;color:#8a8674;">풀이연습장 사진</div>
       <div class="thumbs">${(r.practicePhotos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('sub','${r.key}','practicePhotos',${i})">`).join('') || '-'}</div>
       ${(r.practicePhotos||[]).length>1 ? `<button class="btn sm outline" style="margin-top:6px;" onclick="downloadAllPhotos(db.submissions['${r.key}'].practicePhotos, '${s?s.name:'student'}_${r.date}_풀이연습장', this)">📥 풀이연습장 사진 모두 받기</button>` : ''}
+      <div style="margin-top:6px;font-size:12px;color:#8a8674;">타이머 사진</div>
+      <div class="thumbs">${(r.timerPhotos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('sub','${r.key}','timerPhotos',${i})">`).join('') || '-'}</div>
+      ${(r.timerPhotos||[]).length>1 ? `<button class="btn sm outline" style="margin-top:6px;" onclick="downloadAllPhotos(db.submissions['${r.key}'].timerPhotos, '${s?s.name:'student'}_${r.date}_타이머', this)">📥 타이머 사진 모두 받기</button>` : ''}
       ${(r.errorTypes||[]).length? `<div style="margin-top:8px;font-size:12px;color:#8a8674;">오답유형: ${r.errorTypes.map(e=>`${e.type} ${e.percent}%`).join(', ')}</div>` : ''}
       ${submissionIsRejected(r,r.date) ? `<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#fff3f1;color:#a83b32;font-size:12px;"><b>${submissionIsFinalRejected(r)?'최종 불합격':'수정 필요 사유'}</b>: ${r.reviewReason||'사유 미입력'}</div>` : ''}
       ${renderTeacherCommentBox(r.studentId, r.date, r.teacherComment)}
@@ -4732,7 +4724,7 @@ function renderSubmissionCard(stuId, directorView, previewAsStudent){
 function renderSubmissionReadonly(sub,stuId,date){
   return `
   <div class="row between">
-    <div>실측 시간: <b>${sub.time||'-'}</b> · 상태:
+    <div>상태:
       <span class="badge ${homeworkCountsAsCompleted(sub,date)?'green':submissionIsPending(sub,date)?'yellow':'red'}">${submissionIsFinalRejected(sub)?'최종 불합격':homeworkReviewLabel(sub,date)}</span>
       · 검사 ${homeworkReviewCount(sub)}/${HOMEWORK_MAX_REVIEWS}
       ${!submissionIsApproved(sub,date)&&!submissionIsFinalRejected(sub)?` · 남은 기회 ${homeworkReviewsRemaining(sub)}회`:''}
@@ -4758,6 +4750,8 @@ function renderSubmissionReadonly(sub,stuId,date){
   <div class="thumbs">${(sub.hwPhotos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('sub','${stuId}_${date}','hwPhotos',${i})">`).join('') || '-'}</div>
   <div style="margin-top:8px;font-size:12px;color:#8a8674;">풀이연습장 사진</div>
   <div class="thumbs">${(sub.practicePhotos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('sub','${stuId}_${date}','practicePhotos',${i})">`).join('') || '-'}</div>
+  <div style="margin-top:8px;font-size:12px;color:#8a8674;">타이머 사진</div>
+  <div class="thumbs">${(sub.timerPhotos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('sub','${stuId}_${date}','timerPhotos',${i})">`).join('') || '-'}</div>
   <div style="margin-top:10px;font-size:12px;color:#8a8674;">오답유형: ${(sub.errorTypes||[]).map(e=>`${e.type} ${e.percent}%`).join(', ')||'-'}</div>
   ${sub.memo?`<div style="margin-top:10px;padding:9px 10px;border-radius:8px;background:#f6f4ec;font-size:12px;"><b>📝 학생 메모</b>: ${sub.memo}</div>`:''}
   ${renderTeacherCommentBox(stuId, date, sub.teacherComment)}
@@ -4841,7 +4835,7 @@ async function applyHomeworkReviewPatch(stuId,date,patch,btn){
 const hwVerifyUi={};   // '학생|반|날짜' -> {state:'saving'|'saved'|'error', msg}
 function hwVerifyUiKey(stuId,clsId,date){ return stuId+'|'+clsId+'|'+date; }
 function homeworkSubmittedByStudent(sub){
-  return !!sub && (!!sub.submittedAt || (sub.hwPhotos||[]).length>0 || (sub.practicePhotos||[]).length>0);
+  return !!sub && (!!sub.submittedAt || (sub.hwPhotos||[]).length>0 || (sub.practicePhotos||[]).length>0 || (sub.timerPhotos||[]).length>0);
 }
 function homeworkIsTeacherDirect(sub){
   return !!sub && sub.verifyMethod==='teacher-direct' && !homeworkSubmittedByStudent(sub);
@@ -4993,8 +4987,7 @@ function draftStorageKey(stuId,date){ return `mnm_draft_${stuId}_${date}`; }
 function saveDraftLocal(stuId,date){
   try{
     if(!currentSubState._draftSub) return;
-    const payload = {...currentSubState._draftSub, _swRunStartTs:swRunStartTs, _swBaseSeconds:swBaseSeconds};
-    localStorage.setItem(draftStorageKey(stuId,date), JSON.stringify(payload));
+    localStorage.setItem(draftStorageKey(stuId,date), JSON.stringify(currentSubState._draftSub));
   }catch(e){}
 }
 function loadDraftLocal(stuId,date){
@@ -5026,6 +5019,7 @@ function homeworkUploadStatusHtml(){
   return `<div id="hwUploadStatus" style="margin-top:10px;padding:9px 10px;border-radius:8px;background:#fff8e6;font-size:12px;font-weight:700;">📤 사진 업로드 중 · ${homeworkUploadState.done}/${homeworkUploadState.total}${homeworkUploadState.failed?` · 실패 ${homeworkUploadState.failed}`:''}<br><span style="font-weight:400;color:#8a8674;">완료될 때까지 사진 선택 버튼은 잠깁니다.</span></div>`;
 }
 
+let draftActiveStuId = null, draftActiveDate = null;
 function renderSubmissionForm(stuId,date,sub){
   const hasExisting = !!sub;
   if(submissionIsFinalRejected(sub)){
@@ -5035,55 +5029,45 @@ function renderSubmissionForm(stuId,date,sub){
       ${sub&&sub.reviewReason?`<div style="margin-top:6px;font-size:12px;">마지막 사유: ${sub.reviewReason}</div>`:''}
     </div>`;
   }
-  sub = sub || {time:'',hwPhotos:[],practicePhotos:[],status:'대기',reviewCount:0};
+  sub = sub || {hwPhotos:[],practicePhotos:[],timerPhotos:[],status:'대기',reviewCount:0};
   const draftKey = stuId+'_'+date;
   if(currentSubState._draftSubKey !== draftKey){
-    if(swDisplayInterval){ clearInterval(swDisplayInterval); swDisplayInterval=null; }
     const local = loadDraftLocal(stuId, date);
-    const serverTimer = db.timerState[draftKey];
     if(local){
-      // 이전에 작성하다 만 내용(뒤로가기·새로고침·화면꺼짐 등)이 폰에 남아있으면 그걸 이어서 씀
       currentSubState._draftSub = {
-        time: local.time || '00:00',
-        hwPhotos: local.hwPhotos || [],
-        practicePhotos: local.practicePhotos || [],
+        ...(sub ? JSON.parse(JSON.stringify(sub)) : {}),
+        time: local.time !== undefined ? local.time : sub.time,
+        hwPhotos: local.hwPhotos || sub.hwPhotos || [],
+        practicePhotos: local.practicePhotos || sub.practicePhotos || [],
+        timerPhotos: local.timerPhotos || sub.timerPhotos || [],
         memo: local.memo || sub.memo || '',
         status: sub.status || '대기'
       };
     }else{
       currentSubState._draftSub = JSON.parse(JSON.stringify(sub));
     }
-    // 타이머는 서버(Firestore)에 저장된 값이 있으면 그걸 우선 사용 (폰 데이터가 지워져도 복구 가능)
-    if(serverTimer && (!local || (serverTimer.updatedAt||0) >= (local._timerUpdatedAt||0))){
-      swBaseSeconds = serverTimer.baseSeconds || 0;
-      swRunStartTs = serverTimer.runStartTs || null;
-    }else if(local){
-      swBaseSeconds = typeof local._swBaseSeconds === 'number' ? local._swBaseSeconds : parseTimeToSeconds(local.time);
-      swRunStartTs = local._swRunStartTs || null;
-    }else{
-      swBaseSeconds = parseTimeToSeconds(sub.time || '00:00');
-      swRunStartTs = null;
-    }
-    if(swRunStartTs){ swDisplayInterval = setInterval(swUpdateDisplay, 1000); }
+    const draft=currentSubState._draftSub;
+    draft.hwPhotos=Array.isArray(draft.hwPhotos)?draft.hwPhotos:[];
+    draft.practicePhotos=Array.isArray(draft.practicePhotos)?draft.practicePhotos:[];
+    draft.timerPhotos=Array.isArray(draft.timerPhotos)?draft.timerPhotos:[];
     currentSubState._draftSubKey = draftKey;
-    swActiveStuId = stuId; swActiveDate = date;
-    swTickCount = 0;
+    draftActiveStuId = stuId; draftActiveDate = date;
     saveDraftLocal(stuId, date);
   }
   const draft = currentSubState._draftSub;
   return `
-  <div class="stopwatch" id="swDisplay">${draft.time || '00:00'}</div>
-  <div class="row" style="justify-content:center;margin-bottom:12px;">
-    <button class="btn sm outline" onclick="swStart()">시작</button>
-    <button class="btn sm outline" onclick="swStop()">정지</button>
-    <button class="btn sm outline" onclick="swReset()">초기화</button>
-  </div>
   <div style="font-size:12px;color:#8a8674;margin-bottom:4px;">숙제 사진</div>
   <div class="row">
     <label class="btn sm outline" style="cursor:${homeworkUploadState.active?'wait':'pointer'};opacity:${homeworkUploadState.active?'.55':'1'};">📷 카메라로 촬영<input type="file" accept="image/*" capture="environment" ${homeworkUploadState.active?'disabled':''} onchange="uploadSubPhoto(this,'hwPhotos')" style="display:none;"></label>
     <label class="btn sm outline" style="cursor:${homeworkUploadState.active?'wait':'pointer'};opacity:${homeworkUploadState.active?'.55':'1'};">🖼️ 갤러리에서 선택<input type="file" accept="image/*" multiple ${homeworkUploadState.active?'disabled':''} onchange="uploadSubPhoto(this,'hwPhotos')" style="display:none;"></label>
   </div>
   <div class="thumbs">${draft.hwPhotos.map((p,i)=>`<div class="thumb-wrap"><img src="${photoSrc(p,true)}" onclick="openLightboxSet('draft','hwPhotos','',${i})"><button class="thumb-x" onclick="removeDraftPhoto('hwPhotos',${i})">✕</button></div>`).join('')}</div>
+  <div style="font-size:12px;color:#8a8674;margin:10px 0 4px;">타이머 사진 <span style="font-weight:400;">(시간을 재고 공부한 기록)</span></div>
+  <div class="row">
+    <label class="btn sm outline" style="cursor:${homeworkUploadState.active?'wait':'pointer'};opacity:${homeworkUploadState.active?'.55':'1'};">📷 카메라로 촬영<input type="file" accept="image/*" capture="environment" ${homeworkUploadState.active?'disabled':''} onchange="uploadSubPhoto(this,'timerPhotos')" style="display:none;"></label>
+    <label class="btn sm outline" style="cursor:${homeworkUploadState.active?'wait':'pointer'};opacity:${homeworkUploadState.active?'.55':'1'};">🖼️ 갤러리에서 선택<input type="file" accept="image/*" multiple ${homeworkUploadState.active?'disabled':''} onchange="uploadSubPhoto(this,'timerPhotos')" style="display:none;"></label>
+  </div>
+  <div class="thumbs">${draft.timerPhotos.map((p,i)=>`<div class="thumb-wrap"><img src="${photoSrc(p,true)}" onclick="openLightboxSet('draft','timerPhotos','',${i})"><button class="thumb-x" onclick="removeDraftPhoto('timerPhotos',${i})">✕</button></div>`).join('')}</div>
   <div style="font-size:12px;color:#8a8674;margin:10px 0 4px;">풀이연습장 사진</div>
   <div class="row">
     <label class="btn sm outline" style="cursor:${homeworkUploadState.active?'wait':'pointer'};opacity:${homeworkUploadState.active?'.55':'1'};">📷 카메라로 촬영<input type="file" accept="image/*" capture="environment" ${homeworkUploadState.active?'disabled':''} onchange="uploadSubPhoto(this,'practicePhotos')" style="display:none;"></label>
@@ -5101,61 +5085,18 @@ function renderSubmissionForm(stuId,date,sub){
   <button class="btn gold" style="width:100%;margin-top:10px;opacity:${homeworkUploadState.active?'.55':'1'};" ${homeworkUploadState.active?'disabled':''} onclick="submitHomework('${stuId}','${date}')">${homeworkUploadState.active?'사진 업로드 중...':(hasExisting ? '수정한 내용 다시 제출하기' : '숙제 인증 제출하기')}</button>
   `;
 }
-/* 실제 시계(타임스탬프) 기반 스톱워치 — 화면이 꺼지거나 뒤로가기로 새로고침돼도 폰에 저장된 값으로 이어서 계산돼요 */
-let swRunStartTs = null;   // 현재 재생 중이면 시작 시각(ms), 아니면 null
-let swBaseSeconds = 0;     // 이전에 정지했던 시점까지 누적된 초
-let swDisplayInterval = null;
-let swActiveStuId = null, swActiveDate = null;
-let swTickCount = 0;
-function parseTimeToSeconds(t){ if(!t) return 0; const parts=t.split(':').map(Number); return (parts[0]||0)*60+(parts[1]||0); }
-function formatSeconds(sec){ const m=String(Math.floor(sec/60)).padStart(2,'0'); const s=String(sec%60).padStart(2,'0'); return `${m}:${s}`; }
-function swCurrentElapsed(){ return swBaseSeconds + (swRunStartTs ? Math.floor((Date.now()-swRunStartTs)/1000) : 0); }
-async function saveTimerServer(stuId, date){
-  try{ await fsSet('timerState', stuId+'_'+date, {baseSeconds: swBaseSeconds, runStartTs: swRunStartTs, updatedAt: Date.now()}); }catch(e){}
-}
-function swUpdateDisplay(){
-  const formatted = formatSeconds(swCurrentElapsed());
-  const el = document.getElementById('swDisplay'); if(el) el.textContent = formatted;
-  if(currentSubState._draftSub) currentSubState._draftSub.time = formatted;
-  if(swActiveStuId && swActiveDate){
-    saveDraftLocal(swActiveStuId, swActiveDate);
-    swTickCount++;
-    if(swTickCount % 10 === 0) saveTimerServer(swActiveStuId, swActiveDate); // 10초마다 서버 백업 (너무 자주 쓰지 않도록)
-  }
-}
-function swStart(){
-  if(swRunStartTs) return;
-  swBaseSeconds = parseTimeToSeconds(currentSubState._draftSub ? currentSubState._draftSub.time : '00:00');
-  swRunStartTs = Date.now();
-  if(swDisplayInterval) clearInterval(swDisplayInterval);
-  swDisplayInterval = setInterval(swUpdateDisplay, 1000);
-  swUpdateDisplay();
-  if(swActiveStuId && swActiveDate) saveTimerServer(swActiveStuId, swActiveDate);
-}
-function swStop(){
-  if(!swRunStartTs) return;
-  swBaseSeconds = swCurrentElapsed();
-  swRunStartTs = null;
-  if(swDisplayInterval){ clearInterval(swDisplayInterval); swDisplayInterval=null; }
-  swUpdateDisplay();
-  if(swActiveStuId && swActiveDate) saveTimerServer(swActiveStuId, swActiveDate);
-}
-function swReset(){
-  swRunStartTs = null; swBaseSeconds = 0;
-  if(swDisplayInterval){ clearInterval(swDisplayInterval); swDisplayInterval=null; }
-  const el = document.getElementById('swDisplay'); if(el) el.textContent = '00:00';
-  if(currentSubState._draftSub) currentSubState._draftSub.time = '00:00';
-  if(swActiveStuId && swActiveDate){ saveDraftLocal(swActiveStuId, swActiveDate); saveTimerServer(swActiveStuId, swActiveDate); }
+function saveActiveHomeworkDraft(){
+  if(draftActiveStuId && draftActiveDate) saveDraftLocal(draftActiveStuId,draftActiveDate);
 }
 function renderDraftSizeIndicator(draft){
-  const payload={hwPhotos:draft.hwPhotos,practicePhotos:draft.practicePhotos};
+  const payload={hwPhotos:draft.hwPhotos,practicePhotos:draft.practicePhotos,timerPhotos:draft.timerPhotos};
   const sizeKB = Math.round(firestorePayloadSizeKB(payload));
   const limit = 850;
   const embedded = hasLegacyEmbeddedPhotos(payload);
   const pct = embedded ? Math.min(100, Math.round(sizeKB/limit*100)) : 0;
   const color = pct>=90 ? 'var(--red)' : pct>=65 ? 'var(--gold)' : 'var(--green)';
   if(!embedded){
-    const r2Count=[...(draft.hwPhotos||[]),...(draft.practicePhotos||[])].filter(p=>!!photoStorageKey(p)).length;
+    const r2Count=[...(draft.hwPhotos||[]),...(draft.practicePhotos||[]),...(draft.timerPhotos||[])].filter(p=>!!photoStorageKey(p)).length;
     return `<div style="margin-top:14px;font-size:11px;color:var(--green);">✓ 사진 ${r2Count}장 준비됨</div>`;
   }
   const msg = pct>=90 ? '용량이 거의 다 찼어요! 사진을 몇 장 지워주세요 (✕ 버튼).' : pct>=65 ? '사진이 많이 쌓였어요. 계속 추가하면 저장이 안 될 수 있어요.' : '이전에 작성하던 임시 사진이 포함되어 있습니다. 제출은 가능하지만 새 사진은 외부 저장소에 저장됩니다.';
@@ -5205,7 +5146,7 @@ async function uploadSubPhoto(inputEl, field){
   Object.assign(homeworkUploadState,{active:true,total:files.length,done:0,failed:0});
   render(); // 시작할 때 1회만: 모든 사진선택 버튼 잠금
 
-  const baseCount=(currentSubState._draftSub.hwPhotos||[]).length+(currentSubState._draftSub.practicePhotos||[]).length;
+  const baseCount=(currentSubState._draftSub.hwPhotos||[]).length+(currentSubState._draftSub.practicePhotos||[]).length+(currentSubState._draftSub.timerPhotos||[]).length;
   const results=new Array(files.length);
   let cursor=0;
 
@@ -5243,7 +5184,7 @@ async function uploadSubPhoto(inputEl, field){
     await Promise.all(Array.from({length:concurrency},()=>worker()));
     const added=results.filter(Boolean);
     currentSubState._draftSub[field]=dedupeHomeworkPhotos([...(currentSubState._draftSub[field]||[]),...added]);
-    if(swActiveStuId&&swActiveDate) saveDraftLocal(swActiveStuId,swActiveDate);
+    saveActiveHomeworkDraft();
     homeworkUploadState.recentSig=batchSig;
     homeworkUploadState.recentAt=Date.now();
     if(homeworkUploadState.failed){
@@ -5259,14 +5200,14 @@ async function removeDraftPhoto(field, idx){
   const removed=currentSubState._draftSub[field][idx];
   if(removed) await deleteStoredPhoto(removed);
   currentSubState._draftSub[field].splice(idx,1);
-  if(swActiveStuId && swActiveDate) saveDraftLocal(swActiveStuId, swActiveDate);
+  saveActiveHomeworkDraft();
   render();
 }
 // Firestore 문서 크기 제한에 걸리는 기존 dataURL 사진만 제출용으로 재압축한다.
 // 학생의 원본 임시 초안과 이미 업로드된 R2 사진 참조는 변경하지 않는다.
 async function compactSubmissionLegacyPhotos(payload){
   const copy={...payload};
-  for(const field of ['hwPhotos','practicePhotos']){
+  for(const field of ['hwPhotos','practicePhotos','timerPhotos']){
     copy[field]=await Promise.all((payload[field]||[]).map(async photo=>{
       if(!photoIsLegacyDataURL(photo)) return photo;
       try{
@@ -5307,6 +5248,7 @@ async function submitHomework(stuId,date){
   if(draft){
     draft.hwPhotos=dedupeHomeworkPhotos(draft.hwPhotos||[]);
     draft.practicePhotos=dedupeHomeworkPhotos(draft.practicePhotos||[]);
+    draft.timerPhotos=dedupeHomeworkPhotos(draft.timerPhotos||[]);
   }
   const {errorTypes: _legacyErrorTypes, ...submissionDraft} = draft || {};
   const payload = {
@@ -5330,7 +5272,8 @@ async function submitHomework(stuId,date){
   // 서버 저장에는 불필요한 사진 메타데이터를 제거한다.
   let savedPayload={...payload,
     hwPhotos:(payload.hwPhotos||[]).map(photoRefForFirestore),
-    practicePhotos:(payload.practicePhotos||[]).map(photoRefForFirestore)
+    practicePhotos:(payload.practicePhotos||[]).map(photoRefForFirestore),
+    timerPhotos:(payload.timerPhotos||[]).map(photoRefForFirestore)
   };
   if(embeddedPhotoLimitExceeded(savedPayload, 750)){
     savedPayload=await compactSubmissionLegacyPhotos(savedPayload);
@@ -5343,9 +5286,7 @@ async function submitHomework(stuId,date){
   if(ok){
     db.submissions[key] = savedPayload; // 즉시 화면에 확인 표시가 뜨도록 로컬에도 바로 반영
     clearDraftLocal(stuId, date);
-    fsDelete('timerState', key).catch(()=>{});
-    if(swDisplayInterval){ clearInterval(swDisplayInterval); swDisplayInterval=null; }
-    swRunStartTs = null; swBaseSeconds = 0; swActiveStuId=null; swActiveDate=null;
+    draftActiveStuId=null; draftActiveDate=null;
     currentSubState._draftSub = null; currentSubState._draftSubKey = null;
     render();
   }
