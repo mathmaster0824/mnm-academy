@@ -243,6 +243,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-functions-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <link rel="modulepreload" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs">
 
@@ -264,6 +265,7 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const fsdb = firebase.firestore();
 const fauth = firebase.auth();
+const ffunctions = firebase.app().functions("asia-northeast3");
 
 // 반복 진입 체감속도 개선: 이전에 받은 Firestore 데이터를 기기 캐시에 보관해
 // 다음 진입 때 캐시를 먼저 보여주고 뒤에서 서버와 동기화한다.
@@ -283,6 +285,8 @@ let roleUnsubscribers = [];
 let viewUnsubscribers = [];
 let loadedViewData = new Set(); // 로그인 이후(원장/학생)에만 붙는, 날짜별로 계속 쌓이는 데이터용 리스너
 let listenersReady = { settings:false, students:false, classes:false };
+let loginSettingsUnsub = null;
+let studentBootstrapLoadedFor = "";
 
 // local in-memory mirror, kept in sync by Firestore real-time listeners
 let db = {
@@ -368,14 +372,31 @@ const SEED_DATA = {
 async function initFirebase(){
   try{
     await firestorePersistenceReady;
-    try{ await fauth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){}
+    try{await fauth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)}catch(e){}
     if(!fauth.currentUser) await fauth.signInAnonymously();
   }catch(e){
     showFatalError('로그인 서버에 연결하지 못했어요. 인터넷 연결을 확인한 뒤 새로고침 해주세요.');
     return;
   }
-  attachCoreListeners();
+  if(fauth.currentUser && !fauth.currentUser.isAnonymous){
+    if(await restoreStudentSessionFromToken()) return;
+  }
+  // 로그인 전에는 설정만 읽는다. 학생 명단·수업자료·기록 구독은 로그인 뒤 시작한다.
+  attachLoginSettingsListener();
   startLoadingTimeoutWatchdog();
+}
+function attachLoginSettingsListener(){
+  if(loginSettingsUnsub) return;
+  loginSettingsUnsub=fsdb.collection('meta').doc('settings').onSnapshot(async doc=>{
+    if(doc.exists) db.settings=doc.data();
+    else{
+      db.settings={adminPassword:'0000',isDefaultPassword:true};
+      try{await fsdb.collection('meta').doc('settings').set(db.settings)}catch(e){}
+    }
+    listenersReady.settings=true;
+    maybeFinishLoading();
+    scheduleRender();
+  },err=>{setConnStatus(false)});
 }
 
 function showFatalError(msg){
@@ -391,10 +412,8 @@ function showFatalError(msg){
 // 일정 시간 뒤에도 준비가 안 됐으면 명확한 오류 화면 + 재시도 버튼을 띄운다.
 function startLoadingTimeoutWatchdog(){
   setTimeout(()=>{
-    if(!(listenersReady.settings && listenersReady.students)){
-      showFatalError('서버 연결이 너무 오래 걸리고 있어요. 인터넷 연결 상태를 확인한 뒤 다시 시도해주세요.');
-    }
-  }, 12000);
+    if(!listenersReady.settings) showFatalError('서버 연결이 너무 오래 걸리고 있어요. 인터넷 연결 상태를 확인한 뒤 다시 시도해주세요.');
+  },12000);
 }
 
 function setConnStatus(ok){
@@ -747,24 +766,20 @@ function attachRoleListeners(){
 
 let appEntered = false;
 function maybeFinishLoading(){
-  if(!(listenersReady.settings && listenersReady.students)) return;
+  if(!listenersReady.settings) return;
   document.getElementById('loadingScreen').style.display='none';
   if(appEntered) return;
   if(!session){
-    // 저장된 로그인 상태가 있으면 자동으로 복원 (화면 꺼짐/백그라운드 새로고침으로 로그인이 풀리는 것 방지)
     try{
-      const saved = JSON.parse(localStorage.getItem('mnm_session') || 'null');
-      if(saved && saved.mode==='director'){ session = saved; }
-      else if(saved && saved.mode==='student'){
-        const stu = studentById(saved.studentId);
-        if(stu && stu.status!=='withdrawn'){ session = saved; }
-      }
+      const saved=JSON.parse(localStorage.getItem('mnm_session')||'null');
+      // 학생 모드는 Firebase custom token claim으로만 복원한다.
+      if(saved&&saved.mode==='director') session=saved;
     }catch(e){}
   }
-  if(session){ enterApp(); return; }
+  if(session){enterApp();return}
   document.getElementById('loginScreen').style.display='flex';
   if(db.settings.isDefaultPassword){
-    document.getElementById('pwSetupNote').textContent = '최초 접속이에요. 기본 비밀번호(0000)로 먼저 로그인한 뒤, 대시보드에서 비밀번호를 변경해주세요.';
+    document.getElementById('pwSetupNote').textContent='최초 접속이에요. 기본 비밀번호(0000)로 먼저 로그인한 뒤, 대시보드에서 비밀번호를 변경해주세요.';
   }
 }
 
