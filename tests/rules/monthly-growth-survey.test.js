@@ -70,6 +70,17 @@ test('다른 학생이나 비로그인 사용자는 설문에 접근할 수 없�
   await assertFails(getDocs(collection(anonymous, 'growthSurveys')));
 });
 
+test('학생은 기존 학생별 기록을 정확한 문서 조회로 읽고 다른 학생 기록은 읽지 못한다', async () => {
+  const db = env.authenticatedContext(studentId, {
+    role: 'student', studentId,
+    firebase: { sign_in_provider: 'custom' }
+  }).firestore();
+  for (const collectionName of ['submissions', 'weekendSubmissions', 'stadApplications', 'stadDaily']) {
+    await assertSucceeds(getDoc(doc(db, collectionName, studentId + '_2026-10-27')));
+    await assertFails(getDoc(doc(db, collectionName, 'another-student_2026-10-27')));
+  }
+});
+
 test('학생 로그인 제한 문서는 클라이언트에서 접근할 수 없다', async () => {
   const db = env.authenticatedContext(studentId, {
     role: 'student', studentId,
