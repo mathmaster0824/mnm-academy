@@ -121,7 +121,6 @@
   .legend{font-size:12px;display:flex;flex-direction:column;gap:5px;}
   .legend .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;}
   .studentcode{font-family:monospace;font-weight:700;letter-spacing:1px;background:#f1efe4;padding:2px 7px;border-radius:6px;}
-  .stopwatch{font-size:38px;font-family:monospace;font-weight:700;color:var(--navy);text-align:center;}
   .weekgrid{display:grid;grid-template-columns:70px repeat(7,1fr);gap:4px;font-size:12px;}
   .weekgrid .hd{font-weight:700;text-align:center;color:#8a8674;padding:4px;}
   .weekgrid textarea{width:100%;height:50px;font-size:11px;padding:4px;}
@@ -454,7 +453,7 @@ function attachCoreListeners(){
 }
 
 // 문서ID가 'prefix'로 시작하는 문서만 가져오는 범위 쿼리.
-// (classRecords/weeklyPlans/fridaySupp는 '반ID_날짜', submissions/timerState/weekendSubmissions는
+// (classRecords/weeklyPlans/fridaySupp는 '반ID_날짜', submissions/weekendSubmissions는
 //  '학생ID_날짜' 형태의 키를 쓰므로, 이 방식으로 "내 것"만 정확히 걸러낼 수 있음)
 function idRangeQuery(colName, prefix){
   const fp = firebase.firestore.FieldPath.documentId();
@@ -670,8 +669,6 @@ function attachRoleListeners(){
       Object.assign(db.submissions,keep); scheduleRender();
     },roleListenerError('submissions')));
   }
-
-  // 이전 timerState 기록은 전체 백업에만 보존하고 숙제 제출 화면에서는 더 이상 읽거나 쓰지 않는다.
 
   // 주말학습 인증: 이번 주만.
   db.weekendSubmissions={};
