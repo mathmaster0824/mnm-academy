@@ -586,6 +586,7 @@ function attachRoleListeners(){
   const clsId=resolvedClass?resolvedClass.id:(stu?stu.classId:null);
   const studentClassIds=stuId?[...new Set(classesForStudent(stuId).map(c=>c.id).concat(clsId?[clsId]:[]))]:[];
   const subs=[];
+  const watchOwnDoc=(col,key,target)=>{ subs.push(fsdb.collection(col).doc(key).onSnapshot(doc=>{ if(doc.exists) target[key]=doc.data(); else delete target[key]; scheduleRender(); },roleListenerError(col))); };
   const recentStart=recentRecordStartISO();
   const currentWeek=weekStartISO(todayISO());
   clearWeekendAdminWeekListener();
@@ -678,26 +679,20 @@ function attachRoleListeners(){
       pendingIds=next; scheduleRender();
     },roleListenerError('submissions-pending')));
   }else if(stuId){
-    subs.push(idRecentRangeQuery('submissions',stuId+'_',recentStart).onSnapshot(snap=>{
-      const keep={};
-      snap.docs.forEach(d=>keep[d.id]=d.data());
-      Object.keys(db.submissions).forEach(k=>{
-        if(k.startsWith(stuId+'_') && (db.submissions[k]?.date||k.slice(-10))>=recentStart) delete db.submissions[k];
-      });
-      Object.assign(db.submissions,keep); scheduleRender();
-    },roleListenerError('submissions')));
+    for(let day=0;day<RECENT_RECORD_DAYS;day++){
+      const date=dateDaysAgoISO(day), key=stuId+'_'+date;
+      watchOwnDoc('submissions',key,db.submissions);
+    }
   }
-
+  
   // 주말학습 인증: 학생은 이번 주, 원장은 선택한 확인 주만 조회.
   db.weekendSubmissions={};
   if(isDirector){
     subscribeWeekendAdminWeek(currentSubState.weekendWeek || weekendReviewWeekStart(academicTodayISO()));
   }else if(stuId){
-    subs.push(idRecentRangeQuery('weekendSubmissions',stuId+'_',currentWeek).onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>m[d.id]=d.data()); db.weekendSubmissions=m; scheduleRender();
-    },roleListenerError('weekendSubmissions')));
+    WEEKEND_SLOTS.forEach(slot=>watchOwnDoc('weekendSubmissions',weekendSubmissionKey(stuId,currentWeek,slot.id),db.weekendSubmissions));
   }
-
+  
   // STAD 신청정보는 월 단위로 적고 작아서 유지. 일일 기록은 최근 7일만.
   if(isDirector){
     subs.push(fsdb.collection('stadApplications').onSnapshot(snap=>{
@@ -708,14 +703,13 @@ function attachRoleListeners(){
     },roleListenerError('stadDaily')));
   }else if(stuId){
     db.stadApplications={}; db.stadDaily={};
-    subs.push(idRangeQuery('stadApplications',stuId+'_').onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>m[d.id]=d.data()); db.stadApplications=m; scheduleRender();
-    },roleListenerError('stadApplications')));
-    subs.push(idRecentRangeQuery('stadDaily',stuId+'_',recentStart).onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>m[d.id]=d.data()); db.stadDaily=m; scheduleRender();
-    },roleListenerError('stadDaily')));
+    [...new Set([STAD_MONTH(),stadTargetMonth(STAD_TODAY())])].forEach(month=>watchOwnDoc('stadApplications',stadAppKey(stuId,month),db.stadApplications));
+    for(let day=0;day<RECENT_RECORD_DAYS;day++){
+      const date=dateDaysAgoISO(day);
+      watchOwnDoc('stadDaily',stuId+'_'+date,db.stadDaily);
+    }
   }
-
+  
   // 연습진도는 학생당 1문서라 전체여도 작다.
   if(isDirector){
     subs.push(fsdb.collection('practiceProgress').onSnapshot(snap=>{
