@@ -1,0 +1,32 @@
+name: Growth survey Firestore rules (Emulator)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'security/firestore.rules.phase2.growth-survey.proposed'
+      - 'tests/rules/monthly-growth-survey.test.js'
+      - 'firebase.growth-survey-emulator.json'
+      - '.github/workflows/growth-survey-rules.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  growth-survey-rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install isolated test dependencies
+        run: npm install --no-save --package-lock=false @firebase/rules-unit-testing@3.0.4 firebase@10.13.2 firebase-tools@13.29.2
+      - name: Run Firestore rules tests against demo project
+        run: npx firebase emulators:exec --config firebase.growth-survey-emulator.json --project demo-mnm-growth-survey --only firestore "node --test tests/rules/monthly-growth-survey.test.js"
