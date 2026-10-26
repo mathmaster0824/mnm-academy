@@ -7,6 +7,7 @@ on:
       - index.html
       - tests/problem-repo.test.js
       - tests/fixtures/**
+      - docs/PROBLEM_REPO_STATUS.md
       - .github/workflows/problem-repo-regression.yml
   workflow_dispatch:
 
