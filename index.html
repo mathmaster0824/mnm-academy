@@ -1090,6 +1090,7 @@ const DIRECTOR_NAV = [
   {id:'schoolExams', label:'내신 성적', icon:'🏫', group:'기록 · 보고'},
   {id:'feedback', label:'학부모 학습안내', icon:'📨', group:'기록 · 보고'},
   {id:'monthlyReport', label:'월말 리포트', icon:'🗓️', group:'기록 · 보고'},
+  {id:'growthSurveyPage', label:'월간 성장 설문', icon:'🌱', group:'기록 · 보고', href:'growth-survey.html'},
   {id:'audit', label:'전체 최종점검', icon:'✅', group:'설정 · 관리'},
   {id:'backup', label:'데이터 백업', icon:'🗂️', group:'설정 · 관리'},
 ];
@@ -1101,7 +1102,7 @@ function buildNav(){
     el.innerHTML = DIRECTOR_NAV.map(n=>{
       const head = n.group!==lastGroup ? `<div style="padding:14px 20px 5px;font-size:10px;letter-spacing:.08em;color:#7f8aa5;font-weight:800;">${n.group}</div>` : '';
       lastGroup=n.group;
-      return head+`<div class="nav-item ${currentView===n.id?'active':''}" onclick="goto('${n.id}')">${n.icon} ${n.label}</div>`;
+      return head+(n.href?'<a class="nav-item" style="text-decoration:none" href="'+n.href+'">'+n.icon+' '+n.label+'</a>':`<div class="nav-item ${currentView===n.id?'active':''}" onclick="goto('${n.id}')">${n.icon} ${n.label}</div>`);
     }).join('');
   }else{
     const STUDENT_NAV = [
