@@ -17,9 +17,9 @@ const check = (name, ok, detail) => {
     const page = await browser.newPage();
     const pageErrors = [];
     page.on('pageerror', e => pageErrors.push(e.message));
-    await page.route(/gstatic\\.com\\/firebasejs/, r => r.fulfill({ contentType: 'application/javascript', body: STUB }));
-    await page.route(/^https?:\\/\\/(?!file)/, r => {
-      if (/gstatic\\.com\\/firebasejs/.test(r.request().url())) return r.fallback();
+    await page.route(/firebasejs/, r => r.fulfill({ contentType: 'application/javascript', body: STUB }));
+    await page.route(/^https?:/, r => {
+      if (r.request().url().includes('firebasejs')) return r.fallback();
       r.abort();
     });
     await page.goto('file://' + path.join(__dirname, '..', 'index.html'));
@@ -35,7 +35,7 @@ const check = (name, ok, detail) => {
       const html = renderSubmissionForm(sid, date, null);
       const newDraftHasNoTime = !Object.prototype.hasOwnProperty.call(currentSubState._draftSub, 'time');
       const draftHasTimerPhotos = Array.isArray(currentSubState._draftSub.timerPhotos);
-      const hasCameraInput = html.includes("uploadSubPhoto(this,'timerPhotos')") && html.includes("capture='environment'");
+      const hasCameraInput = html.includes("uploadSubPhoto(this,'timerPhotos')") && html.includes('capture="environment"');
       const hasGalleryInput = html.includes("uploadSubPhoto(this,'timerPhotos')") && html.includes('multiple');
       const timerMarkup = html.includes('타이머 사진');
       const timerControlsGone = !/swStart|swStop|swReset|stopwatch|swDisplay/.test(html) &&
