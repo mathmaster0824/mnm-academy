@@ -40,7 +40,8 @@ service cloud.firestore {
       return signedIn()
         && request.auth.token.firebase.sign_in_provider == 'custom'
         && request.auth.token.role == 'student'
-        && request.auth.token.studentId is string;
+        && request.auth.token.studentId is string
+        && request.auth.uid == request.auth.token.studentId;
     }
     function me() { return request.auth.token.studentId; }
 
