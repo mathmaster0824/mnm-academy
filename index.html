@@ -5089,7 +5089,7 @@ function renderSubmissionForm(stuId,date,sub){
     if(local){
       currentSubState._draftSub = {
         ...(sub ? JSON.parse(JSON.stringify(sub)) : {}),
-        time: local.time !== undefined ? local.time : sub.time,
+        ...(local.time !== undefined ? {time:local.time} : {}),
         hwPhotos: local.hwPhotos || sub.hwPhotos || [],
         practicePhotos: local.practicePhotos || sub.practicePhotos || [],
         timerPhotos: local.timerPhotos || sub.timerPhotos || [],
@@ -5318,6 +5318,8 @@ async function submitHomework(stuId,date){
     // 재제출해도 최초 제출시각은 절대 덮어쓰지 않는다.
     firstSubmittedAt:preservedFirstSubmittedAt || nowIso
   };
+  // Firestore rejects undefined values. Optional fields (including the retired timer duration) are omitted.
+  Object.keys(payload).forEach(field=>{ if(payload[field]===undefined) delete payload[field]; });
   if(homeworkUploadState.active){
     alert('사진 업로드가 끝난 뒤 숙제를 제출해주세요.');
     return;

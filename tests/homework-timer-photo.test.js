@@ -55,12 +55,19 @@ const check = (name, ok, detail) => {
       const saved = [];
       window.fsSet = async (collection, key, payload) => {
         saved.push({ collection, key, payload });
-        return true;
+        return !Object.values(payload).some(value => value === undefined);
       };
       window.render = () => {};
       window.photoRefForFirestore = p => p;
       window.embeddedPhotoLimitExceeded = () => false;
       window.firestorePayloadSizeKB = () => 1;
+      // 새 입력 화면에서 바로 제출하는 경우: 타이머 시간을 만들지 않아도 저장되어야 한다.
+      currentSubState._draftSubKey = sid + '_' + date;
+      await submitHomework(sid, date);
+      const undefinedTimeSaved = saved[0]?.collection === 'submissions' &&
+        !Object.prototype.hasOwnProperty.call(saved[0]?.payload || {}, 'time') &&
+        !Object.values(saved[0]?.payload || {}).some(value => value === undefined);
+
       currentSubState._draftSubKey = sid + '_' + date;
       currentSubState._draftSub = {
         time: '03:21', // 기존 임시 기록의 값은 지우지 않고 저장만 유지
@@ -73,15 +80,17 @@ const check = (name, ok, detail) => {
       return {
         newDraftHasNoTime, draftHasTimerPhotos, hasCameraInput, hasGalleryInput,
         timerMarkup, timerControlsGone, teacherSeesTimerPhoto, legacyTimeHidden,
-        savedTimerPhoto: saved[0]?.payload?.timerPhotos?.[0]?.storageKey === 'private/timer-photo.jpg',
-        legacyTimePreserved: saved[0]?.payload?.time === '03:21',
+        undefinedTimeSaved,
+        savedTimerPhoto: saved[1]?.payload?.timerPhotos?.[0]?.storageKey === 'private/timer-photo.jpg',
+        legacyTimePreserved: saved[1]?.payload?.time === '03:21',
         saveCount: saved.length
       };
     });
 
     check('새 숙제 입력에는 분 단위 타이머 상태가 생기지 않음', result.newDraftHasNoTime && result.timerControlsGone, JSON.stringify(result));
     check('타이머 사진은 카메라와 갤러리에서 추가할 수 있음', result.timerMarkup && result.hasCameraInput && result.hasGalleryInput && result.draftHasTimerPhotos, JSON.stringify(result));
-    check('제출 자료에 비공개 사진 참조가 저장됨', result.savedTimerPhoto && result.saveCount === 1, JSON.stringify(result));
+    check('시간 필드가 없는 새 숙제도 undefined 없이 저장됨', result.undefinedTimeSaved, JSON.stringify(result));
+    check('제출 자료에 비공개 사진 참조가 저장됨', result.savedTimerPhoto && result.saveCount === 2, JSON.stringify(result));
     check('선생님 숙제 화면에서 타이머 사진을 볼 수 있고 구형 시간 수치는 숨김', result.teacherSeesTimerPhoto && result.legacyTimeHidden, JSON.stringify(result));
     check('기존 제출의 시간 필드는 재제출 때 덮어쓰거나 지우지 않음', result.legacyTimePreserved, JSON.stringify(result));
     check('브라우저 실행 중 자바스크립트 오류 없음', pageErrors.length === 0, pageErrors.join('; '));
