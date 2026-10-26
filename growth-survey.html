@@ -79,7 +79,7 @@ const ITEMS=[
  ['expression_01','수학적 표현','풀이 과정을 식과 글로 순서 있게 남긴다.'],['expression_02','수학적 표현','기호와 단위를 알맞게 사용한다.'],['expression_03','수학적 표현','답을 구한 뒤 풀이를 설명하거나 검산한다.']
 ];
 const SCALE=[['1','아직 어려움'],['2','많은 도움 필요'],['3','도움받아 수행'],['4','대체로 스스로'],['5','안정적으로 수행'],['NO','관찰 기회 없음']];
-let role=null,studentId='',studentName='',month='',survey=null,recommendation=null,students=[],cursor='',selectedStudent=null,teacherBusy=false;
+let role=null,studentId='',studentName='',month='',survey=null,recommendation=null,students=[],cursor='',selectedStudent=null,teacherBusy=false,authEntryInProgress=false;
 function $(id){return document.getElementById(id)}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function kstDate(){return new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())}
@@ -88,6 +88,7 @@ function showLogin(which){$('studentLogin').classList.toggle('hidden',which!=='s
 function setBusy(button,busy,label){if(button){button.disabled=busy;if(busy)button.dataset.old=button.textContent;button.textContent=busy?label:(button.dataset.old||button.textContent)}}
 function showError(id,e){$(id).textContent=(e&&e.message||'요청을 처리하지 못했어요.').replace(/^FirebaseError:\s*/,'')}
 async function loginStudent(){
+ authEntryInProgress=true;
  const code=$('studentCode').value.trim(),button=$('studentLogin').querySelector('button');
  $('studentError').textContent='';
  if(!/^\d{4}$/.test(code)){ $('studentError').textContent='4자리 학생 코드를 입력해주세요.';return; }
@@ -101,9 +102,10 @@ async function loginStudent(){
   $('login').classList.add('hidden');$('studentApp').classList.remove('hidden');$('who').textContent='학생';
   await loadStudentSurvey();
  }catch(e){showError('studentError',e);try{await auth.signOut()}catch(_){}}
- finally{setBusy(button,false,'학생 설문 열기')}
+ finally{setBusy(button,false,'학생 설문 열기');authEntryInProgress=false}
 }
 async function loginDirector(){
+ authEntryInProgress=true;
  const email=$('directorEmail').value.trim(),password=$('directorPassword').value,button=$('directorLogin').querySelector('button');
  $('directorError').textContent='';
  setBusy(button,true,'로그인 중…');
@@ -116,7 +118,7 @@ async function loginDirector(){
   $('login').classList.add('hidden');$('directorApp').classList.remove('hidden');$('who').textContent='원장';
   renderStudents();$('listStatus').textContent='학생 '+students.length+'명 표시 중';
  }catch(e){showError('directorError',e);try{await auth.signOut()}catch(_){}}
- finally{setBusy(button,false,'원장 설문 관리 열기')}
+ finally{setBusy(button,false,'원장 설문 관리 열기');authEntryInProgress=false}
 }
 async function logout(){try{await auth.signOut()}catch(_){}location.reload()}
 function choiceMarkup(group,key,value,disabled=false){
@@ -210,9 +212,27 @@ function reportMarkup(d,name,isStudent){
  '<div class="two" style="margin-top:8px"><div class="memo"><b>학생에게 전하는 메모</b><div>'+esc(t.studentMemo||'')+'</div></div><div class="memo"><b>학부모님께 전하는 메모</b><div>'+esc(t.parentMemo||'')+'</div></div></div>'+
  (isStudent?'<div class="muted" style="margin-top:7px">원장 관찰과 메모는 선생님이 게시한 기록입니다.</div>':'<div class="no-print row between" style="margin-top:10px"><span class="muted">이 영역 전체가 부모님께 공유할 한 장 보고서입니다.</span><button class="btn" onclick="window.print()">인쇄 / PDF로 저장</button></div>');
 }
+async function resumeExistingAuth(user){
+ if(!user||authEntryInProgress||role)return;
+ try{
+  const token=await user.getIdTokenResult();
+  if(token.claims.role==='student'&&token.claims.studentId){
+   role='student';studentId=token.claims.studentId;month=currentMonth();
+   $('login').classList.add('hidden');$('studentApp').classList.remove('hidden');$('who').textContent='학생';
+   await loadStudentSurvey();return;
+  }
+  if(token.claims.firebase?.sign_in_provider==='password'){
+   const r=await call('listGrowthSurveyStudents')({month:currentMonth(),cursor:''});
+   role='director';month=currentMonth();students=r.data.rows||[];cursor=r.data.nextCursor||'';
+   $('monthInput').value=month;$('login').classList.add('hidden');$('directorApp').classList.remove('hidden');$('who').textContent='원장';
+   renderStudents();$('listStatus').textContent='학생 '+students.length+'명 표시 중';
+  }
+ }catch(_){/* 로그인 화면을 유지해 다시 인증할 수 있게 한다. */}
+}
 async function init(){
  try{await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)}catch(_){}
  $('monthInput').value=currentMonth();
+ auth.onAuthStateChanged(user=>{resumeExistingAuth(user)});
 }
 init();
 </script>
