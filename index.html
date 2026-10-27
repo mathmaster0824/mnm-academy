@@ -981,7 +981,7 @@ function homeworkStatusRowsForStudent(stuId){
     for(const d of homeworkDateRangeDates(l.dayGroup,l.date)){
       // 아직 지나지 않은 날짜(오늘 포함)는 미제출로 확정하지 않는다.
       if(d >= today) continue;
-      const sub = db.submissions[stuId+'_'+d];
+      const sub = subForClass(stuId,l.clsId,d);
       const reviewState = submissionReviewState(sub,d,stuId);
       const effectiveState = homeworkEffectiveState(sub,d,stuId);
       if(!byDate.has(d)) byDate.set(d,{

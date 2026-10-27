@@ -236,6 +236,26 @@ const LESSON = '2026-10-14', MON = '2026-10-12', TUE = '2026-10-13';
   const same = (o) => JSON.stringify(Object.fromEntries(Object.entries(o).filter(([k]) => !['status', 'reviewedAt', 'reviewReason'].includes(k)).sort()));
   check('새로고침 후에도 B 의 O→X 유지: 반별 카드 ×·상세 미인증, 사진·제출시각 등 제출 기록 그대로', bAfter.status === '미인증' && bx.c.includes('×') && !bx.c.includes('○') && bx.dt.includes('미인증') && bAfter.hwPhotos[0] === 'photo-b.jpg' && same(bAfter) === same(bBefore), JSON.stringify({ bBefore, bAfter, bx }));
 
+
+  // 9-10) 복수 반 학생의 보조 반 일요일 제출도 학생별 숙제 현황에서 인정되어야 한다.
+  const secondarySummary = await page.evaluate(() => {
+    todayISO = () => '2026-10-27';
+    db.students = [{ id: 'stu_multi', name: '가짜 복수반 학생', classId: 'cls_tue', status: 'active', grade: '중2' }];
+    db.classes = [
+      { id: 'cls_tue', name: '화목반', dayGroup: 'tue-thu', studentIds: ['stu_multi'] },
+      { id: 'cls_mon', name: '월수반', dayGroup: 'mon-wed', studentIds: ['stu_multi'] },
+    ];
+    db.classRecords = { 'cls_mon_2026-10-26': { stu_multi: {} } };
+    db.submissions = {
+      'stu_multi_cls_mon_2026-10-25': { studentId: 'stu_multi', classId: 'cls_mon', date: '2026-10-25', status: '확인' },
+    };
+    const row = homeworkStatusRowsForStudent('stu_multi').find(r => r.date === '2026-10-25');
+    return row && { submitted: row.submitted, effectiveState: row.effectiveState, clsId: row.clsId };
+  });
+  check('복수 반 보조 반 슬롯의 일요일 제출을 미제출로 잘못 표시하지 않음',
+    secondarySummary?.submitted === true && secondarySummary.effectiveState === 'approved' && secondarySummary.clsId === 'cls_mon',
+    JSON.stringify(secondarySummary));
+
   check('페이지 오류 없음', errs.length === 0, errs.join('|'));
   await browser.close();
   const fail = results.filter((x) => !x).length;
