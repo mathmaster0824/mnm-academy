@@ -266,8 +266,8 @@ function createGrowthSurveyHandlers(admin, fs) {
         throw new HttpsError('permission-denied', '본인 질문만 연결할 수 있습니다.');
       }
       const q = questionSnap.data() || {};
-      const norm = value => String(value || '').normalize('NFKC').toLowerCase().replace(/\\s+/g, '').trim();
-      const page = value => norm(value).replace(/^page/, '').replace(/^p\\.?/, '').replace(/쪽$/, '');
+      const norm = value => String(value || '').normalize('NFKC').toLowerCase().replace(/\s+/g, '').trim();
+      const page = value => norm(value).replace(/^page/, '').replace(/^p\.?/, '').replace(/쪽$/, '');
       const problemNo = value => norm(value).replace(/번$/, '');
       let sourceKey = '';
       if (q.sourceType === 'TEXTBOOK') {
@@ -347,7 +347,7 @@ function createGrowthSurveyHandlers(admin, fs) {
         const courseSnap = await fs.collection('courses').doc(String(q.sourceCourseId)).get();
         if (courseSnap.exists) courseName = String(courseSnap.data().name || '');
       }
-      const gradeMatch = courseName.match(/([초중고]\\s*\\d)\\s*[-·]?\\s*([12])\\s*학기/);
+      const gradeMatch = courseName.match(/([초중고]\s*\d)\s*[-·]?\s*([12])\s*학기/);
       const sourceBook = String(q.sourceBook || '');
       const sourcePage = String(q.sourcePage || '');
       const sourceNo = String(q.sourceProblemNo || '');
@@ -365,7 +365,7 @@ function createGrowthSurveyHandlers(admin, fs) {
         sourceId, sourceName: '학생질문', sourceKey,
         sourceCourseId: String(q.sourceCourseId || ''), sourceBook, sourcePage,
         sourceProblemNo: sourceNo, problemNo: sourceNo,
-        grade: gradeMatch ? gradeMatch[1].replace(/\\s+/g, '') : '',
+        grade: gradeMatch ? gradeMatch[1].replace(/\s+/g, '') : '',
         semester: gradeMatch ? gradeMatch[2] + '학기' : '',
         majorUnit: '', middleUnit: '',
         problemText: '', rawText: '', questionText: String(q.text || ''),
