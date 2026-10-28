@@ -410,13 +410,15 @@ function showFatalError(msg){
       <button class="btn-gold" onclick="location.reload()">다시 시도</button>
     </div>`;
 }
-// 안전장치: settings/students 리스너 중 하나라도 실패하거나 응답이 없으면
+// 안전장치: settings/students/classes 리스너 중 하나라도 실패하거나 응답이 없으면
 // (네트워크 문제, 권한 오류, 알 수 없는 이유 등 어떤 원인이든) 로딩 화면에 영원히 갇히지 않도록,
 // 일정 시간 뒤에도 준비가 안 됐으면 명확한 오류 화면 + 재시도 버튼을 띄운다.
 function startLoadingTimeoutWatchdog(){
   setTimeout(()=>{
-    if(!listenersReady.settings) showFatalError('서버 연결이 너무 오래 걸리고 있어요. 인터넷 연결 상태를 확인한 뒤 다시 시도해주세요.');
-  },12000);
+    if(!(listenersReady.settings && listenersReady.students && listenersReady.classes)){
+      showFatalError('학생·반 정보를 불러오는 데 시간이 오래 걸리고 있어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.');
+    }
+  }, 12000);
 }
 
 function setConnStatus(ok){
@@ -442,12 +444,13 @@ function attachCoreListeners(){
     fsdb.collection('classes').onSnapshot(snap=>{
       db.classes = snap.docs.map(d=>({id:d.id, ...d.data()}));
       listenersReady.classes = true;
+      maybeFinishLoading();
       maybeAttachDirectorRoleListeners();
       Object.keys(fridayWeekLoads).forEach(week=>{
         if(fridayWeekLoads[week]?.status==='waiting-classes') requestFridayWeekLoad(week);
       });
       scheduleRender();
-    }),
+    }, err=>{ setConnStatus(false); }),
     fsdb.collection('courses').onSnapshot(snap=>{ db.courses = snap.docs.map(d=>({id:d.id, ...d.data()})); scheduleRender(); }),
     // videos는 첫 화면에 필요하지 않으므로 수업/영상 화면 진입 때만 불러온다.
     fsdb.collection('weekendSettings').doc('main').onSnapshot(doc=>{
@@ -758,7 +761,10 @@ function attachRoleListeners(){
 
 let appEntered = false;
 function maybeFinishLoading(){
-  if(!listenersReady.settings) return;
+  // 학생 화면의 반별 숙제 계획은 classes 목록을 기준으로 조회한다.
+  // 모바일 네트워크에서 classes 스냅샷이 늦으면 기본 반만 읽고 나머지 반을 놓치므로,
+  // 세 기준정보가 모두 준비된 뒤 로그인/화면 진입을 허용한다.
+  if(!(listenersReady.settings && listenersReady.students && listenersReady.classes)) return;
   document.getElementById('loadingScreen').style.display='none';
   if(appEntered) return;
   if(!session){
@@ -1023,7 +1029,7 @@ function homeworkStatusRowsForStudent(stuId){
     for(const d of homeworkDateRangeDates(l.dayGroup,l.date)){
       // 아직 지나지 않은 날짜(오늘 포함)는 미제출로 확정하지 않는다.
       if(d >= today) continue;
-      const sub = db.submissions[stuId+'_'+d];
+      const sub = subForClass(stuId,l.clsId,d);
       const reviewState = submissionReviewState(sub,d,stuId);
       const effectiveState = homeworkEffectiveState(sub,d,stuId);
       if(!byDate.has(d)) byDate.set(d,{
@@ -4160,7 +4166,7 @@ function renderSolutionLib(){
   </div>
   <div class="card">
     <div class="row">
-      <input type="text" placeholder="🔍 교재·페이지·문제번호로 검색" value="${search}" oninput="currentSubState.solSearch=this.value;render();" style="flex:1;min-width:150px;">
+      <input id="solutionLibSearch" type="text" placeholder="🔍 교재·페이지·문제번호로 검색" value="${search}" oninput="updateSolutionLibrarySearch(this.value)" style="flex:1;min-width:150px;">
       ${filter!=='all' ? `<button class="btn sm outline" onclick="currentSubState.solCourse='all';currentSubState.solUnit='all';render();">필터 초기화</button>` : ''}
     </div>
   </div>
@@ -4172,18 +4178,31 @@ function renderSolutionLib(){
     <button class="${unitFilter==='all'?'active':''}" style="font-size:11px;" onclick="currentSubState.solUnit='all';render();">단원 전체</button>
     ${unitsInCourse.map(u=>`<button class="${unitFilter===u?'active':''}" style="font-size:11px;" onclick="currentSubState.solUnit='${u}';render();">${u}</button>`).join('')}
   </div>` : ''}
-  <div class="card">
-    ${list.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;">
-      ${list.map(p=>`<div style="text-align:center;">
-        <img src="${photoSrc(p.photo,true)}" style="width:100%;border-radius:6px;cursor:pointer;" onclick="openLightbox(photoSrc(p.photo))">
-        <div style="font-size:10px;color:#6f6958;margin-top:3px;">${courseById(p.courseId)?.name||'-'}${p.book?` · ${p.book}`:''}</div>
-        <div style="font-size:10px;color:#6f6958;">${p.unit?p.unit+' · ':''}${p.page?`${p.page}p `:''}${p.problemNo?`${p.problemNo}번`:''}</div>
-        <button class="btn sm outline" style="font-size:9px;padding:1px 6px;margin-top:3px;" onclick="editSolutionPhoto('${p.id}')">수정</button>
-        <button class="btn sm outline" style="font-size:9px;padding:1px 6px;margin-top:3px;" onclick="deleteSolutionPhoto('${p.id}')">삭제</button>
-      </div>`).join('')}
-    </div>` : `<div class="empty">조건에 맞는 해설사진이 없어요.</div>`}
+  <div class="card" id="solutionLibResults">
+    ${renderSolutionLibraryMatchesHtml(list)}
   </div>
   `;
+}
+function renderSolutionLibraryMatchesHtml(list){
+  return list.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;">
+    ${list.map(p=>`<div style="text-align:center;">
+      <img src="${photoSrc(p.photo,true)}" style="width:100%;border-radius:6px;cursor:pointer;" onclick="openLightbox(photoSrc(p.photo))">
+      <div style="font-size:10px;color:#6f6958;margin-top:3px;">${courseById(p.courseId)?.name||'-'}${p.book?` · ${p.book}`:''}</div>
+      <div style="font-size:10px;color:#6f6958;">${p.unit?p.unit+' · ':''}${p.page?`${p.page}p `:''}${p.problemNo?`${p.problemNo}번`:''}</div>
+      <button class="btn sm outline" style="font-size:9px;padding:1px 6px;margin-top:3px;" onclick="editSolutionPhoto('${p.id}')">수정</button>
+      <button class="btn sm outline" style="font-size:9px;padding:1px 6px;margin-top:3px;" onclick="deleteSolutionPhoto('${p.id}')">삭제</button>
+    </div>`).join('')}
+  </div>` : `<div class="empty">조건에 맞는 해설사진이 없어요.</div>`;
+}
+function updateSolutionLibrarySearch(text){
+  currentSubState.solSearch=text;
+  const filter=currentSubState.solCourse||'all', unitFilter=currentSubState.solUnit||'all';
+  let list=filter==='all'?[...(db.solutionPhotos||[])]:solutionPhotoSearch(db.solutionPhotos||[],{courseId:filter});
+  if(filter!=='all'&&unitFilter!=='all') list=list.filter(p=>p.unit===unitFilter);
+  if(String(text||'').trim()) list=solutionPhotoSearch(list,{text});
+  list.sort((a,b)=>(b.uploadedAt||'').localeCompare(a.uploadedAt||''));
+  const host=document.getElementById('solutionLibResults');
+  if(host) host.innerHTML=renderSolutionLibraryMatchesHtml(list);
 }
 function onSolCourseChange(){
   const courseId=document.getElementById('spCourse').value;
@@ -4273,6 +4292,24 @@ function renderAutoSolutionMatches(qId){
   </div>`;
 }
 
+function renderSolLibPickerMatchesHtml(qId){
+  currentSubState._solSearchDraft=currentSubState._solSearchDraft||{};
+  const draft=currentSubState._solSearchDraft[qId]||{courseId:'',text:''};
+  const matches=solutionPhotoSearch(db.solutionPhotos||[],draft).slice(0,20);
+  return matches.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(70px,1fr));gap:6px;margin-top:6px;max-height:220px;overflow-y:auto;">
+    ${matches.map(p=>`<div style="text-align:center;cursor:pointer;" onclick="attachSolutionPhotoToAnswer('${qId}','${p.id}')">
+      <img src="${photoSrc(p.photo,true)}" style="width:100%;border-radius:5px;border:2px solid transparent;" onmouseover="this.style.borderColor='var(--gold)'" onmouseout="this.style.borderColor='transparent'">
+      <div style="font-size:9px;color:#8a8674;">${p.page?p.page+'p':''}${p.problemNo?' '+p.problemNo+'번':''}</div>
+    </div>`).join('')}
+  </div>` : `<div style="font-size:11px;color:#aaa;margin-top:6px;">일치하는 해설사진이 없어요.</div>`;
+}
+function updateSolLibPickerSearch(qId,text){
+  currentSubState._solSearchDraft=currentSubState._solSearchDraft||{};
+  currentSubState._solSearchDraft[qId]=currentSubState._solSearchDraft[qId]||{courseId:'',text:''};
+  currentSubState._solSearchDraft[qId].text=text;
+  const host=document.getElementById('solLibPickerResults_'+qId);
+  if(host) host.innerHTML=renderSolLibPickerMatchesHtml(qId);
+}
 function renderSolLibPickerForQuestion(qId){
   currentSubState._solPicker = currentSubState._solPicker || {};
   const open = !!currentSubState._solPicker[qId];
@@ -4286,15 +4323,12 @@ function renderSolLibPickerForQuestion(qId){
         <option value="">학년학기 전체</option>
         ${sortedCourses().map(c=>`<option value="${c.id}" ${draft.courseId===c.id?'selected':''}>${c.name}</option>`).join('')}
       </select>
-      <input type="text" placeholder="교재·페이지·문제번호 검색" value="${escapeHtml(draft.text)}" oninput="currentSubState._solSearchDraft['${qId}'].text=this.value;render();" style="flex:1;min-width:120px;font-size:10.5px;">
+      <input type="text" placeholder="교재·페이지·문제번호 검색" value="${escapeHtml(draft.text)}" oninput="updateSolLibPickerSearch('${qId}',this.value)" style="flex:1;min-width:120px;font-size:10.5px;">
       <button class="btn sm outline" style="font-size:10px;" onclick="currentSubState._solPicker['${qId}']=false;render();">닫기</button>
     </div>
-    ${matches.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(70px,1fr));gap:6px;margin-top:6px;max-height:220px;overflow-y:auto;">
-      ${matches.map(p=>`<div style="text-align:center;cursor:pointer;" onclick="attachSolutionPhotoToAnswer('${qId}','${p.id}')">
-        <img src="${photoSrc(p.photo,true)}" style="width:100%;border-radius:5px;border:2px solid transparent;" onmouseover="this.style.borderColor='var(--gold)'" onmouseout="this.style.borderColor='transparent'">
-        <div style="font-size:9px;color:#8a8674;">${p.page?p.page+'p':''}${p.problemNo?' '+p.problemNo+'번':''}</div>
-      </div>`).join('')}
-    </div>` : `<div style="font-size:11px;color:#aaa;margin-top:6px;">일치하는 해설사진이 없어요.</div>`}
+    <div id="solLibPickerResults_${qId}">
+      ${renderSolLibPickerMatchesHtml(qId)}
+    </div>
   </div>`;
 }
 async function attachSolutionPhotoToAnswer(qId, solId){
@@ -5744,7 +5778,7 @@ function renderQnaStudentSection(stuId, directorView){
 
           ${src.sourceType==='TEXTBOOK'?`
           <div style="margin-top:7px;padding:9px 10px;border:1px solid #e4dfd3;border-radius:9px;background:#faf9f5;">
-            <div style="font-size:11px;color:#6f6958;margin-bottom:6px;"><b>문제 출처를 정확히 선택해주세요.</b> 같은 출처가 학습보관함에 있으면 자동으로 연결됩니다.</div>
+            <div style="font-size:11px;color:#6f6958;margin-bottom:6px;"><b>문제 출처를 정확히 선택해주세요.</b><br>질문 한 건에는 문제 하나만 등록해 주세요. 사진을 여러 장 올릴 때는 모두 같은 문제의 사진이어야 합니다. 여러 문제는 각각 따로 질문해 주세요. 학습보관함에 같은 출처의 풀이가 있으면 바로 연결됩니다.</div>
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:6px;">
               <select id="newQCourse" onchange="setNewQSourceField('${stuId}','sourceCourseId',this.value,true)">
                 <option value="">학년·학기 선택</option>
@@ -5833,6 +5867,18 @@ async function removeNewQPhoto(idx){
   currentSubState._newQDraftPhotos.splice(idx,1);
   render();
 }
+async function findExactSolutionPhotosForQuestion(source){
+  if(!source || source.sourceType!=='TEXTBOOK' || !source.sourceKey) return {photos:[],checked:true};
+  try{
+    const snap=await fsdb.collection('solutionPhotos').where('sourceKey','==',source.sourceKey).limit(8).get();
+    const photos=snap.docs.map(d=>d.data()).filter(p=>p && p.sourceKey===source.sourceKey && p.photo).map(p=>p.photo);
+    return {photos,checked:true};
+  }catch(e){
+    // 학생 계정에 학습보관함 조회 권한이 없으면 질문은 안전하게 대기 목록으로 보낸다.
+    console.warn('[학습보관함 자동 연결]',e);
+    return {photos:[],checked:false};
+  }
+}
 async function submitQuestion(stuId){
   const text = document.getElementById('newQText').value.trim();
   const photos = currentSubState._newQDraftPhotos || [];
@@ -5847,11 +5893,19 @@ async function submitQuestion(stuId){
   }else if(source.sourceType==='MNM' && !source.problemId){
     alert('M&m 문제 ID를 입력해주세요.'); return;
   }
-  const payload = {studentId:stuId,date:todayISO(),text,photos,...source,answerText:'',answerPhotos:[],status:'대기'};
-  if(embeddedPhotoLimitExceeded(payload, 900)){ alert('사진 용량이 너무 커요. ✕ 버튼으로 사진을 몇 장 지워주세요.'); return; }
+  const libraryLookup=await findExactSolutionPhotosForQuestion(source);
+  const matchedSolutionPhotos=libraryLookup.photos;
+  const payload = {
+    studentId:stuId,date:todayISO(),text,photos,...source,
+    solutionLibraryLookupFailed:!libraryLookup.checked,
+    answerText:matchedSolutionPhotos.length?'학습보관함에서 출처가 정확히 일치하는 풀이를 연결했어요.':'',
+    answerPhotos:matchedSolutionPhotos,status:matchedSolutionPhotos.length?'답변완료':'대기'
+  };
+  if(embeddedPhotoLimitExceeded(payload, 900)){ alert('사진 용량이 너무 커요. 사진 개수를 줄여주세요.'); return; }
   const ok = await fsAdd('questions', payload);
   if(ok){
-    syncQuestionToProblemRepo(ok,payload).catch(e=>console.error(e));
+    if(matchedSolutionPhotos.length) syncAnsweredQuestionToProblemRepo(ok,payload.answerText,matchedSolutionPhotos).catch(e=>console.error(e));
+    else syncQuestionToProblemRepo(ok,payload).catch(e=>console.error(e));
     currentSubState._newQDraftPhotos=[];
     currentSubState._newQDraftText='';
     currentSubState._newQDraftSource=null;
@@ -5908,6 +5962,7 @@ function renderQnaDirector(){
       <div class="row between"><b>${s?s.name:'(삭제된 학생)'}</b><span class="badge ${q.status==='답변완료'?'green':'yellow'}">${q.status}</span></div>
       <div style="font-size:12px;color:#9c9880;margin:2px 0 4px;">${fmtDate(q.date)}</div>
       ${questionSourceLabel(q)?`<div style="font-size:12px;background:#f6f4ec;border:1px solid var(--line);border-radius:8px;padding:7px 9px;margin-bottom:8px;"><b>문제 출처</b> · ${escapeHtml(questionSourceLabel(q))}</div>`:''}
+      ${q.solutionLibraryLookupFailed?`<div style="font-size:11px;color:#9a5b00;margin-bottom:7px;">학습보관함 자동 조회를 못 했어요. 보관함에서 직접 찾아 확인해주세요.</div>`:''}
       <div>${q.text}</div>
       <div class="thumbs">${(q.photos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','photos',${i})">`).join('')}</div>
       ${(q.photos||[]).length>1 ? `<button class="btn sm outline" style="margin-top:6px;" onclick="downloadAllPhotos(db.questions.find(x=>x.id==='${q.id}').photos, '${s?s.name:'question'}_${q.date}', this)">📥 사진 모두 받기</button>` : ''}

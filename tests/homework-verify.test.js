@@ -21,6 +21,35 @@ const LESSON = '2026-10-14', MON = '2026-10-12', TUE = '2026-10-13';
   await page.goto('file://' + path.join(__dirname, '..', 'index.html'));
   await page.waitForTimeout(800);
 
+  // 학생·설정 정보가 먼저 도착해도 반 목록 전에는 화면 진입을 막아,
+  // 복수 반 학생의 보조 반 주간 계획 조회가 빠지지 않도록 확인한다.
+  const bootClassRace = await page.evaluate(() => {
+    const oldEnterApp = enterApp, oldReady = { ...listenersReady }, oldSession = session, oldEntered = appEntered;
+    const oldStudents = db.students, oldClasses = db.classes;
+    let entered = false;
+    enterApp = () => { entered = true; };
+    session = { mode: 'student', studentId: 'stu_multi' };
+    db.students = [{ id: 'stu_multi', classId: 'cls_mon', status: 'active' }];
+    db.classes = [];
+    appEntered = false;
+    listenersReady = { settings: true, students: true, classes: false };
+    maybeFinishLoading();
+    const waitedForClasses = !entered;
+    db.classes = [
+      { id: 'cls_mon', studentIds: ['stu_multi'] },
+      { id: 'cls_tue', studentIds: ['stu_multi'] },
+    ];
+    listenersReady.classes = true;
+    maybeFinishLoading();
+    const result = { waitedForClasses, enteredAfterClasses: entered, classIds: classesForStudent('stu_multi').map(c => c.id) };
+    enterApp = oldEnterApp; listenersReady = oldReady; session = oldSession; appEntered = oldEntered;
+    db.students = oldStudents; db.classes = oldClasses;
+    return result;
+  });
+  check('학생 로그인은 반 목록 준비 전 대기하고, 준비 후 월수·화목 두 반을 모두 연결',
+    bootClassRace.waitedForClasses && bootClassRace.enteredAfterClasses && bootClassRace.classIds.length === 2,
+    JSON.stringify(bootClassRace));
+
   // 가짜 데이터 + 저장 지연/실패 주입 + 해당 학생 행만 그리는 render 대체(실제 renderClassRow 를 그대로 사용)
   const setupApp = async (initialStore) => page.evaluate(({ LESSON, MON, TUE, initialStore }) => {
     session = { mode: 'director' };
@@ -235,6 +264,26 @@ const LESSON = '2026-10-14', MON = '2026-10-12', TUE = '2026-10-13';
   const bAfter = await store('stu_b_' + D1), bx = await both(D1);
   const same = (o) => JSON.stringify(Object.fromEntries(Object.entries(o).filter(([k]) => !['status', 'reviewedAt', 'reviewReason'].includes(k)).sort()));
   check('새로고침 후에도 B 의 O→X 유지: 반별 카드 ×·상세 미인증, 사진·제출시각 등 제출 기록 그대로', bAfter.status === '미인증' && bx.c.includes('×') && !bx.c.includes('○') && bx.dt.includes('미인증') && bAfter.hwPhotos[0] === 'photo-b.jpg' && same(bAfter) === same(bBefore), JSON.stringify({ bBefore, bAfter, bx }));
+
+
+  // 9-10) 복수 반 학생의 보조 반 일요일 제출도 학생별 숙제 현황에서 인정되어야 한다.
+  const secondarySummary = await page.evaluate(() => {
+    todayISO = () => '2026-10-27';
+    db.students = [{ id: 'stu_multi', name: '가짜 복수반 학생', classId: 'cls_tue', status: 'active', grade: '중2' }];
+    db.classes = [
+      { id: 'cls_tue', name: '화목반', dayGroup: 'tue-thu', studentIds: ['stu_multi'] },
+      { id: 'cls_mon', name: '월수반', dayGroup: 'mon-wed', studentIds: ['stu_multi'] },
+    ];
+    db.classRecords = { 'cls_mon_2026-10-26': { stu_multi: {} } };
+    db.submissions = {
+      'stu_multi_cls_mon_2026-10-25': { studentId: 'stu_multi', classId: 'cls_mon', date: '2026-10-25', status: '확인' },
+    };
+    const row = homeworkStatusRowsForStudent('stu_multi').find(r => r.date === '2026-10-25');
+    return row && { submitted: row.submitted, effectiveState: row.effectiveState, clsId: row.clsId };
+  });
+  check('복수 반 보조 반 슬롯의 일요일 제출을 미제출로 잘못 표시하지 않음',
+    secondarySummary?.submitted === true && secondarySummary.effectiveState === 'approved' && secondarySummary.clsId === 'cls_mon',
+    JSON.stringify(secondarySummary));
 
   check('페이지 오류 없음', errs.length === 0, errs.join('|'));
   await browser.close();
