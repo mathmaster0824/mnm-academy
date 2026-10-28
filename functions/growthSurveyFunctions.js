@@ -270,13 +270,18 @@ function createGrowthSurveyHandlers(admin, fs) {
       const page = value => norm(value).replace(/^page/, '').replace(/^p\.?/, '').replace(/쪽$/, '');
       const problemNo = value => norm(value).replace(/번$/, '');
       let sourceKey = '';
+      const courseId = String(q.sourceCourseId || '');
+      const safeCourseId = /^[A-Za-z0-9_-]{1,120}$/.test(courseId) ? courseId : '';
+      const sourceBookInput = String(q.sourceBook || '').slice(0, 120);
+      const sourcePageInput = String(q.sourcePage || '').slice(0, 40);
+      const sourceNoInput = String(q.sourceProblemNo || '').slice(0, 40);
       if (q.sourceType === 'TEXTBOOK') {
-        const book = norm(q.sourceBook), p = page(q.sourcePage), n = problemNo(q.sourceProblemNo);
-        if (q.sourceCourseId && book && p && n) sourceKey = String(q.sourceCourseId) + '::' + book + '::p' + p + '::q' + n;
+        const book = norm(sourceBookInput), p = page(sourcePageInput), n = problemNo(sourceNoInput);
+        if (safeCourseId && book && p && n) sourceKey = safeCourseId + '::' + book + '::p' + p + '::q' + n;
       } else if (q.sourceType === 'PRINT') {
-        const printId = norm(q.printId), n = problemNo(q.sourceProblemNo);
+        const printId = norm(String(q.printId || '').slice(0, 120)), n = problemNo(sourceNoInput);
         if (printId && n) sourceKey = 'print::' + printId + '::q' + n;
-      } else if (q.sourceType === 'MNM' && q.problemId) {
+      } else if (q.sourceType === 'MNM' && /^[A-Za-z0-9_-]{1,120}$/.test(String(q.problemId || ''))) {
         sourceKey = 'mnm::' + String(q.problemId);
       }
       if (!sourceKey) return { ok: true, status: 'ignored' };
@@ -343,32 +348,32 @@ function createGrowthSurveyHandlers(admin, fs) {
       const sourceRef = fs.collection('problemSources').doc(sourceId);
       const draftRef = fs.collection('problemDrafts').doc(draftId);
       let courseName = '';
-      if (q.sourceCourseId) {
-        const courseSnap = await fs.collection('courses').doc(String(q.sourceCourseId)).get();
+      if (safeCourseId) {
+        const courseSnap = await fs.collection('courses').doc(safeCourseId).get();
         if (courseSnap.exists) courseName = String(courseSnap.data().name || '');
       }
       const gradeMatch = courseName.match(/([초중고]\s*\d)\s*[-·]?\s*([12])\s*학기/);
-      const sourceBook = String(q.sourceBook || '');
-      const sourcePage = String(q.sourcePage || '');
-      const sourceNo = String(q.sourceProblemNo || '');
+      const sourceBook = sourceBookInput;
+      const sourcePage = sourcePageInput;
+      const sourceNo = sourceNoInput;
       const problemPhotoKey = photo && typeof photo === 'object' ? String(photo.storageKey || photo.key || '') : '';
       const sourceData = {
         title: q.sourceType === 'TEXTBOOK'
           ? (sourceBook || '교재') + ' ' + sourcePage + 'p ' + sourceNo + '번'
           : '학생질문 ' + questionId,
         sourceType: 'student-question', sourceKey,
-        courseId: String(q.sourceCourseId || ''), book: sourceBook,
+        courseId: safeCourseId, book: sourceBook,
         page: sourcePage, problemNo: sourceNo, printId: String(q.printId || ''),
         createdAt: now, ingestVersion: 'v1-server-student'
       };
       const draftData = {
         sourceId, sourceName: '학생질문', sourceKey,
-        sourceCourseId: String(q.sourceCourseId || ''), sourceBook, sourcePage,
+        sourceCourseId: safeCourseId, sourceBook, sourcePage,
         sourceProblemNo: sourceNo, problemNo: sourceNo,
         grade: gradeMatch ? gradeMatch[1].replace(/\s+/g, '') : '',
         semester: gradeMatch ? gradeMatch[2] + '학기' : '',
         majorUnit: '', middleUnit: '',
-        problemText: '', rawText: '', questionText: String(q.text || ''),
+        problemText: '', rawText: '', questionText: String(q.text || '').slice(0, 4000),
         type: 'short', answer: '',
         cropKey: problemPhotoKey, media: photo ? [photo] : [],
         explanation: '', explanationPhotos: [],
