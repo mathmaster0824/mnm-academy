@@ -1,7 +1,7 @@
 rules_version = '2';
 // ═════════════════════════════════════════════════════════════════════════════
 // 2단계(Phase 2) 목표 규칙 — 배포하지 않았다. GitHub Actions Emulator 테스트 통과(2026-10-26).
-// 계획서: docs/SECURITY_REMEDIATION_PLAN.md
+// 계획서: docs/MONTHLY_GROWTH_SURVEY_DESIGN.md
 //
 // 전제(앱·서버 변경이 먼저 운영에 반영돼야 한다 — 이 규칙만 배포하면 학생 앱이 전부 멈춘다):
 //   1) 학생 로그인: 학생 코드 확인을 서버(Cloud Functions)가 하고, 성공하면 custom token 을 발급한다.
