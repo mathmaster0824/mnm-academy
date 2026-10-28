@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const { test } = require('node:test');
 const Module = require('node:module');
 const originalLoad = Module._load;
 class HttpsError extends Error {
