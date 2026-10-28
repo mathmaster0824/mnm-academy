@@ -31,6 +31,10 @@ before(async () => {
       student: { smallGoal: '오답 한 문제 다시 풀기' },
       teacher: { studentMemo: '꾸준히 해냈어요.' }
     });
+    await setDoc(doc(db, 'students', studentId), {
+      name: '테스트 학생', grade: '중2', memo: '원장 전용 테스트 메모',
+      warnings: ['테스트 경고'], diligence: 80, status: 'active'
+    });
     await setDoc(doc(db, 'classes', 'class-own'), { studentIds: [studentId] });
     await setDoc(doc(db, 'classes', 'class-other'), { studentIds: ['another-student'] });
     await setDoc(doc(db, 'weekendClasses', 'weekend-own'), { studentIds: [studentId] });
@@ -108,6 +112,21 @@ test('학생은 기존 학생별 기록을 정확한 문서 조회로 읽고 다
     await assertSucceeds(getDoc(doc(db, collectionName, studentId + '_2026-10-27')));
     await assertFails(getDoc(doc(db, collectionName, 'another-student_2026-10-27')));
   }
+});
+
+test('학생 프로필은 callable allowlist 경로만 사용하고 직접 읽기는 원장만 허용한다', async () => {
+  const student = env.authenticatedContext(studentId, {
+    role: 'student', studentId,
+    firebase: { sign_in_provider: 'custom' }
+  }).firestore();
+  await assertFails(getDoc(doc(student, 'students', studentId)));
+  await assertFails(getDocs(collection(student, 'students')));
+
+  const director = env.authenticatedContext(ownerUid, {
+    firebase: { sign_in_provider: 'password' }
+  }).firestore();
+  await assertSucceeds(getDoc(doc(director, 'students', studentId)));
+  await assertSucceeds(getDocs(collection(director, 'students')));
 });
 
 test('학생 로그인 제한 문서는 클라이언트에서 접근할 수 없다', async () => {
