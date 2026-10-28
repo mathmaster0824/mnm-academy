@@ -121,3 +121,13 @@ test('이미 등록된 문제 출처와 일치하면 새 후보 대신 기존 �
   assert.equal(db.data.questions.q1.problemId, 'p1');
   assert.equal(db.data.problemDrafts, undefined);
 });
+
+test('출처가 없는 학생 질문도 질문별 후보로 보존한다', async () => {
+  const { db, sync } = setup({
+    questions: { q2: { studentId: 'stu_a', sourceType: 'OTHER', text: '출처가 없는 질문', photos: [] } }
+  });
+  const result = await sync(request('stu_a', 'q2'));
+  assert.equal(result.status, 'candidate');
+  assert.equal(db.data.problemDrafts[result.problemDraftId].sourceKey, 'student-question::q2');
+  assert.equal(db.data.questions.q2.problemDraftId, result.problemDraftId);
+});
