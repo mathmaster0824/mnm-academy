@@ -7,6 +7,7 @@ on:
       - index.html
       - security/firestore.rules.phase2.growth-survey.proposed
       - tests/rules/monthly-growth-survey.test.js
+      - tests/growth-survey-callable.test.js
       - firebase.growth-survey-emulator.json
       - functions/growthSurveyFunctions.js
       - functions/growthSurveyCore.js
@@ -31,7 +32,11 @@ jobs:
           java-version: '21'
       - name: Install emulator test dependencies
         run: npm install --no-save --package-lock=false firebase @firebase/rules-unit-testing firebase-tools
-      - name: Check rules test syntax
-        run: node --check tests/rules/monthly-growth-survey.test.js
+      - name: Check survey code and callable test syntax
+        run: |
+          node --check functions/growthSurveyFunctions.js
+          node --check tests/growth-survey-callable.test.js
+          node --test tests/growth-survey-callable.test.js
+          node --check tests/rules/monthly-growth-survey.test.js
       - name: Run Firestore rules emulator tests
         run: npx firebase emulators:exec --only firestore --project demo-mnm-growth-survey --config firebase.growth-survey-emulator.json "node --test tests/rules/monthly-growth-survey.test.js"
