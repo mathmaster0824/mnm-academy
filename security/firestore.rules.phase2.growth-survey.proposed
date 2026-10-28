@@ -92,14 +92,10 @@ service cloud.firestore {
     match /students/{docId} {
       allow read, write: if isDirector();
     }
-    match /classes/{docId} {
-      allow get, list: if isStudent() && me() in resource.data.studentIds;
-      allow write: if isDirector();
-    }
-    match /weekendClasses/{docId} {
-      allow get, list: if isStudent() && me() in resource.data.studentIds;
-      allow write: if isDirector();
-    }
+    // Membership data is returned by getStudentBootstrap with peer IDs removed.
+    match /classes/{docId} { allow read, write: if isDirector(); }
+    // Membership data is returned by getStudentBootstrap with peer IDs removed.
+    match /weekendClasses/{docId} { allow read, write: if isDirector(); }
     match /courses/{docId}         { allow read: if isStudent(); allow write: if isDirector(); }
     match /weekendSettings/{docId} { allow read: if isStudent(); allow write: if isDirector(); }
     match /stadSettings/{docId}    { allow read: if isStudent(); allow write: if isDirector(); }
