@@ -8,6 +8,8 @@ on:
       - security/firestore.rules.phase2.growth-survey.proposed
       - tests/rules/monthly-growth-survey.test.js
       - firebase.growth-survey-emulator.json
+      - functions/growthSurveyFunctions.js
+      - functions/growthSurveyCore.js
       - .github/workflows/monthly-growth-survey-rules.yml
   workflow_dispatch:
 
