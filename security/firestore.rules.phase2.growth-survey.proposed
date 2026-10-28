@@ -87,10 +87,10 @@ service cloud.firestore {
     // ── C. 학생 본인 정보 / 소속 반 ──────────────────────────────────────────
     // students 문서에는 원장 메모(memo)·경고(warnings)·성실도(diligence)가 같이 들어 있다.
     // 학생이 이를 볼 수 있어도 되는지는 원장 결정 사항 → 필요하면 필드를 별도 문서로 분리(계획서 §6).
+    // Student profile is returned by getStudentBootstrap with an explicit field allowlist.
+    // Direct reads would expose director-only fields such as memo, warnings, and diligence.
     match /students/{docId} {
-      allow get: if isStudent() && docId == me();
-      allow list: if isDirector();
-      allow write: if isDirector();
+      allow read, write: if isDirector();
     }
     match /classes/{docId} {
       allow get, list: if isStudent() && me() in resource.data.studentIds;
