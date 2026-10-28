@@ -1,0 +1,32 @@
+name: Student question source guidance regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - index.html
+      - tests/question-source-guidance.test.js
+      - tests/helpers/firestore-stub.js
+      - .github/workflows/question-source-guidance.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  question-source-guidance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Playwright
+        run: npm install --no-save --package-lock=false playwright
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Check test syntax
+        run: node --check tests/question-source-guidance.test.js
+      - name: Run student question source guidance regression
+        run: node tests/question-source-guidance.test.js
