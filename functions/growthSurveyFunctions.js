@@ -36,6 +36,9 @@ function requireAuth(request) {
 function requireStudent(request) {
   const auth = requireAuth(request);
   const claims = auth.token || {};
+  if (claims.firebase && claims.firebase.sign_in_provider !== 'custom') {
+    throw new HttpsError('permission-denied', '학생 로그인 권한이 확인되지 않았습니다.');
+  }
   if (claims.role !== 'student' || !validStudentId(claims.studentId) || auth.uid !== claims.studentId) {
     throw new HttpsError('permission-denied', '학생 권한이 확인되지 않았습니다.');
   }
