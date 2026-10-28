@@ -21,6 +21,35 @@ const LESSON = '2026-10-14', MON = '2026-10-12', TUE = '2026-10-13';
   await page.goto('file://' + path.join(__dirname, '..', 'index.html'));
   await page.waitForTimeout(800);
 
+  // 학생·설정 정보가 먼저 도착해도 반 목록 전에는 화면 진입을 막아,
+  // 복수 반 학생의 보조 반 주간 계획 조회가 빠지지 않도록 확인한다.
+  const bootClassRace = await page.evaluate(() => {
+    const oldEnterApp = enterApp, oldReady = { ...listenersReady }, oldSession = session, oldEntered = appEntered;
+    const oldStudents = db.students, oldClasses = db.classes;
+    let entered = false;
+    enterApp = () => { entered = true; };
+    session = { mode: 'student', studentId: 'stu_multi' };
+    db.students = [{ id: 'stu_multi', classId: 'cls_mon', status: 'active' }];
+    db.classes = [];
+    appEntered = false;
+    listenersReady = { settings: true, students: true, classes: false };
+    maybeFinishLoading();
+    const waitedForClasses = !entered;
+    db.classes = [
+      { id: 'cls_mon', studentIds: ['stu_multi'] },
+      { id: 'cls_tue', studentIds: ['stu_multi'] },
+    ];
+    listenersReady.classes = true;
+    maybeFinishLoading();
+    const result = { waitedForClasses, enteredAfterClasses: entered, classIds: classesForStudent('stu_multi').map(c => c.id) };
+    enterApp = oldEnterApp; listenersReady = oldReady; session = oldSession; appEntered = oldEntered;
+    db.students = oldStudents; db.classes = oldClasses;
+    return result;
+  });
+  check('학생 로그인은 반 목록 준비 전 대기하고, 준비 후 월수·화목 두 반을 모두 연결',
+    bootClassRace.waitedForClasses && bootClassRace.enteredAfterClasses && bootClassRace.classIds.length === 2,
+    JSON.stringify(bootClassRace));
+
   // 가짜 데이터 + 저장 지연/실패 주입 + 해당 학생 행만 그리는 render 대체(실제 renderClassRow 를 그대로 사용)
   const setupApp = async (initialStore) => page.evaluate(({ LESSON, MON, TUE, initialStore }) => {
     session = { mode: 'director' };
