@@ -1,0 +1,32 @@
+name: Student question review queue regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - index.html
+      - tests/problem-question-review.test.js
+      - tests/helpers/firestore-stub.js
+      - .github/workflows/problem-question-review.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  question-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Playwright
+        run: npm install --no-save --package-lock=false playwright
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Check test syntax
+        run: node --check tests/problem-question-review.test.js
+      - name: Run student question review queue regression
+        run: node tests/problem-question-review.test.js
