@@ -30,12 +30,14 @@ const STUB = require('./helpers/firestore-stub.js');
 
       let html = renderQnaStudentSection(sid, false);
       const showsUnlistedOption = html.includes('목록에 없는 교재 (직접 입력)');
-      const showsClearInstructions = html.includes('보관함에 없는 교재') && html.includes('선생님 확인 대기');
+      const showsClearInstructions = html.includes('교재 목록에 없는 책은') && html.includes('선생님 확인 대기로 전달됩니다.');
       const showsPendingStatus = html.includes('선생님 확인 대기 중이에요.');
 
       setNewQSourceField(sid, 'sourceCourseId', 'course-5-1', false, 0);
       setNewQSourceField(sid, 'sourceBookNotListed', 'true', false, 0);
       setNewQSourceField(sid, 'sourceBook', '우리 교재', false, 0);
+      setNewQSourceField(sid, 'sourcePage', '12', false, 0);
+      setNewQSourceField(sid, 'sourceProblemNo', '3', false, 0);
       const submittedSource = readNewQuestionSource(sid, 0);
       const customBookSaved = submittedSource.sourceBook === '우리 교재' && submittedSource.sourceBookNotListed && submittedSource.sourceKey.includes('우리교재');
 
