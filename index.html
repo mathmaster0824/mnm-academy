@@ -5645,7 +5645,7 @@ function newQuestionSourceDraft(stuId,index=0){
   if(!d.sourceType) d.sourceType='TEXTBOOK';
   const currentIds=studentCurrentCourseIds(stuId);
   if(!d.sourceCourseId && currentIds.length===1) d.sourceCourseId=currentIds[0];
-  if(d.sourceCourseId && !d.sourceBook){
+  if(d.sourceCourseId && !d.sourceBook && !d.sourceBookNotListed){
     const books=studentQuestionBooks(stuId,d.sourceCourseId,!!d.showAllCourses);
     if(books.length===1) d.sourceBook=books[0];
   }
@@ -5660,12 +5660,16 @@ function setNewQSourceField(stuId,field,value,rerender=false,index=0){
   const d=newQuestionSourceDraft(stuId,index);
   d[field]=value;
   if(field==='sourceType'){
-    d.sourceCourseId=''; d.sourceBook=''; d.sourcePage=''; d.sourceProblemNo='';
+    d.sourceCourseId=''; d.sourceBook=''; d.sourceBookNotListed=false; d.sourcePage=''; d.sourceProblemNo='';
   }
   if(field==='sourceCourseId'){
-    d.sourceBook=''; d.sourcePage=''; d.sourceProblemNo='';
+    d.sourceBook=''; d.sourceBookNotListed=false; d.sourcePage=''; d.sourceProblemNo='';
     const books=officialBooksForCourse(value);
     if(books.length===1) d.sourceBook=books[0];
+  }
+  if(field==='sourceBookNotListed'){
+    d.sourceBookNotListed=value==='true';
+    d.sourceBook='';
   }
   if(rerender) render();
 }
@@ -5673,7 +5677,7 @@ function toggleOtherQuestionCourses(stuId,index=0){
   rememberQuestionTexts();
   const d=newQuestionSourceDraft(stuId,index);
   d.showAllCourses=!d.showAllCourses;
-  d.sourceCourseId=''; d.sourceBook=''; d.sourcePage=''; d.sourceProblemNo='';
+  d.sourceCourseId=''; d.sourceBook=''; d.sourceBookNotListed=false; d.sourcePage=''; d.sourceProblemNo='';
   render();
 }
 function addQuestionDraft(stuId){rememberQuestionTexts();questionDraftItems(stuId).push({text:'',photos:[],source:{}});render();}
@@ -5682,7 +5686,7 @@ function questionSourceLabel(q){
   const t=q?.sourceType;
   if(t==='TEXTBOOK'){
     const c=courseById(q.sourceCourseId);
-    return `교재 · ${c?.name||''}${q.sourceBook?` · ${q.sourceBook}`:''}${q.sourcePage?` · p.${q.sourcePage}`:''}${q.sourceProblemNo?` · ${q.sourceProblemNo}번`:''}`;
+    return `${q.sourceBookNotListed?'목록 외 교재':'교재'} · ${c?.name||''}${q.sourceBook?` · ${q.sourceBook}`:''}${q.sourcePage?` · p.${q.sourcePage}`:''}${q.sourceProblemNo?` · ${q.sourceProblemNo}번`:''}`;
   }
   if(t==='OTHER') return '기타 질문';
   if(t==='PRINT') return `프린트${q.printId?` · ${q.printId}`:''}${q.sourceProblemNo?` · ${q.sourceProblemNo}번`:''}`;
@@ -5703,6 +5707,7 @@ function readNewQuestionSource(stuId,index=0){
     const sourceProblemNo=String(d.sourceProblemNo||'').trim();
     return {
       sourceType,sourceCourseId,sourceBook,
+      sourceBookNotListed:!!d.sourceBookNotListed,
       sourceBookKey:sourceBookKey(sourceCourseId,sourceBook),
       sourcePage,sourcePageKey:sourcePageNorm(sourcePage),
       sourceProblemNo,sourceProblemNoKey:sourceProblemNorm(sourceProblemNo),
@@ -5749,13 +5754,14 @@ function renderQnaStudentSection(stuId, directorView){
         <option value="TEXTBOOK" ${src.sourceType==='TEXTBOOK'?'selected':''}>교재</option><option value="PRINT" ${src.sourceType==='PRINT'?'selected':''}>프린트</option><option value="OTHER" ${src.sourceType==='OTHER'?'selected':''}>기타 질문 (교재 외)</option><option value="MNM" ${src.sourceType==='MNM'?'selected':''}>M&amp;m 수학훈련소</option>
       </select>
       ${src.sourceType==='TEXTBOOK'?`<div style="margin-top:7px;padding:9px 10px;border:1px solid #e4dfd3;border-radius:9px;background:#faf9f5;">
-        <div style="font-size:11px;color:#6f6958;margin-bottom:6px;"><b>교재·페이지·문제번호를 정확히 입력해주세요.</b> 학습보관함에 같은 출처의 풀이가 있으면 자동으로 연결됩니다.</div>
+        <div style="font-size:11px;color:#6f6958;margin-bottom:6px;"><b>교재·페이지·문제번호를 정확히 입력해주세요.</b> 보관함 자료가 정확히 일치하면 풀이가 자동 연결되고, 찾지 못하면 선생님 확인 대기로 등록됩니다.</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:6px;">
           <select id="newQCourse_${index}" onchange="setNewQSourceField('${stuId}','sourceCourseId',this.value,true,${index})"><option value="">학년·학기 선택</option>${courseList.map(c=>`<option value="${c.id}" ${src.sourceCourseId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select>
-          <select id="newQBook_${index}" ${src.sourceCourseId?'':'disabled'} onchange="setNewQSourceField('${stuId}','sourceBook',this.value,false,${index})"><option value="">교재 선택</option>${books.map(b=>`<option value="${escapeHtml(b)}" ${src.sourceBook===b?'selected':''}>${escapeHtml(b)}</option>`).join('')}</select>
+          ${src.sourceBookNotListed?`<input id="newQBookCustom_${index}" value="${escapeHtml(src.sourceBook||'')}" placeholder="교재명을 입력하세요" ${src.sourceCourseId?'':'disabled'} oninput="setNewQSourceField('${stuId}','sourceBook',this.value,false,${index})">`:`<select id="newQBook_${index}" ${src.sourceCourseId?'':'disabled'} onchange="this.value==='__OTHER_BOOK__'?setNewQSourceField('${stuId}','sourceBookNotListed','true',true,${index}):setNewQSourceField('${stuId}','sourceBook',this.value,false,${index})"><option value="">교재 선택</option>${books.map(b=>`<option value="${escapeHtml(b)}" ${src.sourceBook===b?'selected':''}>${escapeHtml(b)}</option>`).join('')}<option value="__OTHER_BOOK__">목록에 없는 교재 (직접 입력)</option></select>`}
           <input id="newQPage_${index}" inputmode="numeric" value="${escapeHtml(src.sourcePage||'')}" placeholder="페이지" oninput="setNewQSourceField('${stuId}','sourcePage',this.value,false,${index})">
           <input id="newQProblemNo_${index}" value="${escapeHtml(src.sourceProblemNo||'')}" placeholder="문제번호" oninput="setNewQSourceField('${stuId}','sourceProblemNo',this.value,false,${index})">
         </div>
+        ${src.sourceBookNotListed?`<div style="font-size:10.5px;color:#7a5b00;margin-top:6px;">교재명을 적어주세요. 보관함에 같은 출처의 풀이가 있으면 자동 연결되고, 없으면 선생님 확인 대기로 전달됩니다.</div>`:''}
         <button class="btn sm outline" style="font-size:10px;margin-top:7px;" onclick="toggleOtherQuestionCourses('${stuId}',${index})">${src.showAllCourses?'현재 학습과정만 보기':'다른 과정 질문'}</button>
         ${!courseList.length?`<div style="font-size:10.5px;color:#a26b28;margin-top:6px;">현재 학습과정이 자동으로 잡히지 않았어요. ‘다른 과정 질문’을 눌러 선택해주세요.</div>`:''}
         ${src.sourceCourseId&&!books.length?`<div style="font-size:10.5px;color:#a83b32;margin-top:6px;">이 과정에 등록된 교재가 없어요. 원장 화면의 누적 진도 현황에서 교재를 먼저 등록해주세요.</div>`:''}
@@ -5769,9 +5775,11 @@ function renderQnaStudentSection(stuId, directorView){
   }).join('');
   const history=myQs.length?myQs.map(q=>{
     if(session.mode==='student'&&currentSubState.editingQId===q.id) return renderQuestionEditForm(q);
-    return `<div style="padding:10px 0;border-bottom:1px solid var(--line);"><div class="row between"><span style="font-size:12px;color:#9c9880;">${fmtDate(q.date)}</span><span class="badge ${q.status==='답변완료'?'green':'yellow'}">${q.status}</span></div>${questionSourceLabel(q)?`<div style="font-size:11px;color:#6b6858;margin-top:5px;"><b>출처</b> · ${escapeHtml(questionSourceLabel(q))}</div>`:''}<div style="margin:6px 0;">${q.text}</div><div class="thumbs">${(q.photos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','photos',${i})">`).join('')}</div>${q.answerText||(q.answerPhotos&&q.answerPhotos.length)?`<div style="margin-top:8px;background:#f6f4ec;padding:8px 10px;border-radius:8px;"><div style="font-size:12px;color:#8a8674;">선생님 답변</div><div>${q.answerText||''}</div><div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})">`).join('')}</div></div>`:''}${session.mode==='student'?`<button class="btn sm outline" style="margin-top:6px;" onclick="editQuestion('${q.id}')">수정</button>`:''}</div>`;
+    const statusText=q.status==='대기'?'선생님 확인 대기':q.status;
+    const waitingNote=q.status==='대기'?`<div style="font-size:11px;color:#7a5b00;margin-top:5px;">${q.solutionLibraryLookupFailed?'보관함을 자동 확인하지 못해 선생님이 출처를 확인하고 있어요.':'보관함에서 연결할 풀이를 찾지 못해 선생님 확인 대기 중이에요.'}</div>`:'';
+    return `<div style="padding:10px 0;border-bottom:1px solid var(--line);"><div class="row between"><span style="font-size:12px;color:#9c9880;">${fmtDate(q.date)}</span><span class="badge ${q.status==='답변완료'?'green':'yellow'}">${statusText}</span></div>${waitingNote}${questionSourceLabel(q)?`<div style="font-size:11px;color:#6b6858;margin-top:5px;"><b>출처</b> · ${escapeHtml(questionSourceLabel(q))}</div>`:''}<div style="margin:6px 0;">${q.text}</div><div class="thumbs">${(q.photos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','photos',${i})">`).join('')}</div>${q.answerText||(q.answerPhotos&&q.answerPhotos.length)?`<div style="margin-top:8px;background:#f6f4ec;padding:8px 10px;border-radius:8px;"><div style="font-size:12px;color:#8a8674;">선생님 답변</div><div>${q.answerText||''}</div><div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})">`).join('')}</div></div>`:''}${session.mode==='student'?`<button class="btn sm outline" style="margin-top:6px;" onclick="editQuestion('${q.id}')">수정</button>`:''}</div>`;
   }).join(''):`<div class="empty">등록된 질문이 없어요.</div>`;
-  return `<div class="card"><h3 style="margin-top:0;">💬 질문 게시판</h3>${session.mode==='student'?`<div style="font-size:12px;color:#6f6958;margin-bottom:8px;line-height:1.5;">문제마다 출처와 사진을 각각 입력해주세요. 한 문제에 사진을 여러 장 첨부할 수 있어요.</div>${compose}<div class="row" style="margin-top:8px;"><button class="btn sm outline" onclick="addQuestionDraft('${stuId}')">＋ 질문 추가</button><button class="btn sm gold" onclick="submitQuestion('${stuId}')">질문 모두 등록</button></div><hr style="border:none;border-top:1px solid var(--line);margin:14px 0;">`:''}${history}</div>`;
+  return `<div class="card"><h3 style="margin-top:0;">💬 질문 게시판</h3>${session.mode==='student'?`<div style="font-size:12px;color:#6f6958;margin-bottom:8px;line-height:1.5;">문제마다 출처와 사진을 각각 입력해주세요. 한 문제에 사진을 여러 장 첨부할 수 있어요. 교재 목록에 없는 책은 ‘목록에 없는 교재’를 선택해 이름을 적어주세요. 보관함에서 같은 출처의 풀이를 찾지 못하면 선생님 확인 대기로 전달됩니다.</div>${compose}<div class="row" style="margin-top:8px;"><button class="btn sm outline" onclick="addQuestionDraft('${stuId}')">＋ 질문 추가</button><button class="btn sm gold" onclick="submitQuestion('${stuId}')">질문 모두 등록</button></div><hr style="border:none;border-top:1px solid var(--line);margin:14px 0;">`:''}${history}</div>`;
 }
 async function uploadNewQPhoto(inputEl,index=0){
   rememberQuestionTexts();
