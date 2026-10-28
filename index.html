@@ -5728,7 +5728,7 @@ function renderQnaStudentSection(stuId, directorView){
 
           ${src.sourceType==='TEXTBOOK'?`
           <div style="margin-top:7px;padding:9px 10px;border:1px solid #e4dfd3;border-radius:9px;background:#faf9f5;">
-            <div style="font-size:11px;color:#6f6958;margin-bottom:6px;"><b>문제 출처를 정확히 선택해주세요.</b> 같은 출처가 학습보관함에 있으면 자동으로 연결됩니다.</div>
+            <div style="font-size:11px;color:#6f6958;margin-bottom:6px;"><b>문제 출처를 정확히 선택해주세요.</b><br>질문 한 건에는 문제 하나만 등록해 주세요. 사진을 여러 장 올릴 때는 모두 같은 문제의 사진이어야 합니다. 여러 문제는 각각 따로 질문해 주세요. 학습보관함에 같은 출처의 풀이가 있으면 바로 연결됩니다.</div>
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:6px;">
               <select id="newQCourse" onchange="setNewQSourceField('${stuId}','sourceCourseId',this.value,true)">
                 <option value="">학년·학기 선택</option>
