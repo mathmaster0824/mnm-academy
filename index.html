@@ -725,7 +725,12 @@ function attachRoleListeners(){
   ['questions','kmm'].forEach(col=>{
     if(isDirector){
       subs.push(fsdb.collection(col).onSnapshot(snap=>{
-        db[col]=snap.docs.map(d=>({id:d.id,...d.data()})); scheduleRender();
+        db[col]=snap.docs.map(d=>({id:d.id,...d.data()}));
+        if(col==='questions'){
+          loadedViewData.add('questions');
+          autoAnswerPendingQuestionsFromLibrary().catch(e=>console.error('[기존 질문 자동 연결]',e));
+        }
+        scheduleRender();
       },roleListenerError(col)));
     }else if(stuId){
       db[col]=[];
@@ -1074,7 +1079,11 @@ function attachDirectorViewListeners(v){
   if(!session || session.mode!=='director') return;
   const addArray=(col)=>{
     viewUnsubscribers.push(fsdb.collection(col).onSnapshot(snap=>{
-      db[col]=snap.docs.map(d=>({id:d.id,...d.data()})); loadedViewData.add(col); scheduleRender();
+      db[col]=snap.docs.map(d=>({id:d.id,...d.data()})); loadedViewData.add(col);
+      if(col==='solutionPhotos' && v==='qna'){
+        autoAnswerPendingQuestionsFromLibrary().catch(e=>console.error('[기존 질문 자동 연결]',e));
+      }
+      scheduleRender();
     },roleListenerError(col)));
   };
   const addMap=(col)=>{
@@ -4232,6 +4241,35 @@ function autoSolutionMatchesForQuestion(q){
     return !!pKey && pKey===qKey;
   }).slice(0,8);
 }
+async function autoAnswerPendingQuestionsFromLibrary(){
+  if(!session || session.mode!=='director' || currentView!=='qna') return;
+  if(!loadedViewData.has('questions') || !loadedViewData.has('solutionPhotos')) return;
+  const pending=(db.questions||[]).filter(q=>
+    q.status==='대기' && q.sourceType==='TEXTBOOK' && !!(q.sourceKey||textbookSourceKey(q.sourceCourseId,q.sourceBook,q.sourcePage,q.sourceProblemNo))
+    && !qnaLibraryAutoAnswerInFlight.has(q.id)
+  );
+  for(const q of pending){
+    qnaLibraryAutoAnswerInFlight.add(q.id);
+    try{
+      const matches=autoSolutionMatchesForQuestion(q);
+      const photos=matches.map(p=>p.photo).filter(Boolean);
+      if(!photos.length) continue;
+      const answerText='학습보관함에서 출처가 정확히 일치하는 풀이를 연결했어요.';
+      const answeredAt=new Date().toISOString();
+      const ok=await fsUpdate('questions',q.id,{
+        answerText,answerPhotos:photos,status:'답변완료',
+        solutionLibraryAutoAnsweredAt:answeredAt
+      });
+      if(ok){
+        Object.assign(q,{answerText,answerPhotos:photos,status:'답변완료',solutionLibraryAutoAnsweredAt:answeredAt});
+        syncAnsweredQuestionToProblemRepo(q.id,answerText,photos).catch(e=>console.error(e));
+      }
+    }finally{
+      qnaLibraryAutoAnswerInFlight.delete(q.id);
+    }
+  }
+}
+const qnaLibraryAutoAnswerInFlight=new Set();
 function renderAutoSolutionMatches(qId){
   const q=db.questions.find(x=>x.id===qId);
   const matches=autoSolutionMatchesForQuestion(q);
