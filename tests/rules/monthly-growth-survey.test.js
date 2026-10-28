@@ -215,3 +215,19 @@ test('학생의 기존 숙제·주말학습·질문·타이머 쓰기 경로는 
   const timerRef = doc(db, 'timerState', studentId + '_2026-10-28');
   await assertSucceeds(setDoc(timerRef, { studentId, date: '2026-10-28', seconds: 60 }));
 });
+
+test('학생은 문제저장소에 직접 쓸 수 없고 원장만 대기열을 관리한다', async () => {
+  const student = env.authenticatedContext(studentId, {
+    role: 'student', studentId,
+    firebase: { sign_in_provider: 'custom' }
+  }).firestore();
+  for (const collectionName of ['problemSources', 'problemDrafts', 'problems', 'problemKeys']) {
+    await assertFails(setDoc(doc(student, collectionName, 'student-forged'), { sourceKey: 'fake' }));
+  }
+
+  const director = env.authenticatedContext(ownerUid, {
+    firebase: { sign_in_provider: 'password' }
+  }).firestore();
+  await assertSucceeds(setDoc(doc(director, 'problemSources', 'server-candidate'), { sourceKey: 'fixture' }));
+  await assertSucceeds(getDoc(doc(director, 'problemSources', 'server-candidate')));
+});
