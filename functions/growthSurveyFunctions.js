@@ -140,7 +140,8 @@ function createGrowthSurveyHandlers(admin, fs) {
         const [records, suppCurrent, suppLegacy, plan] = await Promise.all([
           fs.collection('classRecords')
             .where(FieldPath.documentId(), '>=', cls.id + '_' + start)
-            .where(FieldPath.documentId(), '<', cls.id + '_' + endEx).get(),
+            .where(FieldPath.documentId(), '<', cls.id + '_' + endEx)
+            .limit(7).get(),
           fs.collection('fridaySupp').doc(cls.id + '_' + weekStartKST(today)).get(),
           fs.collection('fridaySupp').doc(cls.id + '_' + shiftDate(weekStartKST(today), -1)).get(),
           fs.collection('weeklyPlans').doc(cls.id + '_' + weekStartKST(today)).get()
