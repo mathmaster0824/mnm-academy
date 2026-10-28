@@ -187,3 +187,31 @@ test('학생은 답안 제출 때 채점 결과를 직접 기록할 수 없다',
     autoResults: [{ state: 'correct', earnedPoints: 10 }]
   }));
 });
+
+test('학생의 기존 숙제·주말학습·질문·타이머 쓰기 경로는 본인 문서에서 동작한다', async () => {
+  const db = env.authenticatedContext(studentId, {
+    role: 'student', studentId,
+    firebase: { sign_in_provider: 'custom' }
+  }).firestore();
+  const homeworkId = studentId + '_2026-10-28';
+  const homeworkRef = doc(db, 'submissions', homeworkId);
+  await assertSucceeds(setDoc(homeworkRef, {
+    studentId, date: '2026-10-28', status: '제출완료', photos: ['fixture-photo'], submittedAt: '2026-10-28T00:00:00.000Z'
+  }));
+  await assertSucceeds(updateDoc(homeworkRef, { commentSeen: true }));
+  await assertSucceeds(updateDoc(homeworkRef, { status: '제출완료', photos: ['fixture-photo-2'] }));
+
+  const weekendRef = doc(db, 'weekendSubmissions', studentId + '_2026-10-27_sat_am');
+  await assertSucceeds(setDoc(weekendRef, {
+    studentId, weekStart: '2026-10-26', slot: 'sat_am', photos: ['fixture-photo'], submittedAt: '2026-10-28T00:00:00.000Z'
+  }));
+  await assertSucceeds(updateDoc(weekendRef, { studentId, weekStart: '2026-10-26', slot: 'sat_am', photos: [], submittedAt: '2026-10-28T00:00:00.000Z' }));
+  await assertSucceeds(deleteDoc(weekendRef));
+
+  const questionRef = doc(db, 'questions', 'question-own');
+  await assertSucceeds(setDoc(questionRef, { studentId, text: '도형 문제 질문', photos: [], answerText: '', answerPhotos: [], status: '대기' }));
+  await assertSucceeds(updateDoc(questionRef, { text: '도형 문제 질문을 수정했어요.' }));
+
+  const timerRef = doc(db, 'timerState', studentId + '_2026-10-28');
+  await assertSucceeds(setDoc(timerRef, { studentId, date: '2026-10-28', seconds: 60 }));
+});
