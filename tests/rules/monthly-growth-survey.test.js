@@ -141,19 +141,22 @@ test('학생 로그인 제한 문서는 클라이언트에서 접근할 수 없�
 });
 
 
-test('학생 화면에서 쓰는 소속·학생ID 조건 조회는 본인 자료만 허용한다', async () => {
+test('학생은 반 원본 대신 서버가 정제한 정보를 쓰고 본인 과제만 조회한다', async () => {
   const db = env.authenticatedContext(studentId, {
     role: 'student', studentId,
     firebase: { sign_in_provider: 'custom' }
   }).firestore();
 
-  for (const collectionName of ['classes', 'weekendClasses', 'assignments']) {
+  for (const collectionName of ['classes', 'weekendClasses']) {
     const own = query(collection(db, collectionName), where('studentIds', 'array-contains', studentId));
-    const other = query(collection(db, collectionName), where('studentIds', 'array-contains', 'another-student'));
-    const ownSnap = await assertSucceeds(getDocs(own));
-    assert.equal(ownSnap.size, 1);
-    await assertFails(getDocs(other));
+    await assertFails(getDocs(own));
   }
+
+  const ownAssignment = query(collection(db, 'assignments'), where('studentIds', 'array-contains', studentId));
+  const otherAssignment = query(collection(db, 'assignments'), where('studentIds', 'array-contains', 'another-student'));
+  const ownSnap = await assertSucceeds(getDocs(ownAssignment));
+  assert.equal(ownSnap.size, 1);
+  await assertFails(getDocs(otherAssignment));
 
   for (const collectionName of ['schoolScores', 'questions', 'kmm']) {
     const own = query(collection(db, collectionName), where('studentId', '==', studentId));
