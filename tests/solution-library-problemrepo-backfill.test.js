@@ -36,7 +36,7 @@ const STUB = require('./helpers/firestore-stub.js');
       const preview = renderSolutionLib();
       await syncExistingSolutionPhotosToProblemRepo();
       const afterFirst = solutionLibraryProblemRepoSummary();
-      const drafts = Object.values(window.__store.problemDrafts || {});
+      const drafts = Object.entries(window.__store.problemDrafts || {}).map(([id, data]) => ({ id, ...data }));
       const sources = Object.values(window.__store.problemSources || {});
       const draft = drafts[0] || {};
       const archiveA = window.__store.solutionPhotos['archive-a'];
@@ -59,7 +59,6 @@ const STUB = require('./helpers/firestore-stub.js');
         countsAfter: afterFirst,
         ...checks,
         secondPassOk,
-        diagnostic: { draftIds: drafts.map(x => x.id), sourceCount: sources.length, archiveA, archiveB, archiveIncomplete, afterFirst },
         assetIds: draft.solutionAssetIds,
         originCount: (draft.origins || []).length,
       };
