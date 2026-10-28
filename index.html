@@ -7978,6 +7978,10 @@ async function syncSolutionPhotoToProblemRepo(solId,solData){
 }
 async function syncQuestionToProblemRepo(qId,qData){
   try{
+    if(session?.mode==='student' && session.studentId===qData?.studentId){
+      const result=await ffunctions.httpsCallable('syncStudentQuestionToProblemRepo')({questionId:qId});
+      return result.data||{status:'error'};
+    }
     return await ensureOperationalProblemCandidate(operationalProblemMetaFromQuestion({id:qId,...qData}));
   }catch(e){ console.error('[질문→문제저장소]',e); return {status:'error'}; }
 }
