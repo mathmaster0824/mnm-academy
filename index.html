@@ -1327,11 +1327,21 @@ async function storePhotoFile(file, options={}){
       const form=new FormData();
       form.append('file',file,file.name||'photo.jpg');
       form.append('kind',options.kind||'photo');
-      const res=await fetch(PHOTO_API_BASE.replace(/\/$/,'')+'/upload',{
-        method:'POST',
-        headers:{Authorization:'Bearer '+token,'X-MNM-Role':session?.mode||'user'},
-        body:form
-      });
+      // 네트워크가 응답 없이 멈춰 숙제 화면이 영구적으로 업로드 중에 남지 않도록 제한한다.
+      // 시간 초과도 아래 압축 사진 대체 저장 경로로 이어진다.
+      const controller=new AbortController();
+      const uploadTimeout=setTimeout(()=>controller.abort(),20000);
+      let res;
+      try{
+        res=await fetch(PHOTO_API_BASE.replace(/\/$/,'')+'/upload',{
+          method:'POST',
+          headers:{Authorization:'Bearer '+token,'X-MNM-Role':session?.mode||'user'},
+          body:form,
+          signal:controller.signal
+        });
+      }finally{
+        clearTimeout(uploadTimeout);
+      }
       const out=await res.json().catch(()=>({}));
       if(!res.ok) throw new Error(out?.error || ('R2 upload '+res.status));
       const raw=out.photo || out;
