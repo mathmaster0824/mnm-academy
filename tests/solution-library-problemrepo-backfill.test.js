@@ -42,11 +42,14 @@ const STUB = require('./helpers/firestore-stub.js');
       const archiveA = window.__store.solutionPhotos['archive-a'];
       const archiveB = window.__store.solutionPhotos['archive-b'];
       const archiveIncomplete = window.__store.solutionPhotos['archive-incomplete'];
-      const firstPassOk = drafts.length === 1 && sources.length === 1 &&
-        archiveA.problemDraftId === draft.id && archiveB.problemDraftId === draft.id &&
-        !archiveIncomplete.problemDraftId &&
-        draft.solutionAssetIds.length === 2 && draft.origins.filter(x => x.type === 'learning-library').length === 2 &&
-        afterFirst.linked === 2 && afterFirst.eligible === 0;
+      const checks = {
+        oneDraftAndSource: drafts.length === 1 && sources.length === 1,
+        bothArchivesLinkedToSameDraft: archiveA.problemDraftId === draft.id && archiveB.problemDraftId === draft.id,
+        incompleteArchiveSkipped: !archiveIncomplete.problemDraftId,
+        duplicateAssetsPreserved: (draft.solutionAssetIds || []).length === 2,
+        duplicateOriginsPreserved: (draft.origins || []).filter(x => x.type === 'learning-library').length === 2,
+        summaryUpdated: afterFirst.linked === 2 && afterFirst.eligible === 0,
+      };
       await syncExistingSolutionPhotosToProblemRepo();
       const secondPassOk = Object.keys(window.__store.problemDrafts || {}).length === 1 && Object.keys(window.__store.problemSources || {}).length === 1;
       return {
@@ -54,8 +57,9 @@ const STUB = require('./helpers/firestore-stub.js');
         previewShowsNonDestructiveNote: preview.includes('원본 자료는 삭제되거나 덮어써지지 않습니다.'),
         countsBefore: before,
         countsAfter: afterFirst,
-        firstPassOk,
+        ...checks,
         secondPassOk,
+        diagnostic: { draftIds: drafts.map(x => x.id), sourceCount: sources.length, archiveA, archiveB, archiveIncomplete, afterFirst },
         assetIds: draft.solutionAssetIds,
         originCount: (draft.origins || []).length,
       };
