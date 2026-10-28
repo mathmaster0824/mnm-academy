@@ -254,6 +254,154 @@ function createGrowthSurveyHandlers(admin, fs) {
       return { rows, nextCursor: snap.size === PAGE_SIZE ? last : null, limit: PAGE_SIZE };
     }),
 
+    syncStudentQuestionToProblemRepo: onCall({ region: REGION }, async request => {
+      const { studentId } = requireStudent(request);
+      const questionId = String(request.data && request.data.questionId || '');
+      if (!/^[A-Za-z0-9_-]{1,160}$/.test(questionId)) {
+        throw new HttpsError('invalid-argument', '질문을 확인해주세요.');
+      }
+      const questionRef = fs.collection('questions').doc(questionId);
+      const questionSnap = await questionRef.get();
+      if (!questionSnap.exists || questionSnap.data().studentId !== studentId) {
+        throw new HttpsError('permission-denied', '본인 질문만 연결할 수 있습니다.');
+      }
+      const q = questionSnap.data() || {};
+      const norm = value => String(value || '').normalize('NFKC').toLowerCase().replace(/\\s+/g, '').trim();
+      const page = value => norm(value).replace(/^page/, '').replace(/^p\\.?/, '').replace(/쪽$/, '');
+      const problemNo = value => norm(value).replace(/번$/, '');
+      let sourceKey = '';
+      if (q.sourceType === 'TEXTBOOK') {
+        const book = norm(q.sourceBook), p = page(q.sourcePage), n = problemNo(q.sourceProblemNo);
+        if (q.sourceCourseId && book && p && n) sourceKey = String(q.sourceCourseId) + '::' + book + '::p' + p + '::q' + n;
+      } else if (q.sourceType === 'PRINT') {
+        const printId = norm(q.printId), n = problemNo(q.sourceProblemNo);
+        if (printId && n) sourceKey = 'print::' + printId + '::q' + n;
+      } else if (q.sourceType === 'MNM' && q.problemId) {
+        sourceKey = 'mnm::' + String(q.problemId);
+      }
+      if (!sourceKey) return { ok: true, status: 'ignored' };
+
+      const now = new Date().toISOString();
+      const photo = Array.isArray(q.photos) ? (q.photos[0] || null) : null;
+      const origin = { type: 'student-question', id: questionId, at: now };
+      const linkQuestion = async (problemId, problemDraftId) => {
+        const patch = {};
+        if (problemId) { patch.problemId = problemId; patch.problemLinkedAt = now; }
+        if (problemDraftId) { patch.problemDraftId = problemDraftId; patch.problemCandidateAt = now; }
+        if (Object.keys(patch).length) await questionRef.set(patch, { merge: true });
+      };
+      const attachOrigin = async problemId => {
+        await fs.collection('problems').doc(problemId).set({
+          updatedAt: now,
+          originTypes: admin.firestore.FieldValue.arrayUnion('student-question'),
+          sourceKeys: admin.firestore.FieldValue.arrayUnion(sourceKey)
+        }, { merge: true });
+        await linkQuestion(problemId, '');
+        return { ok: true, status: 'linked', problemId };
+      };
+
+      let canonical = null;
+      if (sourceKey.startsWith('mnm::')) {
+        const id = sourceKey.slice(5);
+        if (id) {
+          const snap = await fs.collection('problems').doc(id).get();
+          if (snap.exists) canonical = snap.id;
+        }
+      }
+      if (!canonical) {
+        const snap = await fs.collection('problems').where('sourceKeys', 'array-contains', sourceKey).limit(1).get();
+        if (!snap.empty) canonical = snap.docs[0].id;
+      }
+      if (canonical) return attachOrigin(canonical);
+
+      const drafts = await fs.collection('problemDrafts').where('sourceKey', '==', sourceKey).limit(10).get();
+      const existing = drafts.docs.find(d => !['saved', 'superseded', 'error'].includes(d.data().status)) ||
+        drafts.docs.find(d => d.data().status === 'saved');
+      if (existing) {
+        const data = existing.data() || {};
+        const canonicalId = data.canonicalProblemId || data.duplicateOf || '';
+        if (canonicalId) return attachOrigin(canonicalId);
+        await fs.runTransaction(async tx => {
+          const snap = await tx.get(existing.ref);
+          if (!snap.exists) throw new HttpsError('aborted', '문제 후보가 변경되었습니다. 다시 시도해주세요.');
+          const current = snap.data() || {};
+          const origins = Array.isArray(current.origins) ? current.origins : [];
+          const hasOrigin = origins.some(x => x && x.type === origin.type && x.id === origin.id);
+          tx.set(existing.ref, {
+            originTypes: admin.firestore.FieldValue.arrayUnion('student-question'),
+            origins: hasOrigin ? origins : origins.concat(origin),
+            updatedAt: now
+          }, { merge: true });
+          tx.set(questionRef, { problemDraftId: existing.id, problemCandidateAt: now }, { merge: true });
+        });
+        return { ok: true, status: 'candidate', problemDraftId: existing.id };
+      }
+
+      const digest = crypto.createHash('sha256').update(sourceKey).digest('hex');
+      const sourceId = 'auto_src_' + digest;
+      const draftId = 'auto_draft_' + digest;
+      const sourceRef = fs.collection('problemSources').doc(sourceId);
+      const draftRef = fs.collection('problemDrafts').doc(draftId);
+      let courseName = '';
+      if (q.sourceCourseId) {
+        const courseSnap = await fs.collection('courses').doc(String(q.sourceCourseId)).get();
+        if (courseSnap.exists) courseName = String(courseSnap.data().name || '');
+      }
+      const gradeMatch = courseName.match(/([초중고]\\s*\\d)\\s*[-·]?\\s*([12])\\s*학기/);
+      const sourceBook = String(q.sourceBook || '');
+      const sourcePage = String(q.sourcePage || '');
+      const sourceNo = String(q.sourceProblemNo || '');
+      const problemPhotoKey = photo && typeof photo === 'object' ? String(photo.storageKey || photo.key || '') : '';
+      const sourceData = {
+        title: q.sourceType === 'TEXTBOOK'
+          ? (sourceBook || '교재') + ' ' + sourcePage + 'p ' + sourceNo + '번'
+          : '학생질문 ' + questionId,
+        sourceType: 'student-question', sourceKey,
+        courseId: String(q.sourceCourseId || ''), book: sourceBook,
+        page: sourcePage, problemNo: sourceNo, printId: String(q.printId || ''),
+        createdAt: now, ingestVersion: 'v1-server-student'
+      };
+      const draftData = {
+        sourceId, sourceName: '학생질문', sourceKey,
+        sourceCourseId: String(q.sourceCourseId || ''), sourceBook, sourcePage,
+        sourceProblemNo: sourceNo, problemNo: sourceNo,
+        grade: gradeMatch ? gradeMatch[1].replace(/\\s+/g, '') : '',
+        semester: gradeMatch ? gradeMatch[2] + '학기' : '',
+        majorUnit: '', middleUnit: '',
+        problemText: '', rawText: '', questionText: String(q.text || ''),
+        type: 'short', answer: '',
+        cropKey: problemPhotoKey, media: photo ? [photo] : [],
+        explanation: '', explanationPhotos: [],
+        solutionAssetIds: [], originTypes: ['student-question'], origins: [origin],
+        analysis: { version: 'mnm-taxonomy-v1', needsVision: !!problemPhotoKey, status: problemPhotoKey ? 'vision-pending' : 'source-only' },
+        autoIntake: true, status: 'review', ingestVersion: 'v1-server-student',
+        createdAt: now, updatedAt: now
+      };
+      await fs.runTransaction(async tx => {
+        const [draftSnap, sourceSnap, currentQuestion] = await Promise.all([
+          tx.get(draftRef), tx.get(sourceRef), tx.get(questionRef)
+        ]);
+        if (!currentQuestion.exists || currentQuestion.data().studentId !== studentId) {
+          throw new HttpsError('permission-denied', '본인 질문만 연결할 수 있습니다.');
+        }
+        if (!draftSnap.exists) {
+          if (!sourceSnap.exists) tx.create(sourceRef, sourceData);
+          tx.create(draftRef, draftData);
+        } else {
+          const current = draftSnap.data() || {};
+          const origins = Array.isArray(current.origins) ? current.origins : [];
+          const hasOrigin = origins.some(x => x && x.type === origin.type && x.id === origin.id);
+          tx.set(draftRef, {
+            originTypes: admin.firestore.FieldValue.arrayUnion('student-question'),
+            origins: hasOrigin ? origins : origins.concat(origin),
+            updatedAt: now
+          }, { merge: true });
+        }
+        tx.set(questionRef, { problemDraftId: draftId, problemCandidateAt: now }, { merge: true });
+      });
+      return { ok: true, status: 'candidate', problemDraftId: draftId };
+    }),
+
     submitGrowthSurvey: onCall({ region: REGION }, async request => {
       const { studentId } = requireStudent(request);
       const month = requireMonth(request.data && request.data.month);
