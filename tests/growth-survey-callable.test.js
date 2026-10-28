@@ -142,3 +142,16 @@ test('비밀번호 세션은 학생 callable을 호출할 수 없다', async () 
     data: { questionId: 'q1' }
   }), error => error.code === 'permission-denied');
 });
+
+test('사진 질문 후보는 원장 분석 대기열에서 쓸 수 있는 이미지 키를 보존한다', async () => {
+  const photo = { storageKey: 'questions/q3/photo.jpg', url: 'https://photos.example/q3.jpg' };
+  const { db, sync } = setup({
+    questions: { q3: { studentId: 'stu_a', sourceType: 'OTHER', text: '사진 문제', photos: [photo] } }
+  });
+  const result = await sync(request('stu_a', 'q3'));
+  const draft = db.data.problemDrafts[result.problemDraftId];
+  assert.equal(draft.status, 'review');
+  assert.equal(draft.analysis.status, 'vision-pending');
+  assert.equal(draft.cropKey, photo.storageKey);
+  assert.deepEqual(draft.media, [photo]);
+});
