@@ -1110,7 +1110,11 @@ let lbIndex = 0;
 function getPhotoArray(kind, a, b){
   if(kind==='sub'){ const s = db.submissions[a]; return s ? (s[b]||[]) : []; }
   if(kind==='draft'){ return currentSubState._draftSub ? (currentSubState._draftSub[a]||[]) : []; }
-  if(kind==='newq'){ return currentSubState._newQDraftPhotos || []; }
+  if(kind==='newq'){
+    const index=Number(a);
+    if(Number.isInteger(index) && index>=0) return currentSubState._newQDraftItems?.[index]?.photos || [];
+    return currentSubState._newQDraftPhotos || [];
+  }
   if(kind==='editq'){ return currentSubState._editQDraft ? currentSubState._editQDraft.photos : []; }
   if(kind==='q'){ const q = db.questions.find(x=>x.id===a); return q ? (q[b]||[]) : []; }
   if(kind==='weekend'){ const w=db.weekendSubmissions[a]; return w ? (w.photos || (w.photo?[w.photo]:[])) : []; }
@@ -5630,9 +5634,14 @@ function studentQuestionBooks(stuId,courseId,allCatalog=false){
   if(allCatalog || !names.size) courseBookCatalog(courseId).forEach(x=>names.add(x));
   return [...names].sort((a,b)=>a.localeCompare(b,'ko'));
 }
-function newQuestionSourceDraft(stuId){
-  currentSubState._newQDraftSource=currentSubState._newQDraftSource||{};
-  const d=currentSubState._newQDraftSource;
+function questionDraftItems(stuId){
+  if(!Array.isArray(currentSubState._newQDraftItems)) currentSubState._newQDraftItems=[{text:currentSubState._newQDraftText||'',photos:currentSubState._newQDraftPhotos||[],source:currentSubState._newQDraftSource||{}}];
+  if(!currentSubState._newQDraftItems.length) currentSubState._newQDraftItems.push({text:'',photos:[],source:{}});
+  currentSubState._newQDraftItems.forEach(item=>{item.photos=item.photos||[];item.source=item.source||{};});
+  return currentSubState._newQDraftItems;
+}
+function newQuestionSourceDraft(stuId,index=0){
+  const d=questionDraftItems(stuId)[index].source;
   if(!d.sourceType) d.sourceType='TEXTBOOK';
   const currentIds=studentCurrentCourseIds(stuId);
   if(!d.sourceCourseId && currentIds.length===1) d.sourceCourseId=currentIds[0];
@@ -5642,13 +5651,13 @@ function newQuestionSourceDraft(stuId){
   }
   return d;
 }
-function rememberNewQuestionText(){
-  const ta=document.getElementById('newQText');
-  if(ta) currentSubState._newQDraftText=ta.value;
+function rememberQuestionTexts(){
+  (currentSubState._newQDraftItems||[]).forEach((item,index)=>{const ta=document.getElementById(`newQText_${index}`);if(ta)item.text=ta.value;});
 }
-function setNewQSourceField(stuId,field,value,rerender=false){
-  rememberNewQuestionText();
-  const d=newQuestionSourceDraft(stuId);
+function setQuestionDraftText(stuId,index,value){const item=questionDraftItems(stuId)[index];if(item)item.text=value;}
+function setNewQSourceField(stuId,field,value,rerender=false,index=0){
+  if(rerender) rememberQuestionTexts();
+  const d=newQuestionSourceDraft(stuId,index);
   d[field]=value;
   if(field==='sourceType'){
     d.sourceCourseId=''; d.sourceBook=''; d.sourcePage=''; d.sourceProblemNo='';
@@ -5660,13 +5669,15 @@ function setNewQSourceField(stuId,field,value,rerender=false){
   }
   if(rerender) render();
 }
-function toggleOtherQuestionCourses(stuId){
-  rememberNewQuestionText();
-  const d=newQuestionSourceDraft(stuId);
+function toggleOtherQuestionCourses(stuId,index=0){
+  rememberQuestionTexts();
+  const d=newQuestionSourceDraft(stuId,index);
   d.showAllCourses=!d.showAllCourses;
   d.sourceCourseId=''; d.sourceBook=''; d.sourcePage=''; d.sourceProblemNo='';
   render();
 }
+function addQuestionDraft(stuId){rememberQuestionTexts();questionDraftItems(stuId).push({text:'',photos:[],source:{}});render();}
+function removeQuestionDraft(stuId,index){rememberQuestionTexts();const items=questionDraftItems(stuId);if(items.length>1){items.splice(index,1);render();}}
 function questionSourceLabel(q){
   const t=q?.sourceType;
   if(t==='TEXTBOOK'){
@@ -5682,8 +5693,8 @@ function toggleQuestionSourceFields(){
   const t=document.getElementById('newQSourceType')?.value||'TEXTBOOK';
   ['TEXTBOOK','PRINT','MNM','OTHER'].forEach(x=>{ const el=document.getElementById('newQSrc_'+x); if(el) el.style.display=x===t?'grid':'none'; });
 }
-function readNewQuestionSource(stuId){
-  const d=newQuestionSourceDraft(stuId);
+function readNewQuestionSource(stuId,index=0){
+  const d=newQuestionSourceDraft(stuId,index);
   const sourceType=d.sourceType||'TEXTBOOK';
   if(sourceType==='TEXTBOOK'){
     const sourceCourseId=d.sourceCourseId||'';
@@ -5703,89 +5714,7 @@ function readNewQuestionSource(stuId){
   return {sourceType,problemId:String(d.problemId||'').trim()};
 }
 
-/* Q&A section embedded on student page */
-function renderQnaStudentSection(stuId, directorView){
-  const myQs = db.questions.filter(q=>q.studentId===stuId).sort((a,b)=>b.date.localeCompare(a.date));
-  currentSubState._newQDraftPhotos = currentSubState._newQDraftPhotos || [];
-  const qd = currentSubState._newQDraftPhotos;
-  return `
-  <div class="card">
-    <h3 style="margin-top:0;">💬 질문 게시판</h3>
-    ${session.mode==='student' ? `
-      ${(()=>{
-        const src=newQuestionSourceDraft(stuId);
-        const currentIds=studentCurrentCourseIds(stuId);
-        const courseList=src.showAllCourses?sortedCourses():sortedCourses().filter(c=>currentIds.includes(c.id));
-        const books=src.sourceCourseId?officialBooksForCourse(src.sourceCourseId):[];
-        return `<div style="margin-bottom:8px;">
-          <label style="font-size:11px;color:#8a8674;display:block;margin-bottom:4px;">어디에서 나온 문제인가요?</label>
-          <select id="newQSourceType" onchange="setNewQSourceField('${stuId}','sourceType',this.value,true)" style="width:100%;max-width:280px;">
-            <option value="TEXTBOOK" ${src.sourceType==='TEXTBOOK'?'selected':''}>교재</option>
-            <option value="PRINT" ${src.sourceType==='PRINT'?'selected':''}>프린트</option>
-            <option value="OTHER" ${src.sourceType==='OTHER'?'selected':''}>기타 질문 (교재 외)</option>
-            <option value="MNM" ${src.sourceType==='MNM'?'selected':''}>M&m 수학훈련소</option>
-          </select>
-
-          ${src.sourceType==='TEXTBOOK'?`
-          <div style="margin-top:7px;padding:9px 10px;border:1px solid #e4dfd3;border-radius:9px;background:#faf9f5;">
-            <div style="font-size:11px;color:#6f6958;margin-bottom:6px;"><b>문제 출처를 정확히 선택해주세요.</b><br>질문 한 건에는 문제 하나만 등록해 주세요. 사진을 여러 장 올릴 때는 모두 같은 문제의 사진이어야 합니다. 여러 문제는 각각 따로 질문해 주세요. 학습보관함에 같은 출처의 풀이가 있으면 바로 연결됩니다.</div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:6px;">
-              <select id="newQCourse" onchange="setNewQSourceField('${stuId}','sourceCourseId',this.value,true)">
-                <option value="">학년·학기 선택</option>
-                ${courseList.map(c=>`<option value="${c.id}" ${src.sourceCourseId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}
-              </select>
-              <select id="newQBook" ${src.sourceCourseId?'':'disabled'} onchange="setNewQSourceField('${stuId}','sourceBook',this.value,false)">
-                <option value="">교재 선택</option>
-                ${books.map(b=>`<option value="${escapeHtml(b)}" ${src.sourceBook===b?'selected':''}>${escapeHtml(b)}</option>`).join('')}
-              </select>
-              <input id="newQPage" inputmode="numeric" value="${escapeHtml(src.sourcePage||'')}" placeholder="페이지" oninput="setNewQSourceField('${stuId}','sourcePage',this.value,false)">
-              <input id="newQProblemNo" value="${escapeHtml(src.sourceProblemNo||'')}" placeholder="문제번호" oninput="setNewQSourceField('${stuId}','sourceProblemNo',this.value,false)">
-            </div>
-            <button class="btn sm outline" style="font-size:10px;margin-top:7px;" onclick="toggleOtherQuestionCourses('${stuId}')">${src.showAllCourses?'현재 학습과정만 보기':'다른 과정 질문'}</button>
-            ${!courseList.length?`<div style="font-size:10.5px;color:#a26b28;margin-top:6px;">현재 학습과정이 자동으로 잡히지 않았어요. ‘다른 과정 질문’을 눌러 선택해주세요.</div>`:''}
-            ${src.sourceCourseId&&!books.length?`<div style="font-size:10.5px;color:#a83b32;margin-top:6px;">이 과정에 등록된 교재가 없어요. 원장 화면의 누적 진도 현황에서 교재를 먼저 등록해주세요.</div>`:''}
-          </div>`:''}
-
-          ${src.sourceType==='PRINT'?`<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px;">
-            <input id="newQPrintId" value="${escapeHtml(src.printId||'')}" placeholder="프린트 ID (선택)" oninput="setNewQSourceField('${stuId}','printId',this.value,false)">
-            <input id="newQPrintProblemNo" value="${escapeHtml(src.sourceProblemNo||'')}" placeholder="문제번호 (선택)" oninput="setNewQSourceField('${stuId}','sourceProblemNo',this.value,false)">
-          </div>`:''}
-
-          ${src.sourceType==='MNM'?`<div style="display:grid;grid-template-columns:1fr;gap:6px;margin-top:6px;">
-            <input id="newQMnmProblemId" value="${escapeHtml(src.problemId||'')}" placeholder="문제 ID" oninput="setNewQSourceField('${stuId}','problemId',this.value,false)">
-          </div>`:''}
-        </div>`;
-      })()}
-      <div class="row"><textarea id="newQText" placeholder="궁금한 점을 적어주세요" rows="2" style="flex:1;">${currentSubState._newQDraftText||''}</textarea></div>
-      <div class="row" style="margin-top:6px;">
-        <label class="btn sm outline" style="cursor:pointer;">📷 촬영<input type="file" accept="image/*" capture="environment" onchange="uploadNewQPhoto(this)" style="display:none;"></label>
-        <label class="btn sm outline" style="cursor:pointer;">🖼️ 갤러리<input type="file" accept="image/*" multiple onchange="uploadNewQPhoto(this)" style="display:none;"></label>
-      </div>
-      <div class="thumbs">${qd.map((p,i)=>`<div class="thumb-wrap"><img src="${photoSrc(p,true)}" onclick="openLightboxSet('newq','','',${i})"><button class="thumb-x" onclick="removeNewQPhoto(${i})">✕</button></div>`).join('')}</div>
-      <button class="btn sm gold" style="margin-top:8px;" onclick="submitQuestion('${stuId}')">질문 등록</button>
-      <hr style="border:none;border-top:1px solid var(--line);margin:14px 0;">
-    ` : ''}
-    ${myQs.length? myQs.map(q=>{
-      if(session.mode==='student' && currentSubState.editingQId===q.id){
-        return renderQuestionEditForm(q);
-      }
-      return `
-      <div style="padding:10px 0;border-bottom:1px solid var(--line);">
-        <div class="row between"><span style="font-size:12px;color:#9c9880;">${fmtDate(q.date)}</span><span class="badge ${q.status==='답변완료'?'green':'yellow'}">${q.status}</span></div>
-        ${questionSourceLabel(q)?`<div style="font-size:11px;color:#6b6858;margin-top:5px;"><b>출처</b> · ${escapeHtml(questionSourceLabel(q))}</div>`:''}
-        <div style="margin:6px 0;">${q.text}</div>
-        <div class="thumbs">${(q.photos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','photos',${i})">`).join('')}</div>
-        ${q.answerText || (q.answerPhotos&&q.answerPhotos.length) ? `<div style="margin-top:8px;background:#f6f4ec;padding:8px 10px;border-radius:8px;">
-          <div style="font-size:12px;color:#8a8674;">선생님 답변</div>
-          <div>${q.answerText||''}</div>
-          <div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})">`).join('')}</div>
-        </div>` : ''}
-        ${session.mode==='student' ? `<button class="btn sm outline" style="margin-top:6px;" onclick="editQuestion('${q.id}')">수정</button>` : ''}
-      </div>
-    `;
-    }).join('') : `<div class="empty">등록된 질문이 없어요.</div>`}
-  </div>`;
-}
+/* Q&A compose view is defined after the edit form. */
 function renderQuestionEditForm(q){
   currentSubState._editQDraft = currentSubState._editQDraft || {text:q.text, photos:[...(q.photos||[])]};
   const ed = currentSubState._editQDraft;
@@ -5804,18 +5733,55 @@ function renderQuestionEditForm(q){
     </div>
   </div>`;
 }
-async function uploadNewQPhoto(inputEl){
-  rememberNewQuestionText();
-  currentSubState._newQDraftPhotos = currentSubState._newQDraftPhotos || [];
-  await handleMultiPhotoInput(inputEl, (durl)=>currentSubState._newQDraftPhotos.push(durl), 900, 0.65);
-  render();
+// 학생은 여러 문제를 카드별로 작성할 수 있으며, 저장 시 카드마다 독립된 질문 문서가 된다.
+function renderQnaStudentSection(stuId, directorView){
+  const myQs=db.questions.filter(q=>q.studentId===stuId).sort((a,b)=>b.date.localeCompare(a.date));
+  const drafts=questionDraftItems(stuId);
+  const compose=drafts.map((item,index)=>{
+    const src=newQuestionSourceDraft(stuId,index);
+    const currentIds=studentCurrentCourseIds(stuId);
+    const courseList=src.showAllCourses?sortedCourses():sortedCourses().filter(c=>currentIds.includes(c.id));
+    const books=src.sourceCourseId?officialBooksForCourse(src.sourceCourseId):[];
+    return `<div style="border:1px solid var(--line);border-radius:10px;padding:10px;margin:9px 0;background:#fff;">
+      <div class="row between" style="margin-bottom:7px;"><b>질문 ${index+1}</b>${drafts.length>1?`<button class="btn sm outline" onclick="removeQuestionDraft('${stuId}',${index})">삭제</button>`:''}</div>
+      <label style="font-size:11px;color:#8a8674;display:block;margin-bottom:4px;">이 문제의 출처</label>
+      <select id="newQSourceType_${index}" onchange="setNewQSourceField('${stuId}','sourceType',this.value,true,${index})" style="width:100%;max-width:280px;">
+        <option value="TEXTBOOK" ${src.sourceType==='TEXTBOOK'?'selected':''}>교재</option><option value="PRINT" ${src.sourceType==='PRINT'?'selected':''}>프린트</option><option value="OTHER" ${src.sourceType==='OTHER'?'selected':''}>기타 질문 (교재 외)</option><option value="MNM" ${src.sourceType==='MNM'?'selected':''}>M&amp;m 수학훈련소</option>
+      </select>
+      ${src.sourceType==='TEXTBOOK'?`<div style="margin-top:7px;padding:9px 10px;border:1px solid #e4dfd3;border-radius:9px;background:#faf9f5;">
+        <div style="font-size:11px;color:#6f6958;margin-bottom:6px;"><b>교재·페이지·문제번호를 정확히 입력해주세요.</b> 학습보관함에 같은 출처의 풀이가 있으면 자동으로 연결됩니다.</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:6px;">
+          <select id="newQCourse_${index}" onchange="setNewQSourceField('${stuId}','sourceCourseId',this.value,true,${index})"><option value="">학년·학기 선택</option>${courseList.map(c=>`<option value="${c.id}" ${src.sourceCourseId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select>
+          <select id="newQBook_${index}" ${src.sourceCourseId?'':'disabled'} onchange="setNewQSourceField('${stuId}','sourceBook',this.value,false,${index})"><option value="">교재 선택</option>${books.map(b=>`<option value="${escapeHtml(b)}" ${src.sourceBook===b?'selected':''}>${escapeHtml(b)}</option>`).join('')}</select>
+          <input id="newQPage_${index}" inputmode="numeric" value="${escapeHtml(src.sourcePage||'')}" placeholder="페이지" oninput="setNewQSourceField('${stuId}','sourcePage',this.value,false,${index})">
+          <input id="newQProblemNo_${index}" value="${escapeHtml(src.sourceProblemNo||'')}" placeholder="문제번호" oninput="setNewQSourceField('${stuId}','sourceProblemNo',this.value,false,${index})">
+        </div>
+        <button class="btn sm outline" style="font-size:10px;margin-top:7px;" onclick="toggleOtherQuestionCourses('${stuId}',${index})">${src.showAllCourses?'현재 학습과정만 보기':'다른 과정 질문'}</button>
+        ${!courseList.length?`<div style="font-size:10.5px;color:#a26b28;margin-top:6px;">현재 학습과정이 자동으로 잡히지 않았어요. ‘다른 과정 질문’을 눌러 선택해주세요.</div>`:''}
+        ${src.sourceCourseId&&!books.length?`<div style="font-size:10.5px;color:#a83b32;margin-top:6px;">이 과정에 등록된 교재가 없어요. 원장 화면의 누적 진도 현황에서 교재를 먼저 등록해주세요.</div>`:''}
+      </div>`:''}
+      ${src.sourceType==='PRINT'?`<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px;"><input id="newQPrintId_${index}" value="${escapeHtml(src.printId||'')}" placeholder="프린트명 (선택)" oninput="setNewQSourceField('${stuId}','printId',this.value,false,${index})"><input value="${escapeHtml(src.sourceProblemNo||'')}" placeholder="문제번호 (선택)" oninput="setNewQSourceField('${stuId}','sourceProblemNo',this.value,false,${index})"></div>`:''}
+      ${src.sourceType==='MNM'?`<div style="margin-top:6px;"><input value="${escapeHtml(src.problemId||'')}" placeholder="문제 ID" oninput="setNewQSourceField('${stuId}','problemId',this.value,false,${index})"></div>`:''}
+      <textarea id="newQText_${index}" oninput="setQuestionDraftText('${stuId}',${index},this.value)" placeholder="이 문제에서 궁금한 점을 적어주세요" rows="2" style="width:100%;margin-top:8px;">${escapeHtml(item.text||'')}</textarea>
+      <div class="row" style="margin-top:6px;"><label class="btn sm outline" style="cursor:pointer;">📷 촬영<input type="file" accept="image/*" capture="environment" onchange="uploadNewQPhoto(this,${index})" style="display:none;"></label><label class="btn sm outline" style="cursor:pointer;">🖼️ 갤러리<input type="file" accept="image/*" multiple onchange="uploadNewQPhoto(this,${index})" style="display:none;"></label></div>
+      <div class="thumbs">${item.photos.map((p,i)=>`<div class="thumb-wrap"><img src="${photoSrc(p,true)}" onclick="openLightboxSet('newq','${index}','','${i}')"><button class="thumb-x" onclick="removeNewQPhoto(${index},${i})">✕</button></div>`).join('')}</div>
+    </div>`;
+  }).join('');
+  const history=myQs.length?myQs.map(q=>{
+    if(session.mode==='student'&&currentSubState.editingQId===q.id) return renderQuestionEditForm(q);
+    return `<div style="padding:10px 0;border-bottom:1px solid var(--line);"><div class="row between"><span style="font-size:12px;color:#9c9880;">${fmtDate(q.date)}</span><span class="badge ${q.status==='답변완료'?'green':'yellow'}">${q.status}</span></div>${questionSourceLabel(q)?`<div style="font-size:11px;color:#6b6858;margin-top:5px;"><b>출처</b> · ${escapeHtml(questionSourceLabel(q))}</div>`:''}<div style="margin:6px 0;">${q.text}</div><div class="thumbs">${(q.photos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','photos',${i})">`).join('')}</div>${q.answerText||(q.answerPhotos&&q.answerPhotos.length)?`<div style="margin-top:8px;background:#f6f4ec;padding:8px 10px;border-radius:8px;"><div style="font-size:12px;color:#8a8674;">선생님 답변</div><div>${q.answerText||''}</div><div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})">`).join('')}</div></div>`:''}${session.mode==='student'?`<button class="btn sm outline" style="margin-top:6px;" onclick="editQuestion('${q.id}')">수정</button>`:''}</div>`;
+  }).join(''):`<div class="empty">등록된 질문이 없어요.</div>`;
+  return `<div class="card"><h3 style="margin-top:0;">💬 질문 게시판</h3>${session.mode==='student'?`<div style="font-size:12px;color:#6f6958;margin-bottom:8px;line-height:1.5;">문제마다 출처와 사진을 각각 입력해주세요. 한 문제에 사진을 여러 장 첨부할 수 있어요.</div>${compose}<div class="row" style="margin-top:8px;"><button class="btn sm outline" onclick="addQuestionDraft('${stuId}')">＋ 질문 추가</button><button class="btn sm gold" onclick="submitQuestion('${stuId}')">질문 모두 등록</button></div><hr style="border:none;border-top:1px solid var(--line);margin:14px 0;">`:''}${history}</div>`;
 }
-async function removeNewQPhoto(idx){
-  const removed=(currentSubState._newQDraftPhotos||[])[idx];
-  if(removed) await deleteStoredPhoto(removed);
-  rememberNewQuestionText();
-  currentSubState._newQDraftPhotos.splice(idx,1);
-  render();
+async function uploadNewQPhoto(inputEl,index=0){
+  rememberQuestionTexts();
+  const item=questionDraftItems(session.studentId||session.student?.id||'')[index]; if(!item)return;
+  await handleMultiPhotoInput(inputEl,durl=>item.photos.push(durl),900,0.65); render();
+}
+async function removeNewQPhoto(index,photoIndex){
+  const item=questionDraftItems(session.studentId||session.student?.id||'')[index]; if(!item)return;
+  const removed=item.photos[photoIndex]; if(removed) await deleteStoredPhoto(removed);
+  rememberQuestionTexts(); item.photos.splice(photoIndex,1); render();
 }
 async function findExactSolutionPhotosForQuestion(source){
   if(!source || source.sourceType!=='TEXTBOOK' || !source.sourceKey) return {photos:[],checked:true};
@@ -5830,35 +5796,43 @@ async function findExactSolutionPhotosForQuestion(source){
   }
 }
 async function submitQuestion(stuId){
-  const text = document.getElementById('newQText').value.trim();
-  const photos = currentSubState._newQDraftPhotos || [];
-  if(!text && !photos.length){ alert('질문 내용이나 사진을 등록해주세요.'); return; }
-  const source = readNewQuestionSource(stuId);
-  if(source.sourceType==='TEXTBOOK'){
-    if(!source.sourceCourseId){ alert('학년·학기를 선택해주세요.'); return; }
-    if(!source.sourceBook){ alert('교재를 선택해주세요.'); return; }
-    if(!source.sourcePage){ alert('페이지를 입력해주세요.'); return; }
-    if(!source.sourceProblemNo){ alert('문제번호를 입력해주세요.'); return; }
-    if(!source.sourceKey){ alert('문제 출처를 다시 확인해주세요.'); return; }
-  }else if(source.sourceType==='MNM' && !source.problemId){
-    alert('M&m 문제 ID를 입력해주세요.'); return;
+  rememberQuestionTexts();
+  const drafts=questionDraftItems(stuId);
+  for(let i=0;i<drafts.length;i++){
+    const item=drafts[i], text=String(item.text||'').trim(), photos=item.photos||[];
+    if(!text&&!photos.length){alert(`질문 ${i+1}에 내용이나 사진을 등록해주세요.`);return;}
+    const source=readNewQuestionSource(stuId,i);
+    if(source.sourceType==='TEXTBOOK'){
+      if(!source.sourceCourseId){alert(`질문 ${i+1}: 학년·학기를 선택해주세요.`);return;}
+      if(!source.sourceBook){alert(`질문 ${i+1}: 교재를 선택해주세요.`);return;}
+      if(!source.sourcePage){alert(`질문 ${i+1}: 페이지를 입력해주세요.`);return;}
+      if(!source.sourceProblemNo){alert(`질문 ${i+1}: 문제번호를 입력해주세요.`);return;}
+      if(!source.sourceKey){alert(`질문 ${i+1}: 문제 출처를 다시 확인해주세요.`);return;}
+    }else if(source.sourceType==='MNM'&&!source.problemId){alert(`질문 ${i+1}: M&m 문제 ID를 입력해주세요.`);return;}
   }
-  const libraryLookup=await findExactSolutionPhotosForQuestion(source);
-  const matchedSolutionPhotos=libraryLookup.photos;
-  const payload = {
-    studentId:stuId,date:todayISO(),text,photos,...source,
-    solutionLibraryLookupFailed:!libraryLookup.checked,
-    answerText:matchedSolutionPhotos.length?'학습보관함에서 출처가 정확히 일치하는 풀이를 연결했어요.':'',
-    answerPhotos:matchedSolutionPhotos,status:matchedSolutionPhotos.length?'답변완료':'대기'
-  };
-  if(embeddedPhotoLimitExceeded(payload, 900)){ alert('사진 용량이 너무 커요. 사진 개수를 줄여주세요.'); return; }
-  const ok = await fsAdd('questions', payload);
-  if(ok){
+  const prepared=[];
+  for(let i=0;i<drafts.length;i++){
+    const item=drafts[i],text=String(item.text||'').trim(),photos=item.photos||[],source=readNewQuestionSource(stuId,i);
+    const libraryLookup=await findExactSolutionPhotosForQuestion(source);
+    const matchedSolutionPhotos=libraryLookup.photos;
+    const payload={studentId:stuId,date:todayISO(),text,photos,...source,solutionLibraryLookupFailed:!libraryLookup.checked,answerText:matchedSolutionPhotos.length?'학습보관함에서 출처가 정확히 일치하는 풀이를 연결했어요.':'',answerPhotos:matchedSolutionPhotos,status:matchedSolutionPhotos.length?'답변완료':'대기'};
+    if(embeddedPhotoLimitExceeded(payload,900)){alert(`질문 ${i+1} 사진 용량이 너무 커요. 이 질문의 사진 수를 줄여주세요.`);return;}
+    prepared.push(payload);
+  }
+  let saved=0;
+  for(let i=0;i<prepared.length;i++){
+    const item=drafts[i],payload=prepared[i],matchedSolutionPhotos=payload.answerPhotos;
+    const ok=await fsAdd('questions',payload);
+    if(!ok) break;
     if(matchedSolutionPhotos.length) syncAnsweredQuestionToProblemRepo(ok,payload.answerText,matchedSolutionPhotos).catch(e=>console.error(e));
     else syncQuestionToProblemRepo(ok,payload).catch(e=>console.error(e));
-    currentSubState._newQDraftPhotos=[];
-    currentSubState._newQDraftText='';
-    currentSubState._newQDraftSource=null;
+    item._saved=true; saved++;
+  }
+  if(saved){
+    currentSubState._newQDraftItems=drafts.filter(item=>!item._saved).map(item=>{delete item._saved;return item;});
+    currentSubState._newQDraftText='';currentSubState._newQDraftPhotos=[];currentSubState._newQDraftSource=null;
+    if(!currentSubState._newQDraftItems.length) currentSubState._newQDraftItems=[{text:'',photos:[],source:{}}];
+    if(saved<drafts.length) alert(`${saved}개 질문은 등록됐고, 나머지 질문은 저장되지 않았어요. 남은 입력을 확인한 뒤 다시 등록해주세요.`);
     render();
   }
 }
