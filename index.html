@@ -4124,6 +4124,7 @@ function renderSolutionLib(){
       ${filter!=='all' ? `<button class="btn sm outline" onclick="currentSubState.solCourse='all';currentSubState.solUnit='all';render();">필터 초기화</button>` : ''}
     </div>
   </div>
+  ${renderSolutionLibraryProblemRepoBackfill()}
   <div class="tabs2">
     <button class="${filter==='all'?'active':''}" onclick="currentSubState.solCourse='all';currentSubState.solUnit='all';render();">전체</button>
     ${sortedCourses().map(c=>`<button class="${filter===c.id?'active':''}" onclick="currentSubState.solCourse='${c.id}';currentSubState.solUnit='all';render();">${c.name}</button>`).join('')}
@@ -4136,6 +4137,54 @@ function renderSolutionLib(){
     ${renderSolutionLibraryMatchesHtml(list)}
   </div>
   `;
+}
+function solutionLibraryProblemRepoSummary(){
+  const rows=Array.isArray(db.solutionPhotos)?db.solutionPhotos:[];
+  const complete=rows.filter(p=>p?.courseId&&p?.book&&p?.page&&p?.problemNo);
+  const linked=complete.filter(p=>p.problemId||p.problemDraftId);
+  const missing=rows.length-complete.length;
+  const eligible=complete.length-linked.length;
+  return {total:rows.length,complete:complete.length,linked:linked.length,missing,eligible};
+}
+function renderSolutionLibraryProblemRepoBackfill(){
+  const s=solutionLibraryProblemRepoSummary(), run=currentSubState._solProblemRepoSync;
+  const busy=!!run?.active;
+  return `<div class="card" style="border:1px solid #e8d7ad;background:#fffdf7;">
+    <b>문제저장소 연결</b>
+    <div style="font-size:12px;line-height:1.6;margin:5px 0 9px;">기존 해설 보관 자료 중 출처 정보가 완성된 ${s.eligible}개를 문제저장소에 연결할 수 있어요. 연결된 자료 ${s.linked}개, 출처 정보가 부족해 건너뛰는 자료 ${s.missing}개입니다. 원본 자료는 삭제되거나 덮어써지지 않습니다.</div>
+    ${run?.message?`<div id="solutionLibProblemRepoStatus" style="font-size:12px;color:${run.failed?'#a33':'#6f6958'};margin-bottom:8px;">${escapeHtml(run.message)}</div>`:''}
+    <button class="btn gold sm" ${busy||!s.eligible?'disabled':''} onclick="syncExistingSolutionPhotosToProblemRepo()">${busy?`연결 중 ${run.done}/${run.total}`:`기존 자료 ${s.eligible}개 연결`}</button>
+  </div>`;
+}
+async function syncExistingSolutionPhotosToProblemRepo(){
+  const s=solutionLibraryProblemRepoSummary();
+  if(!s.eligible||currentSubState._solProblemRepoSync?.active) return;
+  const rows=(db.solutionPhotos||[]).filter(p=>p?.courseId&&p?.book&&p?.page&&p?.problemNo&&!p.problemId&&!p.problemDraftId);
+  if(!confirm(`출처가 완성된 기존 자료 ${rows.length}개를 문제저장소에 연결할까요?\n\n같은 교재·페이지·문제번호는 하나의 후보로 묶이며, 원본 자료는 그대로 유지됩니다. 출처 정보가 부족한 자료는 건너뜁니다.`)) return;
+  const run=currentSubState._solProblemRepoSync={active:true,total:rows.length,done:0,linked:0,failed:0,message:'연결을 시작했어요.'};
+  render();
+  for(const row of rows){
+    try{
+      const result=await syncSolutionPhotoToProblemRepo(row.id,row);
+      if(result?.status==='error'||result?.status==='ignored') run.failed++;
+      else if(result?.problemId||result?.problemDraftId||['candidate','linked','saved'].includes(result?.status)){
+        run.linked++;
+        if(result.problemId) row.problemId=result.problemId;
+        if(result.problemDraftId) row.problemDraftId=result.problemDraftId;
+        if(result.status==='saved'&&result.id) row.problemId=result.id;
+      }
+      else run.failed++;
+    }catch(e){ console.error('[기존 학습보관 자료 연결]',e); run.failed++; }
+    run.done++;
+    run.message=`기존 자료 처리 중 ${run.done}/${run.total} · 연결 ${run.linked} · 실패 ${run.failed}`;
+    const status=document.getElementById('solutionLibProblemRepoStatus');
+    if(status) status.textContent=run.message;
+  }
+  run.active=false;
+  run.message=`연결 완료 · ${run.linked}개 연결, ${run.failed}개 실패 또는 확인 필요`;
+  run.failed=run.failed>0;
+  problemStore.ingest.loaded=false;
+  render();
 }
 function renderSolutionLibraryMatchesHtml(list){
   return list.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;">
@@ -7774,6 +7823,7 @@ async function appendProblemOriginMeta(problemId,meta){
     originTypes:firebase.firestore.FieldValue.arrayUnion(meta.originType||'unknown')
   };
   if(meta.sourceKey) patch.sourceKeys=firebase.firestore.FieldValue.arrayUnion(meta.sourceKey);
+  if(meta.originType==='learning-library'&&meta.originId) patch.solutionAssetIds=firebase.firestore.FieldValue.arrayUnion(meta.originId);
   await fsdb.collection('problems').doc(problemId).set(patch,{merge:true});
 }
 async function addTeacherExplanationToProblem(problemId,{text='',photos=[],questionId=''}={}){
@@ -7833,6 +7883,7 @@ async function ensureOperationalProblemCandidate(meta){
       origins:hasOrigin?origins:[...origins,{type:meta.originType,id:meta.originId,at:new Date().toISOString()}],
       updatedAt:new Date().toISOString()
     };
+    if(meta.originType==='learning-library'&&meta.originId) patch.solutionAssetIds=[...new Set([...(draft.solutionAssetIds||[]),meta.originId])];
     if(problemPhoto && !draft.cropKey){
       patch.media=[problemPhoto]; patch.cropKey=cropKey; patch.cropUrl='';
       patch.analysis={...(draft.analysis||{}),needsVision:true,status:'vision-pending'};

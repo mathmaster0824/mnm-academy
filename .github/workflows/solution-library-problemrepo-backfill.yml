@@ -1,0 +1,32 @@
+name: Learning library problem repository backfill regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - index.html
+      - tests/solution-library-problemrepo-backfill.test.js
+      - tests/helpers/firestore-stub.js
+      - .github/workflows/solution-library-problemrepo-backfill.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  solution-library-problemrepo-backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Playwright
+        run: npm install --no-save --package-lock=false playwright
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Check test syntax
+        run: node --check tests/solution-library-problemrepo-backfill.test.js
+      - name: Run learning library backfill regression
+        run: node tests/solution-library-problemrepo-backfill.test.js
