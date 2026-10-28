@@ -9155,9 +9155,8 @@ async function submitAnswerSheet(assignmentId,stuId){
   const id=answerSubmissionId(assignmentId,stuId);
   const exists=await fsdb.collection('answerSubmissions').doc(id).get();
   if(exists.exists){ alert('최초 제출 답지는 이미 저장되어 있어요.'); return; }
-  // 학생에게 정답키를 노출하지 않기 위해 여기서는 객관/단답을 서버채점대기 상태로 저장한다.
-  const autoResults=problems.map(p=>({state:p.type==='constructed'?'pending':'grading',earnedPoints:null}));
-  const payload={assignmentId,studentId:stuId,originalAnswers:answers,autoResults,wrongReasons:{},submittedAt:new Date().toISOString(),learningCompletedAt:null,review:null};
+  // 채점 결과는 클라이언트가 만들지 않는다. 서버/원장 채점이 끝나기 전에는 결과가 비어 있는 상태로 둔다.
+  const payload={assignmentId,studentId:stuId,originalAnswers:answers,wrongReasons:{},submittedAt:new Date().toISOString(),learningCompletedAt:null,review:null};
   const ok=await fsSet('answerSubmissions',id,payload,false); if(ok){
     db.answerSubmissions[id]={id,...payload};
     const serverResults=await requestServerGrade(assignmentId,stuId,answers);
@@ -9173,6 +9172,7 @@ async function saveWrongReason(assignmentId,stuId,idx,value){
 async function completeAnswerLearning(assignmentId,stuId){
   const id=answerSubmissionId(assignmentId,stuId), sub=db.answerSubmissions[id]; if(!sub)return;
   const results=(sub.review&&sub.review.finalResults)||sub.autoResults||[];
+  if(!results.length){alert('채점 결과를 기다려주세요.');return;}
   const wrong=results.map((r,i)=>r&&r.state==='wrong'?i:-1).filter(i=>i>=0);
   if(!wrong.every(i=>sub.wrongReasons&&sub.wrongReasons[i])){alert('틀린 문제의 이유를 모두 선택해주세요.');return;}
   const at=new Date().toISOString(); const ok=await fsUpdate('answerSubmissions',id,{learningCompletedAt:at}); if(ok){sub.learningCompletedAt=at;render();}

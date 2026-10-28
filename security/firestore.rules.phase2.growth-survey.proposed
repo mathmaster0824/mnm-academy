@@ -167,9 +167,13 @@ service cloud.firestore {
                     && request.resource.data.status == 'pending'
                     && request.resource.data.get('paymentConfirmed', false) == false;
       allow update: if ownDocId(docId)
+                    && resource.data.get('studentId', me()) == me()
+                    && request.resource.data.studentId == me()
                     && resource.data.get('status', '') in ['pending', 'rejected']
                     && request.resource.data.status == 'pending'
-                    && request.resource.data.get('paymentConfirmed', false) == false;
+                    && request.resource.data.get('paymentConfirmed', false) == false
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['studentId', 'status', 'appliedAt', 'paymentConfirmed']);
       allow write: if isDirector();
     }
     match /stadDaily/{docId} {
@@ -179,7 +183,13 @@ service cloud.firestore {
                     && request.resource.data.studentId == me()
                     && request.resource.data.get('attended', false) == false;
       allow update: if ownDocId(docId)
-                    && request.resource.data.get('attended', null) == resource.data.get('attended', null);
+                    && resource.data.get('studentId', me()) == me()
+                    && request.resource.data.studentId == me()
+                    && request.resource.data.get('date', null) == resource.data.get('date', null)
+                    && request.resource.data.get('attended', null) == resource.data.get('attended', null)
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['studentId', 'todoItems', 'todoSubmittedAt', 'carryOvers', 'ratings', 'reflection', 'pledge', 'settlementSubmittedAt']);
+
       allow write: if isDirector();
     }
     match /questions/{docId} {
@@ -196,8 +206,11 @@ service cloud.firestore {
     }
     match /answerSubmissions/{docId} {
       allow get, list: if isStudent() && resource.data.studentId == me();
-      allow create: if ownDocIdSuffix(docId) && request.resource.data.studentId == me();
-      allow update: if isStudent() && resource.data.studentId == me()
+      allow create: if ownDocIdSuffix(docId)
+                    && request.resource.data.studentId == me()
+                    && !('autoResults' in request.resource.data);
+      allow update: if isStudent() && ownDocIdSuffix(docId)
+                    && resource.data.studentId == me()
                     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['wrongReasons', 'learningCompletedAt']);
       allow write: if isDirector();
     }

@@ -8,7 +8,7 @@ const { before, after, test } = require('node:test');
 const {
   initializeTestEnvironment, assertFails, assertSucceeds
 } = require('@firebase/rules-unit-testing');
-const { doc, getDoc, getDocs, collection, setDoc, deleteDoc, query, where } = require('firebase/firestore');
+const { doc, getDoc, getDocs, collection, setDoc, deleteDoc, updateDoc, query, where } = require('firebase/firestore');
 
 const projectId = 'demo-mnm-growth-survey';
 const ownerUid = 'growth-survey-director-test';
@@ -43,6 +43,18 @@ before(async () => {
     }
     await setDoc(doc(db, 'practiceProgress', studentId), { completed: 1 });
     await setDoc(doc(db, 'practiceProgress', 'another-student'), { completed: 2 });
+    await setDoc(doc(db, 'stadApplications', studentId + '_2026-10'), {
+      studentId, month: '2026-10', status: 'rejected', paymentConfirmed: false
+    });
+    await setDoc(doc(db, 'stadApplications', 'another-student_2026-10'), {
+      studentId: 'another-student', month: '2026-10', status: 'pending', paymentConfirmed: false
+    });
+    await setDoc(doc(db, 'stadDaily', studentId + '_2026-10-27'), {
+      studentId, date: '2026-10-27', attended: false, todoItems: []
+    });
+    await setDoc(doc(db, 'stadDaily', 'another-student_2026-10-27'), {
+      studentId: 'another-student', date: '2026-10-27', attended: false, todoItems: []
+    });
     await setDoc(doc(db, 'answerSubmissions', 'assignment-own_' + studentId), { studentId, assignmentId: 'assignment-own' });
     await setDoc(doc(db, 'answerSubmissions', 'assignment-other_another-student'), { studentId: 'another-student', assignmentId: 'assignment-other' });
   });
@@ -136,4 +148,42 @@ test('학생 화면에서 쓰는 소속·학생ID 조건 조회는 본인 자료
   await assertFails(getDoc(doc(db, 'practiceProgress', 'another-student')));
   await assertSucceeds(getDoc(doc(db, 'answerSubmissions', 'assignment-own_' + studentId)));
   await assertFails(getDoc(doc(db, 'answerSubmissions', 'assignment-other_another-student')));
+});
+
+test('STAD 학생 쓰기는 본인 신청·일일 계획의 허용 필드만 바꿀 수 있다', async () => {
+  const db = env.authenticatedContext(studentId, {
+    role: 'student', studentId,
+    firebase: { sign_in_provider: 'custom' }
+  }).firestore();
+
+  await assertSucceeds(updateDoc(doc(db, 'stadApplications', studentId + '_2026-10'), {
+    status: 'pending', appliedAt: '2026-10-28T00:00:00.000Z', paymentConfirmed: false
+  }));
+  await assertFails(updateDoc(doc(db, 'stadApplications', 'another-student_2026-10'), {
+    status: 'pending', paymentConfirmed: false
+  }));
+  await assertSucceeds(updateDoc(doc(db, 'stadDaily', studentId + '_2026-10-27'), {
+    todoItems: [{ id: 'todo_1', task: '오답 정리', expectedMinutes: 20 }],
+    todoSubmittedAt: '2026-10-28T00:00:00.000Z'
+  }));
+  await assertFails(updateDoc(doc(db, 'stadDaily', 'another-student_2026-10-27'), {
+    todoItems: [{ id: 'todo_1', task: '조작 시도', expectedMinutes: 20 }]
+  }));
+  await assertFails(updateDoc(doc(db, 'stadDaily', studentId + '_2026-10-27'), { attended: true }));
+  await assertFails(updateDoc(doc(db, 'stadDaily', studentId + '_2026-10-27'), { date: '2026-10-28' }));
+});
+
+test('학생은 답안 제출 때 채점 결과를 직접 기록할 수 없다', async () => {
+  const db = env.authenticatedContext(studentId, {
+    role: 'student', studentId,
+    firebase: { sign_in_provider: 'custom' }
+  }).firestore();
+  const id = 'assignment-new_' + studentId;
+  await assertSucceeds(setDoc(doc(db, 'answerSubmissions', id), {
+    assignmentId: 'assignment-new', studentId, originalAnswers: ['42'], wrongReasons: {}, submittedAt: '2026-10-28T00:00:00.000Z'
+  }));
+  await assertFails(setDoc(doc(db, 'answerSubmissions', 'assignment-fake_' + studentId), {
+    assignmentId: 'assignment-fake', studentId, originalAnswers: ['42'],
+    autoResults: [{ state: 'correct', earnedPoints: 10 }]
+  }));
 });
