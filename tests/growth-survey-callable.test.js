@@ -85,7 +85,7 @@ function setup(seed = {}) {
   return { db, sync: handlers.syncStudentQuestionToProblemRepo };
 }
 function request(studentId, questionId) {
-  return { auth: { uid: studentId, token: { role: 'student', studentId } }, data: { questionId } };
+  return { auth: { uid: studentId, token: { role: 'student', studentId, firebase: { sign_in_provider: 'custom' } } }, data: { questionId } };
 }
 
 test('학생 질문은 서버가 후보로 연결하고 반복 호출해도 후보를 중복 생성하지 않는다', async () => {
@@ -131,4 +131,14 @@ test('출처가 없는 학생 질문도 질문별 후보로 보존한다', async
   assert.equal(result.status, 'candidate');
   assert.equal(db.data.problemDrafts[result.problemDraftId].sourceKey, 'student-question::q2');
   assert.equal(db.data.questions.q2.problemDraftId, result.problemDraftId);
+});
+
+test('비밀번호 세션은 학생 callable을 호출할 수 없다', async () => {
+  const { sync } = setup({
+    questions: { q1: { studentId: 'stu_a', sourceType: 'MNM', problemId: 'p1' } }
+  });
+  await assert.rejects(sync({
+    auth: { uid: 'stu_a', token: { role: 'student', studentId: 'stu_a', firebase: { sign_in_provider: 'password' } } },
+    data: { questionId: 'q1' }
+  }), error => error.code === 'permission-denied');
 });
