@@ -284,7 +284,7 @@ function createGrowthSurveyHandlers(admin, fs) {
       } else if (q.sourceType === 'MNM' && /^[A-Za-z0-9_-]{1,120}$/.test(String(q.problemId || ''))) {
         sourceKey = 'mnm::' + String(q.problemId);
       }
-      if (!sourceKey) return { ok: true, status: 'ignored' };
+      if (!sourceKey) sourceKey = 'student-question::' + questionId;
 
       const now = new Date().toISOString();
       const photo = Array.isArray(q.photos) ? (q.photos[0] || null) : null;
