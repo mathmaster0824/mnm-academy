@@ -85,6 +85,16 @@
   th,td{padding:8px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle;}
   th{color:#8a8674;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;}
   .badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;}
+  .badge.key{background:#fff1c2;color:#7a5200;}
+  .pkey{flex:none;margin-left:8px;text-align:right;max-width:170px;}
+  .pkey-btn{min-height:44px;min-width:116px;}
+  .pkey-msg{font-size:11px;margin-top:4px;line-height:1.35;}
+  .pkey-msg.err{color:var(--red);}
+  .pkey-msg.ok{color:var(--green);}
+  .pf-flags{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;}
+  .pf-chip{min-height:44px;padding:8px 16px;border-radius:22px;border:1.5px solid var(--line);background:#fff;font-weight:800;font-size:13px;cursor:pointer;}
+  .pf-chip.on{background:var(--navy2);color:#fff;border-color:var(--navy2);}
+  @media (max-width:640px){ .pkey{max-width:120px;} .pkey-btn{min-width:96px;} }
   .badge.green{background:#e4f5e8;color:var(--green);}
   .badge.yellow{background:#fdf2df;color:#a97c15;}
   .badge.red{background:#fbe6e2;color:var(--red);}
@@ -297,7 +307,8 @@ let db = {
 // v87 문제저장소: 운영 db와 분리. 화면을 열 때만 한 페이지씩 읽는다.
 const problemStore = {
   items:[], selected:new Set(), lastDoc:null, page:1, hasMore:false,
-  loading:false, loaded:false, queryToken:'', searchDebounce:null, filter:{q:'',grade:'',semester:'',major:'',middle:'',concept:'',geometry:'',ask:'',skill:''},
+  loading:false, loaded:false, queryToken:'', searchDebounce:null, filter:{q:'',grade:'',semester:'',major:'',middle:'',concept:'',geometry:'',ask:'',skill:'',key:false,past:false},
+  pendingReset:false, pendingMore:false, exhausted:false, fallback:false, keySave:{},
   tab:'library', ingest:{sources:[],drafts:[],loading:false,loaded:false,sourceFilter:'',statusFilter:'review',aiFilter:''},
   analysisRun:{active:false,total:0,done:0,current:'',message:'',error:''},
   saveRun:{active:false,total:0,done:0,saved:0,duplicates:0,failed:0,message:'',errors:[]}
@@ -8949,61 +8960,136 @@ ${currentSubState._problemAiDetail?.[d.id]?`<div style="margin-top:8px;padding:1
 function problemText(p){ return p?.problemText || p?.text || p?.stem || p?.title || ''; }
 function problemMetaLabel(p){ return [p.grade,p.semester,p.majorUnit||p.major,p.middleUnit||p.middle].filter(Boolean).join(' · '); }
 function problemTypeLabel(t){ return ({mc:'객관식',short:'단답형',constructed:'서술형'})[t]||t||'미지정'; }
-function problemFilteredItems(){
-  const f=problemStore.filter, q=String(f.q||'').trim().toLowerCase();
-  return problemStore.items.filter(p=>{
-    const concepts=[p.mainConceptId,...(p.relatedConceptIds||[]),...(p.conceptTags||[])].filter(Boolean).join(' ');
-    const skills=(p.solutionSkills||[]).join(' ');
-    const hay=[problemText(p),p.sourceName,p.bookName,p.grade,p.semester,p.majorUnit,p.major,p.middleUnit,p.middle,p.problemNo,concepts,p.geometryStructure,p.askType,skills].join(' ').toLowerCase();
-    return (!q||hay.includes(q)) && (!f.grade||p.grade===f.grade) && (!f.semester||p.semester===f.semester)
-      && (!f.major||String(p.majorUnit||p.major||'').includes(f.major)) && (!f.middle||String(p.middleUnit||p.middle||'').includes(f.middle))
-      && (!f.concept||concepts.includes(f.concept)) && (!f.geometry||String(p.geometryStructure||'').includes(f.geometry))
-      && (!f.ask||String(p.askType||'').includes(f.ask)) && (!f.skill||skills.includes(f.skill));
-  });
+// 주요 문항(isKeyProblem)·기출(isPastExam) 표시는 problems 문서의 선택 필드다. 값이 없으면 일반 문항·기출 아님으로 취급한다(임의로 기출 처리하지 않음).
+function problemMatches(p,f){
+  const q=String(f.q||'').trim().toLowerCase();
+  const concepts=[p.mainConceptId,...(p.relatedConceptIds||[]),...(p.conceptTags||[])].filter(Boolean).join(' ');
+  const skills=(p.solutionSkills||[]).join(' ');
+  const hay=[problemText(p),p.sourceName,p.bookName,p.grade,p.semester,p.majorUnit,p.major,p.middleUnit,p.middle,p.problemNo,concepts,p.geometryStructure,p.askType,skills].join(' ').toLowerCase();
+  return (!q||hay.includes(q)) && (!f.grade||p.grade===f.grade) && (!f.semester||p.semester===f.semester)
+    && (!f.major||String(p.majorUnit||p.major||'').includes(f.major)) && (!f.middle||String(p.middleUnit||p.middle||'').includes(f.middle))
+    && (!f.concept||concepts.includes(f.concept)) && (!f.geometry||String(p.geometryStructure||'').includes(f.geometry))
+    && (!f.ask||String(p.askType||'').includes(f.ask)) && (!f.skill||skills.includes(f.skill))
+    && (!f.key||p.isKeyProblem===true) && (!f.past||p.isPastExam===true);
 }
+function problemFilteredItems(){ const f=problemStore.filter; return problemStore.items.filter(p=>problemMatches(p,f)); }
+function problemFilterActive(f){ return Object.values(f||problemStore.filter).some(v=>v===true||(typeof v==='string'&&v.trim()!=='')); }
+const PROBLEM_PAGE_SIZE=60, PROBLEM_MAX_SCAN_PAGES=10;
+// 서버 조회 조건 하나를 고른다(Firestore 는 한 질의에 array-contains 를 하나만 허용). 표시 필터는 단일 필드 같음(==) 질의라 별도 색인 없이 저장소 전체에서 찾는다.
+// 나머지 조건은 problemMatches 로 가져온 문서마다 모두 확인하므로 결과는 항상 모든 조건의 교집합이다.
+function problemServerQuery(f){
+  if(f.key) return {id:'eq:isKeyProblem',field:'isKeyProblem'};
+  if(f.past) return {id:'eq:isPastExam',field:'isPastExam'};
+  const t=problemPrimarySearchToken(f);
+  return t?{id:'tok:'+t,token:t}:{id:''};
+}
+function problemServerQueryLabel(id){ return id==='eq:isKeyProblem'?'주요 문항':id==='eq:isPastExam'?'기출':String(id||'').replace(/^tok:/,''); }
 async function loadProblemPage(reset=true){
-  if(problemStore.loading) return;
-  const token=problemPrimarySearchToken(problemStore.filter);
-  if(!reset && token!==problemStore.queryToken) reset=true;
+  if(problemStore.loading){ if(reset) problemStore.pendingReset=true; else problemStore.pendingMore=true; return; }
+  const f={...problemStore.filter}, sq=problemServerQuery(f);
+  if(!reset && sq.id!==problemStore.queryToken) reset=true;
   problemStore.loading=true;
   if(reset){
-    problemStore.items=[]; problemStore.lastDoc=null; problemStore.page=1; problemStore.queryToken=token;
+    problemStore.items=[]; problemStore.lastDoc=null; problemStore.page=1; problemStore.queryToken=sq.id;
+    problemStore.hasMore=false; problemStore.exhausted=false; problemStore.fallback=false;
   }
   render();
   try{
-    const pageSize=60;
-    let q=fsdb.collection('problems');
-    if(token) q=q.where('searchTokens','array-contains',token);
-    q=q.limit(pageSize);
-    if(!reset && problemStore.lastDoc) q=q.startAfter(problemStore.lastDoc);
-    const snap=await q.get();
-    const rows=snap.docs.map(d=>({id:d.id,...d.data()}));
-    problemStore.items=reset?rows:[...problemStore.items,...rows];
-    problemStore.lastDoc=snap.docs[snap.docs.length-1]||problemStore.lastDoc;
-    problemStore.hasMore=snap.size===pageSize; problemStore.loaded=true;
+    // 모든 조건에 맞는 문제가 한 페이지(60개) 더 모일 때까지(또는 저장소 끝까지) 서버 페이지를 이어서 읽는다.
+    const want=problemStore.items.filter(p=>problemMatches(p,f)).length+PROBLEM_PAGE_SIZE;
+    let scans=0, matched=want-PROBLEM_PAGE_SIZE;
+    while(scans<PROBLEM_MAX_SCAN_PAGES){
+      let q=fsdb.collection('problems');
+      if(sq.field) q=q.where(sq.field,'==',true); else if(sq.token) q=q.where('searchTokens','array-contains',sq.token);
+      q=q.limit(PROBLEM_PAGE_SIZE);
+      if(problemStore.lastDoc) q=q.startAfter(problemStore.lastDoc);
+      const snap=await q.get(); scans++;
+      const rows=snap.docs.map(d=>({id:d.id,...d.data()}));
+      problemStore.items=[...problemStore.items,...rows];
+      problemStore.lastDoc=snap.docs[snap.docs.length-1]||problemStore.lastDoc;
+      matched+=rows.filter(p=>problemMatches(p,f)).length;
+      problemStore.loaded=true;
+      if(snap.size<PROBLEM_PAGE_SIZE){ problemStore.exhausted=true; break; }
+      if(matched>=want) break;
+    }
+    problemStore.hasMore=!problemStore.exhausted;
     if(!reset) problemStore.page+=1;
   }catch(e){
     console.error('problem repository load',e);
-    // 이전 저장 문항처럼 searchTokens가 없거나 검색 쿼리가 실패하면 일반 목록이라도 보여준다.
-    if(reset && token){
+    // 이전 저장 문항처럼 searchTokens가 없거나 검색 쿼리가 실패하면 일반 목록이라도 보여준다. 이 경우 일부만 검사한 것이므로 화면에 그렇게 표시한다.
+    if(reset && sq.id){
       try{
-        const snap=await fsdb.collection('problems').limit(60).get();
+        const snap=await fsdb.collection('problems').limit(PROBLEM_PAGE_SIZE).get();
         problemStore.items=snap.docs.map(d=>({id:d.id,...d.data()}));
         problemStore.lastDoc=snap.docs[snap.docs.length-1]||null;
-        problemStore.hasMore=snap.size===60; problemStore.loaded=true; problemStore.queryToken='';
+        problemStore.hasMore=false; problemStore.exhausted=false; problemStore.fallback=true; problemStore.loaded=true; problemStore.queryToken='';
       }catch(e2){ alert('문제저장소를 불러오지 못했어요.'); }
     }else alert('문제저장소를 불러오지 못했어요.');
-  }finally{ problemStore.loading=false; render(); }
+  }finally{
+    problemStore.loading=false;
+    const again=problemStore.pendingReset, more=problemStore.pendingMore;
+    problemStore.pendingReset=false; problemStore.pendingMore=false;
+    render();
+    if(again) setTimeout(()=>loadProblemPage(true),0); else if(more) setTimeout(()=>loadProblemPage(false),0);
+  }
 }
 function ensureProblemRepositoryLoaded(){ if(!problemStore.loaded&&!problemStore.loading) setTimeout(()=>loadProblemPage(true),0); }
 function setProblemFilter(key,value){
   problemStore.filter[key]=value;
-  const nextToken=problemPrimarySearchToken(problemStore.filter);
-  if(nextToken!==problemStore.queryToken){
-    clearTimeout(problemStore.searchDebounce);
-    problemStore.searchDebounce=setTimeout(()=>loadProblemPage(true),260);
+  clearTimeout(problemStore.searchDebounce);
+  const delay=(key==='key'||key==='past'||typeof value==='boolean')?0:260;
+  problemStore.searchDebounce=setTimeout(()=>{
+    const nextId=problemServerQuery(problemStore.filter).id;
+    if(nextId!==problemStore.queryToken) loadProblemPage(true);
+    else if(problemStore.hasMore && problemFilteredItems().length<PROBLEM_PAGE_SIZE) loadProblemPage(false);   // 서버 조건은 같고 화면 조건만 바뀜 → 일치 문제가 모자라면 이어서 검사
+    else render();
+  },delay);
+  render();
+}
+function clearProblemFilters(){
+  Object.keys(problemStore.filter).forEach(k=>{ problemStore.filter[k]=typeof problemStore.filter[k]==='boolean'?false:''; });
+  clearTimeout(problemStore.searchDebounce);
+  loadProblemPage(true);
+}
+// 주요 문항 표시/해제: 문제 문서의 필드 2개만 부분 업데이트한다(문서 전체를 덮어쓰지 않음, 없는 문서는 만들지 않음).
+// 저장이 성공한 뒤에만 화면 값을 바꾼다. 저장 중에는 같은 문제의 버튼을 잠가 연속 클릭을 막는다.
+async function toggleProblemKey(id){
+  if(!id) return;
+  const cur=problemStore.keySave[id]||{};
+  if(cur.saving) return;
+  const p=problemStore.items.find(x=>x.id===id); if(!p) return;
+  const next=p.isKeyProblem!==true;
+  problemStore.keySave[id]={saving:true,error:'',ok:''}; render();
+  try{
+    const stamp=new Date().toISOString();
+    await problemRetry(()=>fsdb.collection('problems').doc(id).update({isKeyProblem:next,keyProblemUpdatedAt:stamp}));
+    p.isKeyProblem=next; p.keyProblemUpdatedAt=stamp;
+    problemStore.keySave[id]={saving:false,error:'',ok:next?'주요 문항으로 저장했어요':'주요 문항을 해제했어요'};
+  }catch(e){
+    console.error('problem key flag save',e);
+    problemStore.keySave[id]={saving:false,error:problemErrorText(e)||'알 수 없는 오류',ok:''};
   }
   render();
+}
+function problemKeyControl(p){
+  const st=problemStore.keySave[p.id]||{}, on=p.isKeyProblem===true;
+  const label=st.saving?'저장 중…':(on?'★ 주요 문항':'☆ 주요 문항');
+  return `<div class="pkey"><button type="button" class="btn sm ${on?'gold':'outline'} pkey-btn" data-pkey="${escapeHtml(p.id)}" aria-pressed="${on}" ${st.saving?'disabled':''} onclick="toggleProblemKey('${escapeHtml(p.id)}')">${label}</button>${st.error?`<div class="pkey-msg err" role="alert">저장 실패 · ${escapeHtml(st.error)}</div>`:st.ok?`<div class="pkey-msg ok" role="status">${escapeHtml(st.ok)}</div>`:''}</div>`;
+}
+function problemResultSummary(rows){
+  const f=problemStore.filter, total=problemStore.items.length, scanMax=PROBLEM_PAGE_SIZE*PROBLEM_MAX_SCAN_PAGES, active=problemFilterActive(f);
+  let scope, head=active?`조건에 맞는 문제 <b>${rows.length}</b>개`:`불러온 문제 <b>${rows.length}</b>개`;
+  if(problemStore.fallback){
+    // 서버 검색이 실패해 일반 목록 첫 페이지만 본 상태: 전체 검색이 아니다.
+    head=`지금 보이는 문제 <b>${rows.length}</b>개`;
+    scope=`<span style="color:#a56b25;"><b>전체 검색이 아니에요.</b> 서버 검색에 실패해 처음 ${total}개만 검사한 결과예요. 위 "새로고침"으로 다시 시도해 주세요.</span>`;
+  }else if(problemStore.exhausted){
+    scope=`저장소 끝까지 검사했어요(${total}개 검사).`;
+  }else{
+    head=active?`지금까지 찾은 문제 <b>${rows.length}</b>개`:head;
+    scope=`<span style="color:#a56b25;"><b>저장소 일부만 검사한 결과예요</b>(${total}개 검사, 한 번에 최대 ${scanMax}개까지 검사). 끝까지 보려면 아래 "${active?'조건에 맞는 문제 더 찾기':'다음 60개 더 불러오기'}" 버튼을 눌러 이어서 검사하세요.</span>`;
+  }
+  return `<div style="font-size:12px;color:#6b6858;margin:0 0 8px;line-height:1.5;" role="status">${head} · ${scope}</div>`;
 }
 function toggleProblemSelect(id){ problemStore.selected.has(id)?problemStore.selected.delete(id):problemStore.selected.add(id); render(); }
 function clearProblemSelection(){ problemStore.selected.clear(); render(); }
@@ -9025,11 +9111,17 @@ function renderProblemRepository(){
     <label style="flex:1;min-width:120px;font-size:11px;">묻는 것<input value="${escapeHtml(f.ask)}" oninput="setProblemFilter('ask',this.value)" placeholder="각도·길이·넓이" style="width:100%;margin-top:4px;"></label>
     <label style="flex:1;min-width:130px;font-size:11px;">풀이기술<input value="${escapeHtml(f.skill)}" oninput="setProblemFilter('skill',this.value)" placeholder="예: 합동" style="width:100%;margin-top:4px;"></label>
     <button class="btn outline" onclick="loadProblemPage(true)">새로고침</button><button class="btn" onclick="createProblemManually()">+ 문제 등록</button>
-    ${problemStore.queryToken?`<span class="badge gray" title="Firestore 서버 검색 인덱스">서버검색 ${escapeHtml(problemStore.queryToken)}</span>`:''}
+    <div class="pf-flags" role="group" aria-label="표시 필터" style="flex-basis:100%;">
+      <button type="button" class="pf-chip ${f.key?'on':''}" data-pf="key" aria-pressed="${!!f.key}" onclick="setProblemFilter('key',!problemStore.filter.key)">★ 주요 문항</button>
+      <button type="button" class="pf-chip ${f.past?'on':''}" data-pf="past" aria-pressed="${!!f.past}" onclick="setProblemFilter('past',!problemStore.filter.past)" title="기출로 표시된 문제만(기출 표시 데이터가 있을 때)">기출</button>
+      ${problemFilterActive(f)?'<button type="button" class="btn outline sm" onclick="clearProblemFilters()">조건 모두 해제</button>':''}
+    </div>
+    ${problemStore.queryToken?`<span class="badge gray" title="Firestore 서버 검색 인덱스">서버검색 ${escapeHtml(problemServerQueryLabel(problemStore.queryToken))}</span>`:''}
   </div></div>
   ${selected?`<div class="card" style="position:sticky;top:8px;z-index:8;border-color:var(--gold);"><div class="row between"><b>${selected}문항 선택</b><div class="row"><button class="btn sm outline" onclick="clearProblemSelection()">선택 해제</button><button class="btn sm gold" onclick="assignSelectedProblems()">선택 문제 배정</button></div></div></div>`:''}
-  <div class="card">${problemStore.loading&&!problemStore.loaded?'<div class="empty">문제 불러오는 중…</div>':rows.length?rows.map((p,i)=>`<div style="padding:12px 0;border-bottom:1px solid var(--line);"><div class="row" style="align-items:flex-start;"><input type="checkbox" ${problemStore.selected.has(p.id)?'checked':''} onchange="toggleProblemSelect('${p.id}')" style="margin-top:4px;"><div style="flex:1;"><div class="row" style="gap:5px;flex-wrap:wrap;"><b>${escapeHtml(p.problemNo||p.no||p.sourceProblemNo||(p.id?`저장문제 ${String(p.id).slice(0,6)}`:'저장문제'))}</b><span class="badge gray">${escapeHtml(problemTypeLabel(p.type))}</span>${problemMetaLabel(p)?`<span class="badge">${escapeHtml(problemMetaLabel(p))}</span>`:''}${p.sourceName||p.bookName?`<span style="font-size:11px;color:#8a8674;">${escapeHtml(p.sourceName||p.bookName)}</span>`:''}${p.dedupMode?`<span style="font-size:9px;color:#aaa;">중복판정:${escapeHtml(p.dedupMode)}</span>`:''}</div><div style="margin-top:7px;white-space:pre-wrap;line-height:1.55;">${escapeHtml(problemText(p)||'(문제 본문/이미지 메타데이터 등록 대기)')}</div>${p.imageUrl?`<img src="${escapeHtml(p.imageUrl)}" style="max-width:220px;max-height:180px;margin-top:8px;border-radius:8px;" loading="lazy">`:''}</div></div></div>`).join(''):'<div class="empty">현재 불러온 범위에 조건과 맞는 문제가 없어요.</div>'}
-    ${problemStore.hasMore?'<button class="btn outline" style="width:100%;margin-top:12px;" onclick="loadProblemPage(false)">다음 60개 더 불러오기</button>':''}
+  ${problemStore.loaded?problemResultSummary(rows):''}
+  <div class="card">${problemStore.loading&&!problemStore.loaded?'<div class="empty">문제 불러오는 중…</div>':rows.length?rows.map((p,i)=>`<div style="padding:12px 0;border-bottom:1px solid var(--line);"><div class="row" style="align-items:flex-start;"><input type="checkbox" ${problemStore.selected.has(p.id)?'checked':''} onchange="toggleProblemSelect('${p.id}')" style="margin-top:4px;"><div style="flex:1;"><div class="row" style="gap:5px;flex-wrap:wrap;"><b>${escapeHtml(p.problemNo||p.no||p.sourceProblemNo||(p.id?`저장문제 ${String(p.id).slice(0,6)}`:'저장문제'))}</b><span class="badge gray">${escapeHtml(problemTypeLabel(p.type))}</span>${p.isKeyProblem===true?'<span class="badge key">★ 주요 문항</span>':''}${p.isPastExam===true?'<span class="badge gray">기출</span>':''}${problemMetaLabel(p)?`<span class="badge">${escapeHtml(problemMetaLabel(p))}</span>`:''}${p.sourceName||p.bookName?`<span style="font-size:11px;color:#8a8674;">${escapeHtml(p.sourceName||p.bookName)}</span>`:''}${p.dedupMode?`<span style="font-size:9px;color:#aaa;">중복판정:${escapeHtml(p.dedupMode)}</span>`:''}</div><div style="margin-top:7px;white-space:pre-wrap;line-height:1.55;">${escapeHtml(problemText(p)||'(문제 본문/이미지 메타데이터 등록 대기)')}</div>${p.imageUrl?`<img src="${escapeHtml(p.imageUrl)}" style="max-width:220px;max-height:180px;margin-top:8px;border-radius:8px;" loading="lazy">`:''}</div>${problemKeyControl(p)}</div></div>`).join(''):`<div class="empty">${problemStore.exhausted?'저장소 전체를 검사했지만 조건에 맞는 문제가 없어요.':problemStore.fallback?'불러온 범위에 조건과 맞는 문제가 없어요.':'지금까지 검사한 범위에는 조건에 맞는 문제가 없어요. 아래에서 더 검사할 수 있어요.'}${f.past&&problemStore.exhausted&&!problemStore.items.some(x=>x.isPastExam===true)?'<div style="margin-top:6px;">기출로 표시된 문제가 저장소에 없어요. 기출 여부 데이터가 아직 등록되지 않았을 수 있어요.</div>':''}</div>`}
+    ${problemStore.hasMore?`<button class="btn outline" style="width:100%;margin-top:12px;min-height:44px;" ${problemStore.loading?'disabled':''} onclick="loadProblemPage(false)">${problemFilterActive(f)?'조건에 맞는 문제 더 찾기':'다음 60개 더 불러오기'}${problemStore.loading?' (검사 중…)':''}</button>`:''}
   </div>`;
 }
 async function createProblemManually(){
