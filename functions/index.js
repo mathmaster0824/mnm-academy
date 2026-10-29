@@ -15,6 +15,9 @@ const core = require('./monthlyReportCore.js');
 admin.initializeApp();
 const fs = admin.firestore();
 
+// Growth survey endpoints use bounded, student-specific reads/writes only.
+Object.assign(exports, require('./growthSurveyFunctions')(admin, fs));
+
 function todayKST() {
   const p = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   return p; // YYYY-MM-DD

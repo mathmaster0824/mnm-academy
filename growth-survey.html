@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>M&m 성장 설문</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&family=Noto+Serif+KR:wght@600;700&display=swap" rel="stylesheet">
+<style>
+:root{--navy:#17233b;--green:#416d58;--gold:#bd9848;--paper:#f7f5ef;--line:#e6e1d6;--ink:#272923;--muted:#77796f;--pale:#edf2ed;--white:#fff}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:'Noto Sans KR',sans-serif;font-size:14px}
+button,input,select,textarea{font:inherit}button{cursor:pointer}
+header{background:var(--navy);color:#fff;padding:18px max(18px,calc((100vw - 1120px)/2));display:flex;align-items:center;justify-content:space-between}
+.brand{font-family:'Noto Serif KR',serif;font-weight:700;letter-spacing:.01em}.subbrand{font-size:11px;color:#d8c99d;margin-top:3px}
+main{max-width:1120px;margin:24px auto;padding:0 16px 50px}.card{background:var(--white);border:1px solid var(--line);border-radius:14px;padding:20px;margin:14px 0;box-shadow:0 4px 18px #25301b08}
+h1,h2,h3,p{margin-top:0}h1{font:700 26px 'Noto Serif KR',serif;color:var(--navy);margin-bottom:6px}h2{font-size:18px;color:var(--navy)}h3{font-size:15px}
+.muted{color:var(--muted);font-size:12px;line-height:1.6}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.between{justify-content:space-between}
+input,select,textarea{border:1px solid #d8d6cc;border-radius:8px;padding:10px;background:#fff;color:var(--ink);max-width:100%}textarea{width:100%;min-height:76px;resize:vertical}
+.btn{border:0;border-radius:8px;padding:10px 15px;font-weight:700;background:var(--green);color:#fff}.btn.secondary{background:#ece9df;color:#34372f}.btn.gold{background:var(--gold);color:#fff}.btn:disabled{opacity:.5;cursor:wait}
+.hidden{display:none!important}.notice{padding:12px 14px;border-radius:9px;background:#f5f1e5;color:#615739;font-size:13px;line-height:1.55}.error{color:#a13a32;font-size:12px;margin-top:8px}.success{color:#306748;font-weight:700}
+.login{max-width:420px;margin:8vh auto}.tabs{display:flex;gap:8px;margin-bottom:16px}.tabs button{flex:1}
+.domain{margin:18px 0 8px;padding:9px 12px;background:var(--pale);border-left:4px solid var(--green);font-weight:800;color:var(--navy)}
+.tablewrap{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:760px}th,td{border-bottom:1px solid var(--line);padding:8px 7px;text-align:left;vertical-align:middle}th{background:#f5f3ed;font-size:11px;color:#5b5c53;white-space:nowrap}td:first-child{width:34px;color:var(--muted);text-align:center}td:nth-child(2){min-width:280px}.rating{display:flex;gap:4px;justify-content:center}.rating label{position:relative;display:grid;place-items:center;width:27px;height:27px;border:1px solid #d9d7ce;border-radius:50%;font-size:11px;color:#6d6e65;cursor:pointer}.rating input{position:absolute;opacity:0;width:1px;height:1px;padding:0}.rating label:has(input:checked){background:var(--green);border-color:var(--green);color:#fff;font-weight:800}.rating label.no{width:auto;border-radius:7px;padding:0 7px;font-size:10px}.legend{display:flex;gap:6px;flex-wrap:wrap}.legend span{font-size:10px;color:#595a51;background:#f4f2ec;border-radius:5px;padding:4px 7px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}.goal{border:1px solid #e7d9b5;background:#fffaf0;border-radius:10px;padding:14px}.memo{border:1px solid var(--line);border-radius:10px;padding:14px;background:#fbfaf7;white-space:pre-wrap;line-height:1.55}
+.report table{min-width:0;font-size:11px}.report th,.report td{padding:5px 6px}.report td:nth-child(2){min-width:240px}.report .ratingtext{text-align:center;white-space:nowrap;font-weight:700}.reporthead{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid var(--navy);padding-bottom:10px;margin-bottom:10px}.reporttitle{font:700 21px 'Noto Serif KR',serif;color:var(--navy)}.score{display:inline-block;border-radius:6px;padding:3px 6px;background:#f0f2ec;font-size:10px}
+.studentlist{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.studentrow{padding:10px;border:1px solid var(--line);border-radius:8px;display:flex;justify-content:space-between;cursor:pointer}.studentrow.active{border-color:var(--green);background:#f1f6f1}.pill{font-size:10px;border-radius:99px;padding:4px 8px;background:#eee;color:#555}
+@media(max-width:700px){main{margin:16px auto;padding:0 10px 35px}.card{padding:15px}h1{font-size:22px}.two{grid-template-columns:1fr}.studentlist{grid-template-columns:1fr}.rating{gap:2px}.rating label{width:24px;height:24px}header{padding:14px 15px}}
+@media print{
+ @page{size:A4 portrait;margin:8mm}
+ body{background:#fff;font-size:9px}.no-print,header,.editor{display:none!important}main{max-width:none;margin:0;padding:0}.card{box-shadow:none;border:0;padding:0;margin:0}.report{display:block!important}.reporttitle{font-size:17px}.report table{font-size:8px}.report th,.report td{padding:3px 4px}.report td:nth-child(2){min-width:0}.reporthead{margin-bottom:5px;padding-bottom:5px}.report .goal,.report .memo{padding:7px}.report .two{gap:6px}.domain{margin:7px 0 3px;padding:5px}
+}
+</style>
+</head>
+<body>
+<header class="no-print"><div><div class="brand">M&amp;m 수학훈련소</div><div class="subbrand">월간 성장 설문</div></div><div id="who" class="muted" style="color:#e1e1d7"></div></header>
+<main>
+<section id="login" class="login card no-print">
+  <h1>학습 성장 돌아보기</h1>
+  <p class="muted">학생은 본인 코드로, 원장님은 등록된 계정으로 로그인합니다.</p>
+  <div class="tabs"><button class="btn" id="studentTab" onclick="showLogin('student')">학생</button><button class="btn secondary" id="directorTab" onclick="showLogin('director')">원장</button></div>
+  <div id="studentLogin">
+    <label for="studentCode">학생 코드</label><input id="studentCode" inputmode="numeric" maxlength="4" autocomplete="off" style="width:100%;margin:7px 0 10px" placeholder="4자리 코드">
+    <button class="btn" style="width:100%" onclick="loginStudent()">학생 설문 열기</button><div id="studentError" class="error"></div>
+  </div>
+  <div id="directorLogin" class="hidden">
+    <label for="directorEmail">원장 이메일</label><input id="directorEmail" type="email" autocomplete="username" style="width:100%;margin:7px 0">
+    <label for="directorPassword">비밀번호</label><input id="directorPassword" type="password" autocomplete="current-password" style="width:100%;margin:7px 0 10px">
+    <button class="btn gold" style="width:100%" onclick="loginDirector()">원장 설문 관리 열기</button><div id="directorError" class="error"></div>
+  </div>
+  <div class="muted" style="margin-top:12px">설문 응답은 로그인한 학생 본인의 월별 문서만 서버에서 조회합니다.</div>
+</section>
+<section id="studentApp" class="hidden">
+  <div class="card no-print"><div class="row between"><div><h1 id="studentHeading">이번 달 학습 돌아보기</h1><div id="studentStatus" class="muted"></div></div><button class="btn secondary" onclick="logout()">로그아웃</button></div></div>
+  <div id="studentArea"></div>
+</section>
+<section id="directorApp" class="hidden">
+  <div class="card no-print"><div class="row between"><div><h1>성장 설문 관리</h1><div class="muted">한 번에 학생 10명씩 불러옵니다. 학생을 선택하면 해당 월 문서와 직전 월 평가만 확인합니다.</div></div><button class="btn secondary" onclick="logout()">로그아웃</button></div>
+    <div class="row" style="margin-top:14px"><label>대상 월 <input type="month" id="monthInput"></label><button class="btn secondary" onclick="loadStudents(true)">목록 불러오기</button><button class="btn secondary" id="nextPage" onclick="loadStudents(false)">다음 10명</button></div>
+    <div id="listStatus" class="muted" style="margin:8px 0"></div><div id="studentList" class="studentlist"></div>
+  </div>
+  <div id="teacherArea"></div>
+</section>
+</main>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-functions-compat.js"></script>
+<script>
+'use strict';
+const firebaseConfig={apiKey:"AIzaSyA4Uf5jRBd5K9CKU-W4l0Rk5KvQDp-Rq2M",authDomain:"math-master-6a888.firebaseapp.com",projectId:"math-master-6a888",storageBucket:"math-master-6a888.firebasestorage.app",messagingSenderId:"943375843047",appId:"1:943375843047:web:116ce75ba8d15cb126ec42"};
+firebase.initializeApp(firebaseConfig);
+const auth=firebase.auth(), functions=firebase.app().functions('asia-northeast3');
+const call=name=>functions.httpsCallable(name);
+const ITEMS=[
+ ['routine_01','학습 루틴','정해진 시간에 학습을 시작한다.'],['routine_02','학습 루틴','정해진 과제와 준비물을 확인한다.'],['routine_03','학습 루틴','정한 분량을 끝까지 마무리한다.'],
+ ['concept_01','개념 이해','배운 개념을 자기 말로 설명한다.'],['concept_02','개념 이해','개념이 문제에 쓰이는 이유를 찾는다.'],['concept_03','개념 이해','비슷한 개념의 차이를 구분한다.'],
+ ['problem_01','문제 해결','문제를 읽고 필요한 조건을 표시한다.'],['problem_02','문제 해결','풀이 순서를 세워 한 단계씩 해결한다.'],['problem_03','문제 해결','막혔을 때 배운 방법이나 자료를 다시 찾는다.'],
+ ['error_01','오답 점검','틀린 문제에서 처음 막힌 지점을 찾는다.'],['error_02','오답 점검','틀린 이유를 계산·개념·조건 중에서 구분한다.'],['error_03','오답 점검','오답을 고친 뒤 다시 풀어 확인한다.'],
+ ['independence_01','학습 독립성','도움이 필요할 때 어디에서 막혔는지 말한다.'],['independence_02','학습 독립성','힌트를 받은 뒤 다음 풀이를 이어 간다.'],['independence_03','학습 독립성','익숙한 문제는 스스로 풀이를 점검한다.'],
+ ['expression_01','수학적 표현','풀이 과정을 식과 글로 순서 있게 남긴다.'],['expression_02','수학적 표현','기호와 단위를 알맞게 사용한다.'],['expression_03','수학적 표현','답을 구한 뒤 풀이를 설명하거나 검산한다.']
+];
+const SCALE=[['1','아직 어려움'],['2','많은 도움 필요'],['3','도움받아 수행'],['4','대체로 스스로'],['5','안정적으로 수행'],['NO','관찰 기회 없음']];
+let role=null,studentId='',studentName='',month='',survey=null,recommendation=null,students=[],cursor='',selectedStudent=null,teacherBusy=false,authEntryInProgress=false;
+function $(id){return document.getElementById(id)}
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function kstDate(){return new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())}
+function currentMonth(){return kstDate().slice(0,7)}
+function showLogin(which){$('studentLogin').classList.toggle('hidden',which!=='student');$('directorLogin').classList.toggle('hidden',which!=='director');$('studentTab').className='btn '+(which==='student'?'':'secondary');$('directorTab').className='btn '+(which==='director'?'gold':'secondary')}
+function setBusy(button,busy,label){if(button){button.disabled=busy;if(busy)button.dataset.old=button.textContent;button.textContent=busy?label:(button.dataset.old||button.textContent)}}
+function showError(id,e){$(id).textContent=(e&&e.message||'요청을 처리하지 못했어요.').replace(/^FirebaseError:\s*/,'')}
+async function loginStudent(){
+ const code=$('studentCode').value.trim(),button=$('studentLogin').querySelector('button');
+ $('studentError').textContent='';
+ if(!/^\d{4}$/.test(code)){ $('studentError').textContent='4자리 학생 코드를 입력해주세요.';return; }
+ setBusy(button,true,'확인 중…');
+ try{
+  const res=await call('studentGrowthSurveyLogin')({code});
+  await auth.signInWithCustomToken(res.data.token);
+  const claim=await auth.currentUser.getIdTokenResult(true);
+  if(claim.claims.role!=='student'||!claim.claims.studentId)throw new Error('학생 권한을 확인하지 못했어요.');
+  role='student';studentId=claim.claims.studentId;month=currentMonth();
+  $('login').classList.add('hidden');$('studentApp').classList.remove('hidden');$('who').textContent='학생';
+  await loadStudentSurvey();
+ }catch(e){showError('studentError',e);try{await auth.signOut()}catch(_){}}
+ finally{setBusy(button,false,'학생 설문 열기');authEntryInProgress=false}
+}
+async function loginDirector(){
+ authEntryInProgress=true;
+ const email=$('directorEmail').value.trim(),password=$('directorPassword').value,button=$('directorLogin').querySelector('button');
+ $('directorError').textContent='';
+ setBusy(button,true,'로그인 중…');
+ try{
+  await auth.signInWithEmailAndPassword(email,password);
+  role='director';month=$('monthInput').value||currentMonth();$('monthInput').value=month;
+  // 권한은 각 서버 호출에서 UID allowlist로 다시 확인한다.
+  const res=await call('listGrowthSurveyStudents')({month,cursor:''});
+  students=res.data.rows||[];cursor=res.data.nextCursor||'';
+  $('login').classList.add('hidden');$('directorApp').classList.remove('hidden');$('who').textContent='원장';
+  renderStudents();$('listStatus').textContent='학생 '+students.length+'명 표시 중';
+ }catch(e){showError('directorError',e);try{await auth.signOut()}catch(_){}}
+ finally{setBusy(button,false,'원장 설문 관리 열기');authEntryInProgress=false}
+}
+async function logout(){try{await auth.signOut()}catch(_){}location.reload()}
+function choiceMarkup(group,key,value,disabled=false){
+ return '<div class="rating">'+SCALE.map(([v])=>'<label class="'+(v==='NO'?'no':'')+'"><input type="radio" name="'+esc(group+'_'+key)+'" value="'+v+'" '+(String(value)===v?'checked':'')+' '+(disabled?'disabled':'')+'>'+esc(v==='NO'?'N/O':v)+'</label>').join('')+'</div>';
+}
+function tableMarkup(group,ratings={},disabled=false,provenance={}){
+ let current='',index=0,out='<div class="tablewrap"><table><thead><tr><th>#</th><th>관찰 항목</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>N/O</th></tr></thead><tbody>';
+ ITEMS.forEach(([id,domain,label])=>{
+  if(domain!==current){current=domain;out+='<tr><td colspan="8"><div class="domain">'+esc(domain)+'</div></td></tr>';index=0}
+  index++;
+  const p=provenance[id],note=p?(p.kind==='previous-observation'?'추천 · 지난달 원장 관찰 '+esc(p.month):'추천 · 원장 확인 필요'):'';
+  out+='<tr><td>'+index+'</td><td>'+esc(label)+(note?'<div class="muted">'+note+'</div>':'')+'</td><td colspan="6">'+choiceMarkup(group,id,ratings[id],disabled)+'</td></tr>';
+ });
+ return out+'</tbody></table></div>';
+}
+function legend(){return '<div class="legend">'+SCALE.map(([v,label])=>'<span><b>'+esc(v==='NO'?'N/O':v)+'</b> '+esc(label)+'</span>').join('')+'</div>'}
+function collectRatings(group){
+ const result={};for(const [id] of ITEMS){const el=document.querySelector('input[name="'+group+'_'+id+'"]:checked');if(el)result[id]=el.value==='NO'?'NO':Number(el.value)}
+ return result;
+}
+function studentForm(){
+ const s=survey&&survey.student||{},ratings=s.ratings||{};
+ return '<div class="card"><h2>이번 달 나의 학습 체크</h2><p class="muted">정답을 고르는 시험이 아니에요. 이번 달의 실제 모습을 떠올려 선택해주세요.</p>'+legend()+tableMarkup('self',ratings,false)+
+ '<div class="two" style="margin-top:16px"><div><label><b>이번 달 내가 꾸준히 해낸 것</b></label><textarea id="reflection" placeholder="예: 모르는 문제를 그냥 넘기지 않고 질문했어요.">'+esc(s.reflection||'')+'</textarea></div><div class="goal"><label><b>다음 달에 반드시 성공할 수 있는 가장 작은 목표 한 가지</b></label><textarea id="smallGoal" placeholder="예: 수업이 끝난 날, 틀린 문제 한 개를 다시 풀어 확인하기">'+esc(s.smallGoal||'')+'</textarea><div class="muted">예시는 그대로 써도 되고, 나에게 맞게 바꿔도 돼요. 작고 확인할 수 있는 행동으로 적어주세요.</div></div></div>'+
+ '<div class="row between" style="margin-top:14px"><span id="studentSaveStatus" class="muted"></span><button class="btn" onclick="submitStudentSurvey()">저장하고 선생님께 보내기</button></div></div>';
+}
+async function loadStudentSurvey(){
+ $('studentHeading').textContent=(Number(month.slice(5))+'월 학습 돌아보기');
+ if(Number(kstDate().slice(8,10))<20){$('studentArea').innerHTML='<div class="card notice">이번 달 자기 점검 설문은 매월 20일부터 열려요. 20일 이후 다시 확인해주세요.</div>';return}
+ $('studentArea').innerHTML='<div class="card muted">내 설문을 불러오는 중…</div>';
+ try{const r=await call('getGrowthSurvey')({month});survey=r.data.survey;renderStudent()}
+ catch(e){$('studentArea').innerHTML='<div class="card error">'+esc(e.message)+'</div>'}
+}
+function renderStudent(){
+ if(survey&&survey.status==='published'){$('studentStatus').textContent='선생님이 이번 달 성장 기록을 게시했어요.';$('studentArea').innerHTML=reportMarkup(survey,studentName||'나',true);return}
+ $('studentStatus').textContent=survey&&survey.student&&survey.student.submittedAt?'제출 완료 · 선생님 확인을 기다리고 있어요.':'이번 달 설문에 답해보세요.';
+ $('studentArea').innerHTML=studentForm();
+}
+async function submitStudentSurvey(){
+ const status=$('studentSaveStatus');status.textContent='';
+ const ratings=collectRatings('self'),reflection=$('reflection').value,smallGoal=$('smallGoal').value;
+ try{await call('submitGrowthSurvey')({month,student:{ratings,reflection,smallGoal}});const r=await call('getGrowthSurvey')({month});survey=r.data.survey;renderStudent();$('studentStatus').textContent='저장했어요 · 선생님 확인을 기다리고 있어요.'}
+ catch(e){status.textContent=e.message}
+}
+function renderStudents(){
+ $('studentList').innerHTML=students.map(s=>'<div class="studentrow '+(selectedStudent&&selectedStudent.id===s.id?'active':'')+'" onclick="openStudent('+JSON.stringify(s.id)+')"><span><b>'+esc(s.name||'(이름 없음)')+'</b><small class="muted"> · '+esc(s.grade||'')+'</small></span><span class="pill">'+esc(s.status==='withdrawn'?'퇴원':'선택')+'</span></div>').join('')||'<div class="muted">표시할 학생이 없습니다.</div>';
+ $('nextPage').disabled=!cursor;
+}
+async function loadStudents(reset){
+ if(reset){month=$('monthInput').value||currentMonth();cursor='';students=[];selectedStudent=null;teacherSurvey=null}
+ const button=$('nextPage');if(!reset)setBusy(button,true,'불러오는 중…');
+ try{const r=await call('listGrowthSurveyStudents')({month,cursor:reset?'':cursor});const rows=(r.data.rows||[]).filter(s=>s.status!=='withdrawn');students=reset?rows:students.concat(rows);cursor=r.data.nextCursor||'';renderStudents();$('listStatus').textContent='현재 '+students.length+'명 · 페이지당 최대 10명'}
+ catch(e){$('listStatus').textContent=e.message}
+ finally{if(!reset)setBusy(button,false,'다음 10명')}
+}
+let teacherSurvey=null;
+async function openStudent(id){
+ selectedStudent=students.find(s=>s.id===id)||{id,name:id};month=$('monthInput').value||currentMonth();
+ renderStudents();$('teacherArea').innerHTML='<div class="card muted">학생 한 명의 이달 설문과 직전 달 추천을 불러오는 중…</div>';
+ try{
+  const r=await call('prepareGrowthSurveyDraft')({month,studentId:id});
+  teacherSurvey=r.data.survey;recommendation=r.data.recommendation;
+  renderTeacher();
+ }catch(e){$('teacherArea').innerHTML='<div class="card error">'+esc(e.message)+'</div>'}
+}
+function renderTeacher(){
+ const d=teacherSurvey||{},t=d.teacher||{},rec=recommendation||{};
+ const ev=(rec.evidence||[]).map(x=>'<li>'+esc(x.text)+'</li>').join('')||'<li>이번 달 월말 리포트 근거가 아직 없습니다. 문항별 평가를 원장님이 확인해주세요.</li>';
+ $('teacherArea').innerHTML='<div class="card editor"><div class="row between"><div><h2>'+esc(selectedStudent.name)+' · '+esc(month)+' 성장 설계</h2><div class="muted">초안 추천은 지난달 관찰을 참고합니다. 관찰 자료가 없는 문항은 N/O로 제안하고, 게시 전 원장님이 확인·수정합니다.</div></div><span class="pill">'+(d.status==='published'?'게시됨':'초안')+'</span></div>'+
+ '<div class="notice" style="margin:12px 0"><b>이번 달 기록 근거</b><ul style="margin:6px 0">'+ev+'</ul>'+((rec.suggestedNextDirection||[]).length?'<b>월말 리포트의 다음 방향</b><ul>'+rec.suggestedNextDirection.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>':'')+'</div>'+
+ legend()+tableMarkup('teacher',t.ratings||rec.ratings||{},false,rec.provenance||{})+
+ '<div class="two" style="margin-top:16px"><div><label><b>학생에게 전하는 메모</b></label><textarea id="teacherStudentMemo">'+esc(t.studentMemo||'')+'</textarea></div><div><label><b>다음 달 교사의 지원 약속</b></label><textarea id="teacherSupport">'+esc(t.supportCommitment||'')+'</textarea></div><div style="grid-column:1/-1"><label><b>학부모님께 전하는 메모</b></label><textarea id="teacherParentMemo">'+esc(t.parentMemo||'')+'</textarea></div></div>'+
+ '<div class="row between" style="margin-top:14px"><span id="teacherStatus" class="muted"></span><div class="row"><button class="btn secondary" onclick="saveTeacher(false)">초안 저장</button><button class="btn gold" '+(!(d.student&&d.student.submittedAt)?'disabled title="학생 응답 후 게시할 수 있어요"':'')+' onclick="saveTeacher(true)">게시하고 부모용 보고서 만들기</button></div></div></div>'+
+ '<div id="parentReport" class="card report">'+reportMarkup(d,selectedStudent.name,false)+'</div>';
+}
+async function saveTeacher(publish){
+ const status=$('teacherStatus');status.textContent='저장 중…';
+ const payload={month,studentId:selectedStudent.id,publish,teacher:{ratings:collectRatings('teacher'),studentMemo:$('teacherStudentMemo').value,supportCommitment:$('teacherSupport').value,parentMemo:$('teacherParentMemo').value}};
+ try{await call('saveGrowthSurveyTeacher')(payload);const r=await call('getGrowthSurvey')({month,studentId:selectedStudent.id});teacherSurvey=r.data.survey;status.textContent=publish?'게시했어요. 학생 메인보드에 표시됩니다.':'초안을 저장했어요.';renderTeacher()}
+ catch(e){status.textContent=e.message}
+}
+function labelFor(v){return v==='NO'?'N/O':v?String(v):'—'}
+function reportMarkup(d,name,isStudent){
+ const s=d.student||{},t=d.teacher||{},sr=s.ratings||{},tr=t.ratings||{};let domain='',idx=0,rows='';
+ ITEMS.forEach(([id,dm,label])=>{if(dm!==domain){domain=dm;rows+='<tr class="domainrow"><td colspan="4">'+esc(domain)+'</td></tr>';idx=0}idx++;rows+='<tr><td>'+idx+'</td><td>'+esc(label)+'</td><td class="ratingtext">'+labelFor(sr[id])+' '+(sr[id]&&sr[id]!=='NO'?'<small>· '+esc(SCALE.find(x=>x[0]===String(sr[id]))?.[1]||'')+'</small>':'')+'</td><td class="ratingtext">'+labelFor(tr[id])+' '+(tr[id]&&tr[id]!=='NO'?'<small>· '+esc(SCALE.find(x=>x[0]===String(tr[id]))?.[1]||'')+'</small>':'')+'</td></tr>'});
+ const goal='<div class="goal"><b>학생의 다음 달 작은 목표</b><div style="margin-top:5px">'+esc(s.smallGoal||'아직 작성 전')+'</div></div>';
+ const support='<div class="goal"><b>선생님이 이렇게 돕겠습니다</b><div style="margin-top:5px">'+esc(t.supportCommitment||'')+'</div></div>';
+ return '<div class="reporthead"><div><div class="reporttitle">M&amp;m 학습 성장 기록</div><div>'+esc(name)+' · '+esc(d.month||month)+' · 성적보다 성장</div></div><div class="muted">학생 자기 점검과 원장 관찰을 나란히 기록합니다.</div></div>'+
+ '<div class="tablewrap"><table><thead><tr><th>#</th><th>성장 항목</th><th>학생 자기 점검</th><th>원장 관찰</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+ '<div class="two" style="margin-top:8px">'+goal+support+'</div>'+
+ '<div class="two" style="margin-top:8px"><div class="memo"><b>학생에게 전하는 메모</b><div>'+esc(t.studentMemo||'')+'</div></div><div class="memo"><b>학부모님께 전하는 메모</b><div>'+esc(t.parentMemo||'')+'</div></div></div>'+
+ (isStudent?'<div class="muted" style="margin-top:7px">원장 관찰과 메모는 선생님이 게시한 기록입니다.</div>':'<div class="no-print row between" style="margin-top:10px"><span class="muted">이 영역 전체가 부모님께 공유할 한 장 보고서입니다.</span><button class="btn" onclick="window.print()">인쇄 / PDF로 저장</button></div>');
+}
+async function resumeExistingAuth(user){
+ if(!user||authEntryInProgress||role)return;
+ try{
+  const token=await user.getIdTokenResult();
+  if(token.claims.role==='student'&&token.claims.studentId){
+   role='student';studentId=token.claims.studentId;month=currentMonth();
+   $('login').classList.add('hidden');$('studentApp').classList.remove('hidden');$('who').textContent='학생';
+   await loadStudentSurvey();return;
+  }
+  if(token.claims.firebase?.sign_in_provider==='password'){
+   const r=await call('listGrowthSurveyStudents')({month:currentMonth(),cursor:''});
+   role='director';month=currentMonth();students=r.data.rows||[];cursor=r.data.nextCursor||'';
+   $('monthInput').value=month;$('login').classList.add('hidden');$('directorApp').classList.remove('hidden');$('who').textContent='원장';
+   renderStudents();$('listStatus').textContent='학생 '+students.length+'명 표시 중';
+  }
+ }catch(_){/* 로그인 화면을 유지해 다시 인증할 수 있게 한다. */}
+}
+async function init(){
+ try{await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)}catch(_){}
+ $('monthInput').value=currentMonth();
+ auth.onAuthStateChanged(user=>{resumeExistingAuth(user)});
+}
+init();
+</script>
+</body>
+</html>

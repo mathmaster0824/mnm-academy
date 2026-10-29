@@ -50,7 +50,7 @@ module.exports = `(function(){
     }),
     enablePersistence:()=>Promise.resolve(), settings:()=>{},
   };
-  window.firebase={initializeApp:()=>{},auth:()=>({onAuthStateChanged:()=>{},signInAnonymously:()=>Promise.resolve({}),currentUser:null}),
+  window.firebase={initializeApp:()=>{},app:()=>({functions:()=>({httpsCallable:()=>async()=>({data:{}})})}),auth:()=>({onAuthStateChanged:()=>{},signInAnonymously:()=>Promise.resolve({}),signInWithEmailAndPassword:()=>Promise.resolve({user:{}}),signInWithCustomToken:()=>Promise.resolve({}),signOut:()=>Promise.resolve(),setPersistence:()=>Promise.resolve(),currentUser:null}),
     firestore:Object.assign(()=>fsdb,{FieldPath:{documentId:()=>'__name__'},FieldValue:{serverTimestamp:()=>({}),delete:()=>({}),arrayUnion:(...a)=>({__union:a}),arrayRemove:(...a)=>({__remove:a}),increment:(n)=>({__inc:n})}}),};
   window.firebase.auth.Auth={Persistence:{LOCAL:'local'}};
 })();`;

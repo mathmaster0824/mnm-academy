@@ -77,8 +77,104 @@ const check = (name, ok, detail) => {
         memo: ''
       };
       await submitHomework(sid, date);
+
+      // 멈춘 사진 API 요청은 제한시간 후 압축 사진 대체 경로로 복구되어야 한다.
+      const originalFetch = window.fetch;
+      const originalSetTimeout = window.setTimeout;
+      const originalPhotoApiToken = photoApiToken;
+      const originalCompressor = fileToCompressedDataURL;
+      const fallbackPrefix = 'data:image/jpeg;base64,';
+      let timeoutSignalObserved = false;
+      let timeoutUploadRecovered = false;
+      let returnPartial = { partialDraftSaved: false, uploadStillActiveWhenPartialSaved: false };
+      let inFlight = 0;
+      let maxConcurrent = 0;
+      const timeoutPhotoCount = 10;
+      try {
+        photoApiToken = async () => 'fake-token';
+        fileToCompressedDataURL = async file => fallbackPrefix + encodeURIComponent(file.name);
+        window.fetch = (_url, options) => {
+          inFlight++;
+          maxConcurrent = Math.max(maxConcurrent, inFlight);
+          return new Promise((_resolve, reject) => {
+            timeoutSignalObserved = timeoutSignalObserved || options.signal instanceof AbortSignal;
+            options.signal.addEventListener('abort', () => {
+              inFlight--;
+              reject(new DOMException('aborted', 'AbortError'));
+            }, { once: true });
+          });
+        };
+        // 테스트 시간을 줄이되 실제 업로드 코드가 설정한 20초 타이머만 즉시 울리게 한다.
+        window.setTimeout = (callback, delay, ...args) =>
+          originalSetTimeout(callback, delay === 20000 ? 0 : delay, ...args);
+        currentSubState._draftSub = { hwPhotos: [], practicePhotos: [], timerPhotos: [], memo: '' };
+        currentSubState._draftSubKey = sid + '_' + date;
+        await uploadSubPhoto({
+          files: Array.from({ length: timeoutPhotoCount }, (_, i) =>
+            new File(['fake-image-' + i], 'timeout-test-' + i + '.jpg', { type: 'image/jpeg', lastModified: i + 1 })),
+          value: ''
+        }, 'hwPhotos');
+        timeoutUploadRecovered = !homeworkUploadState.active &&
+          homeworkUploadState.done === timeoutPhotoCount &&
+          homeworkUploadState.failed === 0 &&
+          currentSubState._draftSub.hwPhotos.length === timeoutPhotoCount &&
+          currentSubState._draftSub.hwPhotos.every(photo => photo.startsWith(fallbackPrefix)) &&
+          maxConcurrent === 3;
+
+        // 먼저 끝난 사진은 나머지 업로드가 계속 중이어도 기기 임시 초안에 남아야 한다.
+        let partialDraftSaved = false;
+        let uploadStillActiveWhenPartialSaved = false;
+        window.fetch = (_url, options) => {
+          const file = options.body.get('file');
+          if (file.name === 'fast-success.jpg') {
+            return Promise.resolve({
+              ok: true,
+              json: async () => ({ photo: { storageKey: 'private/fast-success.jpg', url: '/photo?key=private%2Ffast-success.jpg' } })
+            });
+          }
+          inFlight++;
+          maxConcurrent = Math.max(maxConcurrent, inFlight);
+          return new Promise((_resolve, reject) => {
+            options.signal.addEventListener('abort', () => {
+              inFlight--;
+              reject(new DOMException('aborted', 'AbortError'));
+            }, { once: true });
+          });
+        };
+        window.setTimeout = (callback, delay, ...args) =>
+          originalSetTimeout(callback, delay === 20000 ? 200 : delay, ...args);
+        draftActiveStuId = sid;
+        draftActiveDate = date;
+        currentSubState._draftSub = { hwPhotos: [], practicePhotos: [], timerPhotos: [], memo: '' };
+        currentSubState._draftSubKey = sid + '_' + date;
+        saveDraftLocal(sid, date, currentSubState._draftSub);
+        const partialRun = uploadSubPhoto({
+          files: [
+            new File(['fast'], 'fast-success.jpg', { type: 'image/jpeg', lastModified: 101 }),
+            new File(['slow-a'], 'slow-a.jpg', { type: 'image/jpeg', lastModified: 102 }),
+            new File(['slow-b'], 'slow-b.jpg', { type: 'image/jpeg', lastModified: 103 })
+          ],
+          value: ''
+        }, 'practicePhotos');
+        await new Promise(resolve => originalSetTimeout(resolve, 40));
+        const savedPartial = JSON.parse(localStorage.getItem(draftStorageKey(sid, date)) || '{}');
+        partialDraftSaved = (savedPartial.practicePhotos || []).some(photo => photo.storageKey === 'private/fast-success.jpg');
+        uploadStillActiveWhenPartialSaved = homeworkUploadState.active && homeworkUploadState.done < 3;
+        await partialRun;
+        returnPartial = { partialDraftSaved, uploadStillActiveWhenPartialSaved };
+      } finally {
+        window.fetch = originalFetch;
+        window.setTimeout = originalSetTimeout;
+        photoApiToken = originalPhotoApiToken;
+        fileToCompressedDataURL = originalCompressor;
+        homeworkUploadState.active = false;
+      }
+
       return {
         newDraftHasNoTime, draftHasTimerPhotos, hasCameraInput, hasGalleryInput,
+        timeoutSignalObserved, timeoutUploadRecovered,
+        partialDraftSaved: returnPartial.partialDraftSaved,
+        uploadStillActiveWhenPartialSaved: returnPartial.uploadStillActiveWhenPartialSaved,
         timerMarkup, timerControlsGone, teacherSeesTimerPhoto, legacyTimeHidden,
         undefinedTimeSaved,
         savedTimerPhoto: saved[1]?.payload?.timerPhotos?.[0]?.storageKey === 'private/timer-photo.jpg',
@@ -87,6 +183,8 @@ const check = (name, ok, detail) => {
       };
     });
 
+    check('먼저 완료된 사진은 나머지 업로드 중에도 초안에 보존됨', result.partialDraftSaved && result.uploadStillActiveWhenPartialSaved, JSON.stringify(result));
+    check('업로드 요청 시간 초과 시 사진 업로드 상태가 해제되고 압축 대체 저장으로 복구', result.timeoutSignalObserved && result.timeoutUploadRecovered, JSON.stringify(result));
     check('새 숙제 입력에는 분 단위 타이머 상태가 생기지 않음', result.newDraftHasNoTime && result.timerControlsGone, JSON.stringify(result));
     check('타이머 사진은 카메라와 갤러리에서 추가할 수 있음', result.timerMarkup && result.hasCameraInput && result.hasGalleryInput && result.draftHasTimerPhotos, JSON.stringify(result));
     check('시간 필드가 없는 새 숙제도 undefined 없이 저장됨', result.undefinedTimeSaved, JSON.stringify(result));

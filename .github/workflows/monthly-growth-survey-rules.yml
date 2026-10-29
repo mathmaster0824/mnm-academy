@@ -1,0 +1,42 @@
+name: Growth survey Firestore rules (Emulator)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - index.html
+      - security/firestore.rules.phase2.growth-survey.proposed
+      - tests/rules/monthly-growth-survey.test.js
+      - tests/growth-survey-callable.test.js
+      - firebase.growth-survey-emulator.json
+      - functions/growthSurveyFunctions.js
+      - functions/growthSurveyCore.js
+      - .github/workflows/monthly-growth-survey-rules.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  growth-survey-rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install emulator test dependencies
+        run: npm install --no-save --package-lock=false firebase @firebase/rules-unit-testing firebase-tools
+      - name: Check survey code and callable test syntax
+        run: |
+          node --check functions/growthSurveyFunctions.js
+          node --check tests/growth-survey-callable.test.js
+          node --test tests/growth-survey-callable.test.js
+          node --check tests/rules/monthly-growth-survey.test.js
+      - name: Run Firestore rules emulator tests
+        run: npx firebase emulators:exec --only firestore --project demo-mnm-growth-survey --config firebase.growth-survey-emulator.json "node --test tests/rules/monthly-growth-survey.test.js"

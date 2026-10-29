@@ -6,6 +6,11 @@ on:
     paths:
       - index.html
       - tests/weekend-study-review.test.js
+      - security/firestore.rules.phase2.growth-survey.proposed
+      - functions/growthSurveyFunctions.js
+      - functions/growthSurveyCore.js
+      - tests/rules/monthly-growth-survey.test.js
+      - firebase.growth-survey-emulator.json
       - .github/workflows/weekend-study-review.yml
   workflow_dispatch:
 
@@ -29,3 +34,41 @@ jobs:
         run: node --check tests/weekend-study-review.test.js
       - name: Run weekend study review regression
         run: node tests/weekend-study-review.test.js
+
+  growth-survey-rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: changed
+        name: Detect growth survey changes
+        shell: bash
+        run: |
+          changed_files="$(git diff --name-only origin/main...HEAD)"
+          if printf '%s\n' "$changed_files" | grep -Eq '^(security/firestore\.rules\.phase2\.growth-survey\.proposed|functions/growthSurveyFunctions\.js|functions/growthSurveyCore\.js|tests/rules/monthly-growth-survey\.test\.js|firebase\.growth-survey-emulator\.json)$'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.changed.outputs.run == 'true'
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        if: steps.changed.outputs.run == 'true'
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install isolated emulator test dependencies
+        if: steps.changed.outputs.run == 'true'
+        working-directory: tests
+        run: npm install --no-save --package-lock=false @firebase/rules-unit-testing@3.0.4 firebase@10.13.2 firebase-tools@13.29.2
+      - name: Run growth survey rules in the demo emulator
+        if: steps.changed.outputs.run == 'true'
+        working-directory: tests
+        run: npx firebase emulators:exec --config ../firebase.growth-survey-emulator.json --project demo-mnm-growth-survey --only firestore "node --test rules/monthly-growth-survey.test.js"
+      - name: Skip emulator test when growth survey files are unchanged
+        if: steps.changed.outputs.run != 'true'
+        run: echo "No growth survey rules changes in this pull request."

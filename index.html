@@ -186,7 +186,8 @@
       <button id="tabStudent" onclick="setLoginMode('student')">학생 모드</button>
     </div>
     <div id="directorLogin">
-      <input type="password" id="pwInput" placeholder="비밀번호를 입력해주세요" maxlength="20">
+      <input type="email" id="directorEmail" placeholder="원장 이메일" autocomplete="username">
+      <input type="password" id="pwInput" placeholder="비밀번호를 입력해주세요" maxlength="64" autocomplete="current-password">
       <div class="login-err" id="pwErr"></div>
       <button class="btn-gold" onclick="tryDirectorLogin()">원장 모드로 입장</button>
       <div class="setup-note" id="pwSetupNote"></div>
@@ -243,6 +244,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-functions-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <link rel="modulepreload" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs">
 
@@ -264,6 +266,7 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const fsdb = firebase.firestore();
 const fauth = firebase.auth();
+const ffunctions = firebase.app().functions("asia-northeast3");
 
 // 반복 진입 체감속도 개선: 이전에 받은 Firestore 데이터를 기기 캐시에 보관해
 // 다음 진입 때 캐시를 먼저 보여주고 뒤에서 서버와 동기화한다.
@@ -283,6 +286,10 @@ let roleUnsubscribers = [];
 let viewUnsubscribers = [];
 let loadedViewData = new Set(); // 로그인 이후(원장/학생)에만 붙는, 날짜별로 계속 쌓이는 데이터용 리스너
 let listenersReady = { settings:false, students:false, classes:false };
+let loginSettingsUnsub = null;
+let studentBootstrapLoadedFor = "";
+let authFlowInProgress = false;
+let directorRoleListenersAttached = false;
 
 // local in-memory mirror, kept in sync by Firestore real-time listeners
 let db = {
@@ -368,14 +375,31 @@ const SEED_DATA = {
 async function initFirebase(){
   try{
     await firestorePersistenceReady;
-    try{ await fauth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){}
-    if(!fauth.currentUser) await fauth.signInAnonymously();
+    try{await fauth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)}catch(e){}
   }catch(e){
     showFatalError('로그인 서버에 연결하지 못했어요. 인터넷 연결을 확인한 뒤 새로고침 해주세요.');
     return;
   }
-  attachCoreListeners();
-  startLoadingTimeoutWatchdog();
+  document.getElementById('loadingScreen').style.display='none';
+  document.getElementById('loginScreen').style.display='flex';
+  fauth.onAuthStateChanged(async user=>{
+    if(!user||authFlowInProgress)return;
+    try{
+      const token=await user.getIdTokenResult();
+      if(token.claims.role==='student'&&token.claims.studentId){
+        session={mode:'student',studentId:token.claims.studentId,auth:'firebase'};
+        await loadStudentBootstrap(session.studentId);enterApp();return;
+      }
+      if(token.claims.firebase?.sign_in_provider==='password'&&await verifyDirectorAccess(user)){
+        session={mode:'director',auth:'firebase'};enterApp();return;
+      }
+    }catch(e){console.warn('[인증 세션 복원]',e)}
+  });
+}
+async function verifyDirectorAccess(user){
+  if(!user||user.isAnonymous)return false;
+  try{await fsdb.collection('meta').doc('_directorCheck').get({source:'server'});return true}
+  catch(e){return false}
 }
 
 function showFatalError(msg){
@@ -404,25 +428,16 @@ function setConnStatus(ok){
   txt.textContent = ok ? '실시간 연결됨' : '연결 끊김 - 재시도 중';
 }
 
-// 로그인 전부터 필요하고, 시간이 지나도 크게 늘어나지 않는 "기준정보" 컬렉션들.
-// 원장/학생 구분 없이 항상 전체를 구독해도 안전함 (읽기량이 크지 않음).
+// 원장 로그인 이후 원장 화면에 필요한 기준정보를 구독한다.
+// 학생 화면은 getStudentBootstrap callable이 학생 한 명의 허용된 자료만 반환한다.
 function attachCoreListeners(){
+  db.settings={isDefaultPassword:false};listenersReady.settings=true;
   const subs = [
-    fsdb.collection('meta').doc('settings').onSnapshot(async doc=>{
-      if(doc.exists){ db.settings = doc.data(); }
-      else{
-        db.settings = { adminPassword:'0000', isDefaultPassword:true };
-        try{ await fsdb.collection('meta').doc('settings').set(db.settings); }catch(e){}
-      }
-      listenersReady.settings = true;
-      maybeFinishLoading();
-      scheduleRender();
-    }, err=>{ setConnStatus(false); }),
-
     fsdb.collection('students').onSnapshot(snap=>{
       db.students = snap.docs.map(d=>({id:d.id, ...d.data()}));
       listenersReady.students = true;
       maybeFinishLoading();
+      maybeAttachDirectorRoleListeners();
       scheduleRender();
     }, err=>{ setConnStatus(false); }),
 
@@ -430,6 +445,7 @@ function attachCoreListeners(){
       db.classes = snap.docs.map(d=>({id:d.id, ...d.data()}));
       listenersReady.classes = true;
       maybeFinishLoading();
+      maybeAttachDirectorRoleListeners();
       Object.keys(fridayWeekLoads).forEach(week=>{
         if(fridayWeekLoads[week]?.status==='waiting-classes') requestFridayWeekLoad(week);
       });
@@ -573,6 +589,7 @@ function attachRoleListeners(){
   const clsId=resolvedClass?resolvedClass.id:(stu?stu.classId:null);
   const studentClassIds=stuId?[...new Set(classesForStudent(stuId).map(c=>c.id).concat(clsId?[clsId]:[]))]:[];
   const subs=[];
+  const watchOwnDoc=(col,key,target)=>{ subs.push(fsdb.collection(col).doc(key).onSnapshot(doc=>{ if(doc.exists) target[key]=doc.data(); else delete target[key]; scheduleRender(); },roleListenerError(col))); };
   const recentStart=recentRecordStartISO();
   const currentWeek=weekStartISO(todayISO());
   clearWeekendAdminWeekListener();
@@ -580,8 +597,10 @@ function attachRoleListeners(){
   // 수업기록/주간계획/금요보강:
   // 로그인 때 전체 역사를 실시간 구독하지 않는다.
   // 최근 7일만 1회 읽고, 특정 과거 날짜는 화면에서 선택할 때 exact doc 1건을 읽는다.
-  ['classRecords','weeklyPlans','fridaySupp'].forEach(col=>{ db[col]={}; });
-  const classIds=isDirector?(db.classes||[]).map(c=>c.id):studentClassIds;
+  if(isDirector) ['classRecords','weeklyPlans','fridaySupp'].forEach(col=>{db[col]={};});
+  if(isDirector){
+  ['classRecords','weeklyPlans','fridaySupp'].forEach(col=>{db[col]={};});
+  const classIds=(db.classes||[]).map(c=>c.id);
   Promise.all(classIds.flatMap(cid=>[
     fsdb.collection('classRecords')
       .where(firebase.firestore.FieldPath.documentId(),'>=',cid+'_'+recentStart)
@@ -594,6 +613,7 @@ function attachRoleListeners(){
       .where(firebase.firestore.FieldPath.documentId(),'<',cid+'_\uf8ff').get()
       .then(snap=>snap.docs.forEach(d=>{db.fridaySupp[d.id]=d.data();}))
   ])).then(()=>scheduleRender()).catch(e=>console.error('[최근 7일 수업기록 조회]',e));
+  }
 
   // 숙제: 원장은 학생별 N개 리스너 대신 최근 7일 전체를 단일 쿼리로 구독한다.
   db.submissions={};
@@ -662,26 +682,20 @@ function attachRoleListeners(){
       pendingIds=next; scheduleRender();
     },roleListenerError('submissions-pending')));
   }else if(stuId){
-    subs.push(idRecentRangeQuery('submissions',stuId+'_',recentStart).onSnapshot(snap=>{
-      const keep={};
-      snap.docs.forEach(d=>keep[d.id]=d.data());
-      Object.keys(db.submissions).forEach(k=>{
-        if(k.startsWith(stuId+'_') && (db.submissions[k]?.date||k.slice(-10))>=recentStart) delete db.submissions[k];
-      });
-      Object.assign(db.submissions,keep); scheduleRender();
-    },roleListenerError('submissions')));
+    for(let day=0;day<RECENT_RECORD_DAYS;day++){
+      const date=dateDaysAgoISO(day), key=stuId+'_'+date;
+      watchOwnDoc('submissions',key,db.submissions);
+    }
   }
-
+  
   // 주말학습 인증: 학생은 이번 주, 원장은 선택한 확인 주만 조회.
   db.weekendSubmissions={};
   if(isDirector){
     subscribeWeekendAdminWeek(currentSubState.weekendWeek || weekendReviewWeekStart(academicTodayISO()));
   }else if(stuId){
-    subs.push(idRecentRangeQuery('weekendSubmissions',stuId+'_',currentWeek).onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>m[d.id]=d.data()); db.weekendSubmissions=m; scheduleRender();
-    },roleListenerError('weekendSubmissions')));
+    WEEKEND_SLOTS.forEach(slot=>watchOwnDoc('weekendSubmissions',weekendSubmissionKey(stuId,currentWeek,slot.id),db.weekendSubmissions));
   }
-
+  
   // STAD 신청정보는 월 단위로 적고 작아서 유지. 일일 기록은 최근 7일만.
   if(isDirector){
     subs.push(fsdb.collection('stadApplications').onSnapshot(snap=>{
@@ -692,14 +706,13 @@ function attachRoleListeners(){
     },roleListenerError('stadDaily')));
   }else if(stuId){
     db.stadApplications={}; db.stadDaily={};
-    subs.push(idRangeQuery('stadApplications',stuId+'_').onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>m[d.id]=d.data()); db.stadApplications=m; scheduleRender();
-    },roleListenerError('stadApplications')));
-    subs.push(idRecentRangeQuery('stadDaily',stuId+'_',recentStart).onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>m[d.id]=d.data()); db.stadDaily=m; scheduleRender();
-    },roleListenerError('stadDaily')));
+    [...new Set([STAD_MONTH(),stadTargetMonth(STAD_TODAY())])].forEach(month=>watchOwnDoc('stadApplications',stadAppKey(stuId,month),db.stadApplications));
+    for(let day=0;day<RECENT_RECORD_DAYS;day++){
+      const date=dateDaysAgoISO(day);
+      watchOwnDoc('stadDaily',stuId+'_'+date,db.stadDaily);
+    }
   }
-
+  
   // 연습진도는 학생당 1문서라 전체여도 작다.
   if(isDirector){
     subs.push(fsdb.collection('practiceProgress').onSnapshot(snap=>{
@@ -755,20 +768,16 @@ function maybeFinishLoading(){
   document.getElementById('loadingScreen').style.display='none';
   if(appEntered) return;
   if(!session){
-    // 저장된 로그인 상태가 있으면 자동으로 복원 (화면 꺼짐/백그라운드 새로고침으로 로그인이 풀리는 것 방지)
     try{
-      const saved = JSON.parse(localStorage.getItem('mnm_session') || 'null');
-      if(saved && saved.mode==='director'){ session = saved; }
-      else if(saved && saved.mode==='student'){
-        const stu = studentById(saved.studentId);
-        if(stu && stu.status!=='withdrawn'){ session = saved; }
-      }
+      const saved=JSON.parse(localStorage.getItem('mnm_session')||'null');
+      // 학생 모드는 Firebase custom token claim으로만 복원한다.
+      if(saved&&saved.mode==='director') session=saved;
     }catch(e){}
   }
-  if(session){ enterApp(); return; }
+  if(session){enterApp();return}
   document.getElementById('loginScreen').style.display='flex';
   if(db.settings.isDefaultPassword){
-    document.getElementById('pwSetupNote').textContent = '최초 접속이에요. 기본 비밀번호(0000)로 먼저 로그인한 뒤, 대시보드에서 비밀번호를 변경해주세요.';
+    document.getElementById('pwSetupNote').textContent='최초 접속이에요. 기본 비밀번호(0000)로 먼저 로그인한 뒤, 대시보드에서 비밀번호를 변경해주세요.';
   }
 }
 
@@ -780,46 +789,81 @@ function setLoginMode(m){
   document.getElementById('directorLogin').style.display = m==='director' ? 'block':'none';
   document.getElementById('studentLogin').style.display = m==='student' ? 'block':'none';
 }
-function tryDirectorLogin(){
-  const v = document.getElementById('pwInput').value;
-  if(v === db.settings.adminPassword){ session = {mode:'director'}; saveSessionLocal(); enterApp(); }
-  else{ document.getElementById('pwErr').textContent = '비밀번호가 올바르지 않아요. 다시 확인해주세요.'; }
+async function tryDirectorLogin(){
+  const err=document.getElementById('pwErr'),email=(document.getElementById('directorEmail')?.value||'').trim(),password=document.getElementById('pwInput').value;
+  err.textContent='';
+  if(!email||!password){err.textContent='원장 이메일과 비밀번호를 입력해주세요.';return}
+  const button=document.querySelector('#directorLogin button');if(button)button.disabled=true;
+  authFlowInProgress=true;
+  try{
+    const credential=await fauth.signInWithEmailAndPassword(email,password);
+    if(!(await verifyDirectorAccess(credential.user))){
+      await fauth.signOut();err.textContent='이 계정에는 원장 권한이 없어요.';return;
+    }
+    document.getElementById('pwInput').value='';
+    session={mode:'director',auth:'firebase'};saveSessionLocal();enterApp();
+  }catch(e){
+    const code=String(e?.code||'');
+    err.textContent=code==='auth/too-many-requests'?'시도가 너무 많아요. 잠시 뒤 다시 해주세요.':code==='auth/network-request-failed'?'인터넷 연결을 확인해주세요.':'로그인 정보를 확인해주세요.';
+  }finally{if(button)button.disabled=false;authFlowInProgress=false}
 }
-function tryStudentLogin(){
-  const input = document.getElementById('codeInput');
-  const err = document.getElementById('codeErr');
-  const v = String(input ? input.value : '').trim();
 
-  // 기존 학생 code 값 자체는 절대 수정하지 않는다.
-  // Firestore에 숫자/문자열 어느 형식으로 저장돼 있어도 입력 코드와 같은 값이면 로그인한다.
-  const stu = (db.students||[]).find(s => String(s.code ?? '').trim() === v);
-
-  if(stu && stu.status==='withdrawn'){
-    if(err) err.textContent = '더 이상 사용할 수 없는 코드예요. 선생님께 문의해주세요.';
-    return;
-  }
-  if(stu){
-    session = {mode:'student', studentId:stu.id};
-    saveSessionLocal();
-    enterApp();
-  }else{
-    if(err) err.textContent = '등록되지 않은 코드예요. 선생님께 코드를 다시 확인해주세요.';
-  }
+async function tryStudentLogin(){
+  const input=document.getElementById('codeInput'),err=document.getElementById('codeErr');
+  const code=String(input?input.value:'').trim(),button=document.querySelector('#studentLogin button');
+  if(err)err.textContent='';
+  if(!/^\d{4}$/.test(code)){if(err)err.textContent='4자리 학생 코드를 입력해주세요.';return}
+  if(button)button.disabled=true;
+  authFlowInProgress=true;
+  try{
+    const result=await ffunctions.httpsCallable('studentGrowthSurveyLogin')({code});
+    await fauth.signInWithCustomToken(result.data.token);
+    const token=await fauth.currentUser.getIdTokenResult(true),studentId=token.claims.studentId;
+    if(token.claims.role!=='student'||!studentId)throw new Error('학생 권한을 확인하지 못했어요.');
+    session={mode:'student',studentId,auth:'firebase'};
+    await loadStudentBootstrap(studentId);
+    saveSessionLocal();enterApp();
+  }catch(e){
+    if(err)err.textContent=e.code==='functions/resource-exhausted'?'시도가 많습니다. 잠시 뒤 다시 시도해주세요.':(e.message||'학생 코드를 확인할 수 없습니다.');
+    try{await fauth.signOut()}catch(_){}
+  }finally{if(button)button.disabled=false;authFlowInProgress=false}
 }
+async function loadStudentBootstrap(studentId){
+  const result=await ffunctions.httpsCallable('getStudentBootstrap')({});
+  const d=result.data||{};
+  if(d.student?.id!==studentId)throw new Error('학생 정보를 확인하지 못했어요.');
+  db.students=[d.student];db.classes=d.classes||[];
+  db.classRecords=d.classRecords||{};db.weeklyPlans=d.weeklyPlans||{};db.fridaySupp=d.fridaySupp||{};
+  db.weekendClasses=d.weekendClasses||[];db.weekendSettings=d.weekendSettings||{enabled:false};
+  db.stadSettings=d.stadSettings||{enabled:false,infoText:'',applyOpen:'',applyClose:'',zoomLink:''};
+  db.courses=[];
+  studentBootstrapLoadedFor=studentId;listenersReady.students=true;listenersReady.classes=true;
+}
+async function restoreStudentSessionFromToken(){
+  try{
+    const token=await fauth.currentUser.getIdTokenResult();
+    if(token.claims.role!=='student'||!token.claims.studentId)return false;
+    session={mode:'student',studentId:token.claims.studentId,auth:'firebase'};
+    await loadStudentBootstrap(session.studentId);enterApp();return true;
+  }catch(e){console.error('[학생 세션 복원]',e);return false}
+}
+
 function saveSessionLocal(){ try{ localStorage.setItem('mnm_session', JSON.stringify(session)); }catch(e){} }
-function logout(){
-  homeworkLoadGen++; homeworkRecentLoadState='idle'; homeworkKnownDates.clear(); homeworkKnownStudents.clear();
-  roleUnsubscribers.forEach(u=>{ try{ u(); }catch(e){} });
-  roleUnsubscribers = [];
-  clearViewListeners();
-  loadedViewData.clear();
-  session = null;
-  try{ localStorage.removeItem('mnm_session'); }catch(e){}
-  document.getElementById('appShell').style.display='none';
-  document.getElementById('loginScreen').style.display='flex';
-  document.getElementById('pwInput').value=''; document.getElementById('codeInput').value='';
-  document.getElementById('pwErr').textContent=''; document.getElementById('codeErr').textContent='';
+async function logout(){
+  homeworkLoadGen++;homeworkRecentLoadState='idle';homeworkKnownDates.clear();homeworkKnownStudents.clear();
+  roleUnsubscribers.forEach(u=>{try{u()}catch(e){}});roleUnsubscribers=[];
+  unsubscribers.forEach(u=>{try{u()}catch(e){}});unsubscribers=[];
+  clearViewListeners();loadedViewData.clear();
+  session=null;appEntered=false;authFlowInProgress=false;studentBootstrapLoadedFor='';directorRoleListenersAttached=false;
+  listenersReady={settings:false,students:false,classes:false};
+  db.students=[];db.classes=[];db.classRecords={};db.weeklyPlans={};db.fridaySupp={};db.submissions={};db.weekendSubmissions={};db.questions=[];db.kmm=[];
+  try{localStorage.removeItem('mnm_session')}catch(e){}
+  try{await fauth.signOut()}catch(e){}
+  document.getElementById('appShell').style.display='none';document.getElementById('loginScreen').style.display='flex';
+  document.getElementById('pwInput').value='';document.getElementById('codeInput').value='';
+  document.getElementById('pwErr').textContent='';document.getElementById('codeErr').textContent='';
 }
+
 function studentLessonRecords(stuId){
   const seen = new Set();
   const recs = [];
@@ -1014,13 +1058,18 @@ function verifiedWarnings(s){
   return ((s&&s.warnings)||[]).filter(w => w.auto!==true && !((w.reason||'').includes('자동 기록')));
 }
 function enterApp(){
-  appEntered = true;
+  appEntered=true;
+  if(session.mode==='director')attachCoreListeners();
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appShell').style.display='block';
-  currentView = session.mode==='director' ? 'dashboard' : 'studentHome';
-  attachRoleListeners();
-  buildNav();
-  render();
+  currentView=session.mode==='director'?'dashboard':'studentHome';
+  if(session.mode==='student')attachRoleListeners();else maybeAttachDirectorRoleListeners();
+  buildNav();render();
+}
+function maybeAttachDirectorRoleListeners(){
+  if(appEntered&&session?.mode==='director'&&!directorRoleListenersAttached&&listenersReady.students&&listenersReady.classes){
+    directorRoleListenersAttached=true;attachRoleListeners();
+  }
 }
 
 /* ---------------- NAV ---------------- */
@@ -1041,6 +1090,7 @@ const DIRECTOR_NAV = [
   {id:'schoolExams', label:'내신 성적', icon:'🏫', group:'기록 · 보고'},
   {id:'feedback', label:'학부모 학습안내', icon:'📨', group:'기록 · 보고'},
   {id:'monthlyReport', label:'월말 리포트', icon:'🗓️', group:'기록 · 보고'},
+  {id:'growthSurveyPage', label:'월간 성장 설문', icon:'🌱', group:'기록 · 보고', href:'growth-survey.html'},
   {id:'audit', label:'전체 최종점검', icon:'✅', group:'설정 · 관리'},
   {id:'backup', label:'데이터 백업', icon:'🗂️', group:'설정 · 관리'},
 ];
@@ -1052,7 +1102,7 @@ function buildNav(){
     el.innerHTML = DIRECTOR_NAV.map(n=>{
       const head = n.group!==lastGroup ? `<div style="padding:14px 20px 5px;font-size:10px;letter-spacing:.08em;color:#7f8aa5;font-weight:800;">${n.group}</div>` : '';
       lastGroup=n.group;
-      return head+`<div class="nav-item ${currentView===n.id?'active':''}" onclick="goto('${n.id}')">${n.icon} ${n.label}</div>`;
+      return head+(n.href?'<a class="nav-item" style="text-decoration:none" href="'+n.href+'">'+n.icon+' '+n.label+'</a>':`<div class="nav-item ${currentView===n.id?'active':''}" onclick="goto('${n.id}')">${n.icon} ${n.label}</div>`);
     }).join('');
   }else{
     const STUDENT_NAV = [
@@ -1281,11 +1331,21 @@ async function storePhotoFile(file, options={}){
       const form=new FormData();
       form.append('file',file,file.name||'photo.jpg');
       form.append('kind',options.kind||'photo');
-      const res=await fetch(PHOTO_API_BASE.replace(/\/$/,'')+'/upload',{
-        method:'POST',
-        headers:{Authorization:'Bearer '+token,'X-MNM-Role':session?.mode||'user'},
-        body:form
-      });
+      // 네트워크가 응답 없이 멈춰 숙제 화면이 영구적으로 업로드 중에 남지 않도록 제한한다.
+      // 시간 초과도 아래 압축 사진 대체 저장 경로로 이어진다.
+      const controller=new AbortController();
+      const uploadTimeout=setTimeout(()=>controller.abort(),20000);
+      let res;
+      try{
+        res=await fetch(PHOTO_API_BASE.replace(/\/$/,'')+'/upload',{
+          method:'POST',
+          headers:{Authorization:'Bearer '+token,'X-MNM-Role':session?.mode||'user'},
+          body:form,
+          signal:controller.signal
+        });
+      }finally{
+        clearTimeout(uploadTimeout);
+      }
       const out=await res.json().catch(()=>({}));
       if(!res.ok) throw new Error(out?.error || ('R2 upload '+res.status));
       const raw=out.photo || out;
@@ -5122,10 +5182,10 @@ async function resetSubmissionReview(stuId,date){
 
 const ERROR_TYPES = ['개념부족','계산실수','문제해석','유형미숙','성실부족'];
 function draftStorageKey(stuId,date){ return `mnm_draft_${stuId}_${date}`; }
-function saveDraftLocal(stuId,date){
+function saveDraftLocal(stuId,date,draft=currentSubState._draftSub){
   try{
-    if(!currentSubState._draftSub) return;
-    localStorage.setItem(draftStorageKey(stuId,date), JSON.stringify(currentSubState._draftSub));
+    if(!draft) return;
+    localStorage.setItem(draftStorageKey(stuId,date), JSON.stringify(draft));
   }catch(e){}
 }
 function loadDraftLocal(stuId,date){
@@ -5281,12 +5341,21 @@ async function uploadSubPhoto(inputEl, field){
     return;
   }
 
+  const draftRef=currentSubState._draftSub;
+  const draftKey=currentSubState._draftSubKey;
+  const draftStuId=draftActiveStuId;
+  const draftDate=draftActiveDate;
+  const basePhotos=[...(draftRef[field]||[])];
   Object.assign(homeworkUploadState,{active:true,total:files.length,done:0,failed:0});
   render(); // 시작할 때 1회만: 모든 사진선택 버튼 잠금
 
-  const baseCount=(currentSubState._draftSub.hwPhotos||[]).length+(currentSubState._draftSub.practicePhotos||[]).length+(currentSubState._draftSub.timerPhotos||[]).length;
+  const baseCount=(draftRef.hwPhotos||[]).length+(draftRef.practicePhotos||[]).length+(draftRef.timerPhotos||[]).length;
   const results=new Array(files.length);
   let cursor=0;
+  const persistCompletedPhotos=()=>{
+    draftRef[field]=dedupeHomeworkPhotos([...basePhotos,...results.filter(Boolean)]);
+    if(draftStuId&&draftDate&&draftKey===draftStuId+'_'+draftDate) saveDraftLocal(draftStuId,draftDate,draftRef);
+  };
 
   const updateProgress=()=>{
     const el=document.getElementById('hwUploadStatus');
@@ -5307,6 +5376,8 @@ async function uploadSubPhoto(inputEl, field){
           photo={...photo,clientFingerprint:homeworkFileFingerprint(f),originalName:String(f.name||'').slice(0,120)};
         }
         results[idx]=photo;
+        // 한 장씩 끝날 때마다 현재 초안에 반영해, 나머지 업로드가 지연돼도 성공한 사진을 보존한다.
+        persistCompletedPhotos();
       }catch(e){
         console.error('Homework photo upload failed.',e);
         homeworkUploadState.failed++;
@@ -5320,9 +5391,7 @@ async function uploadSubPhoto(inputEl, field){
   try{
     const concurrency=Math.min(3,files.length);
     await Promise.all(Array.from({length:concurrency},()=>worker()));
-    const added=results.filter(Boolean);
-    currentSubState._draftSub[field]=dedupeHomeworkPhotos([...(currentSubState._draftSub[field]||[]),...added]);
-    saveActiveHomeworkDraft();
+    persistCompletedPhotos();
     homeworkUploadState.recentSig=batchSig;
     homeworkUploadState.recentAt=Date.now();
     if(homeworkUploadState.failed){
@@ -7238,19 +7307,27 @@ function renderWeekPlanGrids(stuId,title){
     </div>
   </div>`;}).join('');
 }
+let studentGrowthSummaryState={month:'',loading:false,survey:null,error:''};
+function renderStudentGrowthSummary(){
+  const date=todayISO(),month=date.slice(0,7);
+  if(Number(date.slice(8,10))<20)return `<div class="card"><h3>🌱 이번 달 성장 설문</h3><div class="muted">매월 20일부터 열려요.</div></div>`;
+  const st=studentGrowthSummaryState;
+  if(st.month!==month){st.month=month;st.loading=false;st.survey=null;st.error='';}
+  if(!st.loading&&!st.survey&&!st.error){
+    st.loading=true;
+    ffunctions.httpsCallable('getGrowthSurvey')({month}).then(r=>{st.survey=r.data.survey||{};st.loading=false;scheduleRender()}).catch(e=>{st.error='성장 기록을 불러오지 못했어요.';st.loading=false;scheduleRender()});
+  }
+  if(st.loading)return `<div class="card"><h3>🌱 이번 달 성장 설문</h3><div class="muted">불러오는 중…</div></div>`;
+  const s=st.survey||{},teacher=s.teacher||{},student=s.student||{},published=s.status==='published';
+  return `<div class="card" style="border-left:4px solid #416d58;"><div class="row between"><div><h3 style="margin:0">🌱 ${Number(month.slice(5))}월 학습 성장</h3><div class="muted">${published?'선생님이 이번 달 성장 기록을 게시했어요.':student.submittedAt?'제출 완료 · 선생님 확인 중':'나의 학습을 돌아보고 작은 목표를 정해보세요.'}</div></div><a class="btn sm gold" href="growth-survey.html">${published?'성장 기록 보기':student.submittedAt?'내 응답 확인':'설문 시작하기'}</a></div>${published?`<div style="margin-top:10px;padding:11px;background:#f6f4ec;border-radius:9px;"><b>선생님이 전하는 메모</b><div style="margin-top:5px;line-height:1.6;">${escapeHtml(teacher.studentMemo||'')}</div><div class="muted" style="margin-top:8px;">나의 다음 달 목표: ${escapeHtml(student.smallGoal||'')}</div><div class="muted">선생님의 지원 약속: ${escapeHtml(teacher.supportCommitment||'')}</div></div>`:''}${st.error?`<div class="muted">${escapeHtml(st.error)}</div>`:''}</div>`;
+}
 function renderStudentHome(){
-  const stuId = session.studentId;
-  const s = studentById(stuId);
-  if(!s) return `<div class="empty">학생 정보를 찾을 수 없어요.</div>`;
-  const cls = classById(s.classId);
-  return `
-    <div class="card">
-      <h2 style="margin:0 0 4px;">${s.name} <span style="font-size:14px;color:#9c9880;">(${s.grade})</span></h2>
-      <span class="studentcode">${s.code}</span> · ${escapeHtml(classNamesForStudent(stuId))}
-    </div>
-    ${renderStudentHomeworkSummary(stuId)}
-    ${renderStudentQuestionSummary(stuId)}
-  `;
+  const stuId=session.studentId,s=studentById(stuId);
+  if(!s)return `<div class="empty">학생 정보를 찾을 수 없어요.</div>`;
+  return `<div class="card"><h2 style="margin:0 0 4px;">${escapeHtml(s.name)} <span style="font-size:14px;color:#9c9880;">(${escapeHtml(s.grade)})</span></h2><span class="studentcode">M&amp;m 학습 성장 기록</span> · ${escapeHtml(classNamesForStudent(stuId))}</div>
+  ${renderStudentGrowthSummary()}
+  ${renderStudentHomeworkSummary(stuId)}
+  ${renderStudentQuestionSummary(stuId)}`;
 }
 
 // 학생 첫 화면 전용: 기존 Firestore 데이터를 읽어서 요약만 보여준다. 저장/수정 없음.
@@ -7953,6 +8030,10 @@ async function syncSolutionPhotoToProblemRepo(solId,solData){
 }
 async function syncQuestionToProblemRepo(qId,qData){
   try{
+    if(session?.mode==='student' && session.studentId===qData?.studentId){
+      const result=await ffunctions.httpsCallable('syncStudentQuestionToProblemRepo')({questionId:qId});
+      return result.data||{status:'error'};
+    }
     return await ensureOperationalProblemCandidate(operationalProblemMetaFromQuestion({id:qId,...qData}));
   }catch(e){ console.error('[질문→문제저장소]',e); return {status:'error'}; }
 }
@@ -9130,9 +9211,8 @@ async function submitAnswerSheet(assignmentId,stuId){
   const id=answerSubmissionId(assignmentId,stuId);
   const exists=await fsdb.collection('answerSubmissions').doc(id).get();
   if(exists.exists){ alert('최초 제출 답지는 이미 저장되어 있어요.'); return; }
-  // 학생에게 정답키를 노출하지 않기 위해 여기서는 객관/단답을 서버채점대기 상태로 저장한다.
-  const autoResults=problems.map(p=>({state:p.type==='constructed'?'pending':'grading',earnedPoints:null}));
-  const payload={assignmentId,studentId:stuId,originalAnswers:answers,autoResults,wrongReasons:{},submittedAt:new Date().toISOString(),learningCompletedAt:null,review:null};
+  // 채점 결과는 클라이언트가 만들지 않는다. 서버/원장 채점이 끝나기 전에는 결과가 비어 있는 상태로 둔다.
+  const payload={assignmentId,studentId:stuId,originalAnswers:answers,wrongReasons:{},submittedAt:new Date().toISOString(),learningCompletedAt:null,review:null};
   const ok=await fsSet('answerSubmissions',id,payload,false); if(ok){
     db.answerSubmissions[id]={id,...payload};
     const serverResults=await requestServerGrade(assignmentId,stuId,answers);
@@ -9148,6 +9228,7 @@ async function saveWrongReason(assignmentId,stuId,idx,value){
 async function completeAnswerLearning(assignmentId,stuId){
   const id=answerSubmissionId(assignmentId,stuId), sub=db.answerSubmissions[id]; if(!sub)return;
   const results=(sub.review&&sub.review.finalResults)||sub.autoResults||[];
+  if(!results.length){alert('채점 결과를 기다려주세요.');return;}
   const wrong=results.map((r,i)=>r&&r.state==='wrong'?i:-1).filter(i=>i>=0);
   if(!wrong.every(i=>sub.wrongReasons&&sub.wrongReasons[i])){alert('틀린 문제의 이유를 모두 선택해주세요.');return;}
   const at=new Date().toISOString(); const ok=await fsUpdate('answerSubmissions',id,{learningCompletedAt:at}); if(ok){sub.learningCompletedAt=at;render();}
@@ -9185,7 +9266,7 @@ function ensureClassAnswerAssignmentsLoaded(clsId){const k=`classans_${clsId}`;i
 function renderClassAnswerSheetAdmin(cls){
   ensureClassAnswerAssignmentsLoaded(cls.id);
   const rows=Object.values(db.assignments||{}).filter(a=>a.classId===cls.id).sort((a,b)=>String(b.assignedAt||'').localeCompare(String(a.assignedAt||'')));
-  return `<div class="card"><div class="row between"><div><h3 style="margin:0;">📝 답지 제출 · 원장 확인</h3><div style="font-size:11px;color:#8a8674;margin-top:3px;">문제은행 연결 전 테스트용 최소 세트 생성기 · 객관식/단답은 ○/× 채점 후 필요한 문항만 수정</div></div><button class="btn sm outline" onclick="createTestAnswerAssignment('${cls.id}')">+ 테스트 세트</button></div>${rows.length?rows.map(a=>`<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line);"><b>${escapeHtml(a.title)}</b> <span class="badge gray">${(a.problems||[]).length}문항</span>${(a.studentIds||[]).map(stuId=>{const s=studentById(stuId),sub=db.answerSubmissions[answerSubmissionId(a.id,stuId)];return `<div style="padding:7px 0;"><div class="row between"><span>${s?escapeHtml(s.name):stuId}</span>${sub?`<div class="row"><span class="badge ${sub.review?.finalizedAt?'green':'yellow'}">${sub.review?.finalizedAt?'최종확인':'제출완료'}</span>${!sub.autoResults?.some(r=>r.state==='grading')?'':(a.source==='problem-repository'?'<span class="badge gray">서버채점 연결 대기</span>':`<button class="btn sm outline" onclick="directorGradeAnswerSubmission('${a.id}','${stuId}')">○/× 채점</button>`)}</div>`:'<span class="badge gray">미제출</span>'}</div>${sub?renderDirectorAnswerReview(a,stuId):''}</div>`;}).join('')}</div>`).join(''):'<div class="empty">배정된 답지 세트가 없어요.</div>'}</div>`;
+  return `<div class="card"><div class="row between"><div><h3 style="margin:0;">📝 답지 제출 · 원장 확인</h3><div style="font-size:11px;color:#8a8674;margin-top:3px;">문제은행 연결 전 테스트용 최소 세트 생성기 · 객관식/단답은 ○/× 채점 후 필요한 문항만 수정</div></div><button class="btn sm outline" onclick="createTestAnswerAssignment('${cls.id}')">+ 테스트 세트</button></div>${rows.length?rows.map(a=>`<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line);"><b>${escapeHtml(a.title)}</b> <span class="badge gray">${(a.problems||[]).length}문항</span>${(a.studentIds||[]).map(stuId=>{const s=studentById(stuId),sub=db.answerSubmissions[answerSubmissionId(a.id,stuId)];return `<div style="padding:7px 0;"><div class="row between"><span>${s?escapeHtml(s.name):stuId}</span>${sub?`<div class="row"><span class="badge ${sub.review?.finalizedAt?'green':'yellow'}">${sub.review?.finalizedAt?'최종확인':'제출완료'}</span>${Array.isArray(sub.autoResults)?(!sub.autoResults.some(r=>r.state==='grading')?'':(a.source==='problem-repository'?'<span class="badge gray">서버채점 연결 대기</span>':`<button class="btn sm outline" onclick="directorGradeAnswerSubmission('${a.id}','${stuId}')">○/× 채점</button>`)):(a.source==='problem-repository'?'<span class="badge gray">서버채점 연결 대기</span>':`<button class="btn sm outline" onclick="directorGradeAnswerSubmission('${a.id}','${stuId}')">○/× 채점</button>`)}</div>`:'<span class="badge gray">미제출</span>'}</div>${sub?renderDirectorAnswerReview(a,stuId):''}</div>`;}).join('')}</div>`).join(''):'<div class="empty">배정된 답지 세트가 없어요.</div>'}</div>`;
 }
 
 // 학생 두 번째 페이지: 기존 숙제계획/영상과 기존 숙제인증/Q&A 기능을 한 화면에 재배치한다.
