@@ -6,6 +6,7 @@ on:
     paths:
       - index.html
       - tests/homework-timer-photo.test.js
+      - tests/homework-submission-undefined.test.js
       - tests/helpers/firestore-stub.js
       - .github/workflows/homework-timer-photo.yml
   workflow_dispatch:
@@ -30,3 +31,7 @@ jobs:
         run: node --check tests/homework-timer-photo.test.js
       - name: Run homework timer photo regression test
         run: node tests/homework-timer-photo.test.js
+      - name: Check strict homework submission test syntax
+        run: node --check tests/homework-submission-undefined.test.js
+      - name: Run strict Firestore homework submission regression
+        run: node tests/homework-submission-undefined.test.js
