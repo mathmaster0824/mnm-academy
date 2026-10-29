@@ -83,29 +83,42 @@ const check = (name, ok, detail) => {
       const originalSetTimeout = window.setTimeout;
       const originalPhotoApiToken = photoApiToken;
       const originalCompressor = fileToCompressedDataURL;
-      const fallbackPhoto = 'data:image/jpeg;base64,dGVzdA==';
+      const fallbackPrefix = 'data:image/jpeg;base64,';
       let timeoutSignalObserved = false;
       let timeoutUploadRecovered = false;
+      let inFlight = 0;
+      let maxConcurrent = 0;
+      const timeoutPhotoCount = 10;
       try {
         photoApiToken = async () => 'fake-token';
-        fileToCompressedDataURL = async () => fallbackPhoto;
-        window.fetch = (_url, options) => new Promise((_resolve, reject) => {
-          timeoutSignalObserved = options.signal instanceof AbortSignal;
-          options.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
-        });
+        fileToCompressedDataURL = async file => fallbackPrefix + encodeURIComponent(file.name);
+        window.fetch = (_url, options) => {
+          inFlight++;
+          maxConcurrent = Math.max(maxConcurrent, inFlight);
+          return new Promise((_resolve, reject) => {
+            timeoutSignalObserved = timeoutSignalObserved || options.signal instanceof AbortSignal;
+            options.signal.addEventListener('abort', () => {
+              inFlight--;
+              reject(new DOMException('aborted', 'AbortError'));
+            }, { once: true });
+          });
+        };
         // 테스트 시간을 줄이되 실제 업로드 코드가 설정한 20초 타이머만 즉시 울리게 한다.
         window.setTimeout = (callback, delay, ...args) =>
           originalSetTimeout(callback, delay === 20000 ? 0 : delay, ...args);
         currentSubState._draftSub = { hwPhotos: [], practicePhotos: [], timerPhotos: [], memo: '' };
         currentSubState._draftSubKey = sid + '_' + date;
         await uploadSubPhoto({
-          files: [new File(['fake-image'], 'timeout-test.jpg', { type: 'image/jpeg', lastModified: 1 })],
+          files: Array.from({ length: timeoutPhotoCount }, (_, i) =>
+            new File(['fake-image-' + i], 'timeout-test-' + i + '.jpg', { type: 'image/jpeg', lastModified: i + 1 })),
           value: ''
         }, 'hwPhotos');
         timeoutUploadRecovered = !homeworkUploadState.active &&
-          homeworkUploadState.done === 1 &&
+          homeworkUploadState.done === timeoutPhotoCount &&
           homeworkUploadState.failed === 0 &&
-          currentSubState._draftSub.hwPhotos[0] === fallbackPhoto;
+          currentSubState._draftSub.hwPhotos.length === timeoutPhotoCount &&
+          currentSubState._draftSub.hwPhotos.every(photo => photo.startsWith(fallbackPrefix)) &&
+          maxConcurrent === 3;
       } finally {
         window.fetch = originalFetch;
         window.setTimeout = originalSetTimeout;
