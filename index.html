@@ -5301,7 +5301,7 @@ async function uploadSubPhoto(inputEl, field){
   let cursor=0;
   const persistCompletedPhotos=()=>{
     draftRef[field]=dedupeHomeworkPhotos([...basePhotos,...results.filter(Boolean)]);
-    if(draftStuId&&draftDate) saveDraftLocal(draftStuId,draftDate,draftRef);
+    if(draftStuId&&draftDate&&draftKey===draftStuId+'_'+draftDate) saveDraftLocal(draftStuId,draftDate,draftRef);
   };
 
   const updateProgress=()=>{
