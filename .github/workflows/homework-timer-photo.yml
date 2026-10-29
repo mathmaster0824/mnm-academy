@@ -1,0 +1,37 @@
+name: Homework timer photo regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - index.html
+      - tests/homework-timer-photo.test.js
+      - tests/homework-submission-undefined.test.js
+      - tests/helpers/firestore-stub.js
+      - .github/workflows/homework-timer-photo.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  homework-timer-photo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Playwright
+        run: npm install --no-save --package-lock=false playwright
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Check test syntax
+        run: node --check tests/homework-timer-photo.test.js
+      - name: Run homework timer photo regression test
+        run: node tests/homework-timer-photo.test.js
+      - name: Check strict homework submission test syntax
+        run: node --check tests/homework-submission-undefined.test.js
+      - name: Run strict Firestore homework submission regression
+        run: node tests/homework-submission-undefined.test.js

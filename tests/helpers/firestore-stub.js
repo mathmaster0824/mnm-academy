@@ -3,6 +3,16 @@ module.exports = `(function(){
   const store = {};                       // {collection: {id: data}}
   window.__store = store;
   const clone = (o)=>JSON.parse(JSON.stringify(o));
+  const resolve = (incoming,current)=>{
+    if(incoming&&typeof incoming==='object'&&!Array.isArray(incoming)&&Array.isArray(incoming.__union)){
+      return [...new Set([...(Array.isArray(current)?current:[]),...incoming.__union])];
+    }
+    if(incoming&&typeof incoming==='object'&&!Array.isArray(incoming)&&Array.isArray(incoming.__remove)){
+      return (Array.isArray(current)?current:[]).filter(x=>!incoming.__remove.includes(x));
+    }
+    return clone(incoming);
+  };
+  const merge = (current,incoming)=>Object.fromEntries(Object.entries(incoming).map(([k,v])=>[k,resolve(v,current?.[k])]));
   const col = (c)=> (store[c] = store[c] || {});
   const snapOf = (c,id)=>{ const d=col(c)[id]; return {id, exists:d!==undefined, data:()=>d===undefined?undefined:clone(d), ref:null}; };
   let seq = 0;
@@ -31,8 +41,8 @@ module.exports = `(function(){
     collection:(c)=>Object.assign(query(c),{
       doc:(id)=>({
         get:async()=>snapOf(c,id),
-        set:async(data,opts)=>{ const cur=col(c)[id]; col(c)[id]=(opts&&opts.merge&&cur)?{...cur,...clone(data)}:clone(data); },
-        update:async(data)=>{ if(col(c)[id]===undefined) throw Object.assign(new Error('not-found'),{code:'not-found'}); col(c)[id]={...col(c)[id],...clone(data)}; },
+        set:async(data,opts)=>{ const cur=col(c)[id]; col(c)[id]=(opts&&opts.merge&&cur)?{...cur,...merge(cur,data)}:merge({},data); },
+        update:async(data)=>{ if(col(c)[id]===undefined) throw Object.assign(new Error('not-found'),{code:'not-found'}); col(c)[id]={...col(c)[id],...merge(col(c)[id],data)}; },
         delete:async()=>{ delete col(c)[id]; },
         onSnapshot:()=>()=>{},
       }),

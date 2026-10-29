@@ -1,0 +1,32 @@
+name: Homework verify regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - index.html
+      - tests/homework-verify.test.js
+      - tests/helpers/firestore-stub.js
+      - .github/workflows/homework-verify.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  homework-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Playwright
+        run: npm install --no-save --package-lock=false playwright
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Check test syntax
+        run: node --check tests/homework-verify.test.js
+      - name: Run homework verification regression tests
+        run: node tests/homework-verify.test.js
