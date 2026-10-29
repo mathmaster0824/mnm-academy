@@ -7881,6 +7881,7 @@ async function ensureOperationalProblemCandidate(meta){
       sourceKey:sourceKey||draft.sourceKey||'',
       originTypes:[...new Set([...(draft.originTypes||[]),meta.originType])],
       origins:hasOrigin?origins:[...origins,{type:meta.originType,id:meta.originId,at:new Date().toISOString()}],
+      ...(meta.originType==='learning-library'?{solutionAssetIds:[...new Set([...(draft.solutionAssetIds||[]),meta.originId])]}:{}),
       updatedAt:new Date().toISOString()
     };
     if(meta.originType==='learning-library'&&meta.originId) patch.solutionAssetIds=[...new Set([...(draft.solutionAssetIds||[]),meta.originId])];
@@ -8018,7 +8019,9 @@ async function saveProblemDraft(draftId,options={}){
         if(!existingKey.exists){
           const answer=String(d.answer||'').trim();
           if(!answer) throw new Error('duplicate problem has no private answer key and draft answer is empty');
-          await problemSetDoc('problemKeys',existingId,{problemId:existingId,answer,acceptedAnswers:Array.isArray(d.acceptedAnswers)&&d.acceptedAnswers.length?d.acceptedAnswers:[answer],explanation:d.explanation||'',sourceDraftId:d.id,repairedFromDuplicate:true,updatedAt:new Date().toISOString()});
+          await problemSetDoc('problemKeys',existingId,{problemId:existingId,answer,acceptedAnswers:Array.isArray(d.acceptedAnswers)&&d.acceptedAnswers.length?d.acceptedAnswers:[answer],explanation:d.explanation||'',sourceDraftId:d.id,repairedFromDuplicate:true,answerSourceFile:d.answerSourceFile||'',answerSourcePage:d.answerSourcePage||null,answerLinkBasis:d.answerLinkBasis||'',updatedAt:new Date().toISOString()});
+        }else if(d.answerSourceFile){
+          await problemSetDoc('problemKeys',existingId,{answerSourceFile:d.answerSourceFile,answerSourcePage:d.answerSourcePage||null,answerLinkBasis:d.answerLinkBasis||'',updatedAt:new Date().toISOString()});
         }
       }
       await problemUpdateDoc('problemDrafts',d.id,{status:'saved',canonicalProblemId:existingId,duplicateOf:existingId,savedAt:new Date().toISOString(),confidence:problemDraftConfidence(d)});
@@ -8031,7 +8034,7 @@ async function saveProblemDraft(draftId,options={}){
     if((d.type||'short')!=='constructed'){
       const answer=String(d.answer||'').trim();
       try{
-        await problemSetDoc('problemKeys',problemId,{problemId,answer,acceptedAnswers:Array.isArray(d.acceptedAnswers)&&d.acceptedAnswers.length?d.acceptedAnswers:(answer?[answer]:[]),explanation:d.explanation||'',sourceDraftId:d.id,updatedAt:new Date().toISOString()});
+        await problemSetDoc('problemKeys',problemId,{problemId,answer,acceptedAnswers:Array.isArray(d.acceptedAnswers)&&d.acceptedAnswers.length?d.acceptedAnswers:(answer?[answer]:[]),explanation:d.explanation||'',sourceDraftId:d.id,answerSourceFile:d.answerSourceFile||'',answerSourcePage:d.answerSourcePage||null,answerLinkBasis:d.answerLinkBasis||'',updatedAt:new Date().toISOString()});
       }catch(keyErr){
         try{ await problemDeleteDoc('problems',problemId); }catch(_){}
         throw new Error('정답키 저장 실패 · '+problemErrorText(keyErr));
@@ -8143,6 +8146,9 @@ async function registerProblemSourceFromManifest(){
 }
 
 let mnmPdfJsPromise=null;
+// 한글 글꼴을 PDF 안에 넣지 않은 파일(CID 글꼴, 예: HYSMyeongJo/UniKS-UCS2-H)은 글자 매핑표(CMap)가 있어야 글자를 읽는다.
+// 매핑표는 필요한 파일만 그때그때 내려받으므로 이 설정이 없어도 되는 PDF 에는 영향이 없다. pdf.js 와 같은 버전(4.10.38)의 npm 배포본 경로.
+const PROBLEM_PDF_CMAP_URL='https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/';
 async function loadMnmPdfJs(){
   if(!mnmPdfJsPromise){
     mnmPdfJsPromise=import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs').then(mod=>{
@@ -8153,6 +8159,8 @@ async function loadMnmPdfJs(){
   return mnmPdfJsPromise;
 }
 function problemPdfNumberCandidate(raw){
+  // 원문자(①②…, ⑴, ❶ 등)는 객관식 보기 번호이지 문항 번호가 아니다. NFKC 정규화 전에 걸러야 한다(정규화하면 ①→1 이 되어 문항 번호로 오인됨).
+  if(/^[\s]*[\u2460-\u2473\u2474-\u2487\u24EB-\u24F4\u2776-\u2793\u3251-\u325F\u32B1-\u32BF]/.test(String(raw||''))) return null;
   const s=String(raw||'').normalize('NFKC').replace(/\s+/g,'').trim();
   if(!s) return null;
 
@@ -8175,13 +8183,22 @@ function problemPdfNumberCandidate(raw){
     kind:decorated?'decorated':leadingZero?'zero-padded':'bare'
   };
 }
+// 번호와 본문이 한 text item 으로 합쳐진 PDF("1. 18과 24의 …")용. 맨 앞의 "숫자." / "숫자)" 뒤에 공백과 본문이 이어질 때만 인정한다.
+// "3.14" 같은 소수, 4자리 이상 숫자, 번호만 있는 줄은 해당하지 않는다. 인정돼도 아래 연속 번호·단 정렬·경계품질 검사를 그대로 거친다.
+function problemPdfLeadingNumberCandidate(raw){
+  const s=String(raw||'').normalize('NFKC');
+  const m=s.match(/^\s*([1-9]\d{0,2})\s*[.)]\s+(?=\S)/);
+  if(!m) return null;
+  const n=Number(m[1]);
+  return {no:String(n).padStart(2,'0'),n,strength:3,kind:'prefixed',prefixLen:m[0].length};
+}
 function problemPdfNormalizeNo(raw){
   return problemPdfNumberCandidate(raw)?.no||'';
 }
 function problemPdfDetectNumberItems(items,viewport){
   const found=[];
   for(const it of items||[]){
-    const c=problemPdfNumberCandidate(it.str); if(!c) continue;
+    const c=problemPdfNumberCandidate(it.str)||problemPdfLeadingNumberCandidate(it.str); if(!c) continue;
     const tr=it.transform||[], x=Number(tr[4]||0), y=Number(tr[5]||0);
     if(!Number.isFinite(x)||!Number.isFinite(y)) continue;
     const xn=x/Math.max(1,viewport.width), yn=y/Math.max(1,viewport.height);
@@ -8250,23 +8267,145 @@ function problemPdfSequentialLabels(plans,rails){
   }
   rows.sort((a,b)=>a.page-b.page||(a.side===b.side?b.y-a.y:(a.side==='L'?-1:1)));
 
-  const accepted=[];
-  let expected=null,gaps=0,resets=0;
-  for(const r of rows){
-    if(expected===null){
-      accepted.push(r); expected=r.n+1; continue;
+  // 연속 번호의 시작점: 맨 처음 만난 후보를 믿지 않는다. 표지("PART 04")·목차·개념 쪽의 숫자가 먼저 잡히면
+  // 그 번호로 사슬이 시작되어 실제 문항 01~05 가 통째로 버려지던 문제(실제 전체 교재 PDF 에서 재현)를 막기 위해,
+  // 모든 후보를 시작점으로 시험해 가장 믿을 만한 사슬을 고른다. 기준: ①번호 모양의 강도 합(앞자리 0·장식 번호 > 맨 숫자)
+  // ②사슬이 걸친 쪽 수가 적은 것(문제 쪽에 모여 있음) ③시작 번호가 1 ④앞선 것.
+  const runChain=(startIdx)=>{
+    const out=[]; let expected=null,gaps=0;
+    for(let i=startIdx;i<rows.length;i++){
+      const r=rows[i];
+      if(expected===null){ out.push(r); expected=r.n+1; continue; }
+      if(r.n===expected){ out.push(r); expected=r.n+1; continue; }
+      if(r.n===expected+1&&r.strength>=4){ gaps++; out.push(r); expected=r.n+1; continue; }
+      // 본문 속 수치/보기 번호는 대부분 현재 expected보다 작거나 갑자기 크게 튄다 → 무시.
     }
-    if(r.n===expected){
-      accepted.push(r); expected=r.n+1; continue;
-    }
-    if(r.n===expected+1&&r.strength>=4){
-      gaps++; accepted.push(r); expected=r.n+1; continue;
-    }
-    // 본문 속 수치/보기 번호는 대부분 현재 expected보다 작거나 갑자기 크게 튄다 → 무시.
+    return {out,gaps};
+  };
+  let best=null;
+  for(let i=0;i<rows.length;i++){
+    const c=runChain(i);
+    c.strength=c.out.reduce((a,x)=>a+Number(x.strength||1),0);
+    c.pages=new Set(c.out.map(x=>x.page)).size;
+    c.startOne=c.out[0].n===1?1:0;
+    if(!best||c.strength>best.strength
+       ||(c.strength===best.strength&&(c.pages<best.pages||(c.pages===best.pages&&c.startOne>best.startOne)))) best=c;
   }
-  const noise=Math.max(0,rows.length-accepted.length);
-  const quality=accepted.length?Math.max(0,Math.min(1,1-(noise/Math.max(1,rows.length))*.55-gaps*.08-resets*.05)):0;
+  const accepted=best?best.out:[], gaps=best?best.gaps:0, resets=0;
+  // 품질: 문항이 잡힌 쪽의 후보만 센다. 개념·표지 쪽의 위첨자 숫자 등은 문제 쪽이 아니므로 경계 품질을 깎지 않는다.
+  const acceptedPages=new Set(accepted.map(x=>x.page));
+  const noise=rows.filter(r=>acceptedPages.has(r.page)&&!accepted.includes(r)).length;
+  const scored=rows.filter(r=>acceptedPages.has(r.page)).length;
+  const quality=accepted.length?Math.max(0,Math.min(1,1-(noise/Math.max(1,scored))*.55-gaps*.08-resets*.05)):0;
   return {labels:accepted,quality,noise,gaps,resets,candidateCount:rows.length};
+}
+// 영역 아래 끝: 다음 영역 시작 글자(nextTop, 쪽 위 기준)의 윗부분이 걸치지 않도록 기준선 위 14pt 까지 내려 자르되,
+// 이 영역 안 마지막 글줄 기준선 아래 3pt 밑으로는 올리지 않고(밀집 조판 보호), 기준선 위 7pt 아래로는 내려가지 않는다.
+function problemPdfRegionBottom(p,x0,x1,top,nextTop){
+  const hi=nextTop-7;
+  let lo=nextTop-14;
+  for(const it of p.items||[]){
+    if(!String(it.str||'').trim()) continue;
+    const tr=it.transform||[], ix=Number(tr[4]||0), base=p.height-Number(tr[5]||0);
+    if(ix<x0+8||ix>x1-4||base<top+4||base>=nextTop-4) continue;
+    lo=Math.max(lo,base+3);
+  }
+  return Math.max(top+55,Math.min(hi,lo));
+}
+// ---- 번호 없는 대표 문항(대표유형/대표문제) ----
+// 기준: 원본에 '유형 01' 같은 유형 번호가 있으면 그 번호로 안정적인 식별자('유형01-대표')를 만든다.
+// 원본(문제 쪽 전체)에 유형 번호가 전혀 없을 때만 앱이 쪽 순서대로 '대표01…'을 부여한다(원본 인쇄 번호가 아님, idSource='app-generated').
+// 유형 번호가 빠졌거나 겹치면 추측하지 않고 식별자에 쪽·단을 넣고 reviewReason 을 남겨 검토로 둔다.
+const PROBLEM_PDF_TYPE_HEAD_RE=/^유형\s*0*(\d{1,3})(?=\s|$)/;
+const PROBLEM_PDF_REP_MARK_RE=/^대표\s*(?:유형|문제)(?=\s|$)/;
+function problemPdfRepresentativeRegions(plans,rails,numbered){
+  const twoCol=!!rails.right, ev=[];
+  for(const p of plans){
+    if(p.isAnswerPage) continue;
+    for(const it of p.items||[]){
+      const str=String(it.str||'').trim(); if(!str) continue;
+      const tr=it.transform||[], x=Number(tr[4]||0), top=p.height-Number(tr[5]||0), xn=x/Math.max(1,p.width);
+      if(!Number.isFinite(x)||!Number.isFinite(top)||top<p.height*.03||top>p.height*.96) continue;
+      const head=str.match(PROBLEM_PDF_TYPE_HEAD_RE), mark=!head&&PROBLEM_PDF_REP_MARK_RE.test(str);
+      if(!head&&!mark) continue;
+      let side='FULL';
+      if(twoCol){
+        const L=rails.left?rails.left.mean:.09, R=rails.right.mean;
+        if(xn<.5){ if(xn>L+.07) continue; side='L'; } else { if(xn>R+.07||xn<R-.05) continue; side='R'; }
+      }else if(xn>.25) continue;
+      ev.push({kind:head?'head':'mark',no:head?Number(head[1]):0,page:p.pageNo,side,top,x,item:it,p});
+    }
+  }
+  ev.sort((a,b)=>a.page-b.page||(a.side===b.side?a.top-b.top:(a.side==='R'?1:-1)));
+  const marks=[]; let pending=null, lastKey='';
+  for(const e of ev){
+    const key=e.page+'|'+e.side; if(key!==lastKey){ pending=null; lastKey=key; }
+    if(e.kind==='head'){ pending=e; continue; }
+    marks.push({...e,head:pending}); pending=null;
+  }
+  if(!marks.length) return [];
+  const anyHead=ev.some(e=>e.kind==='head');
+  const count=new Map(); marks.forEach(m=>{ if(m.head) count.set(m.head.no,(count.get(m.head.no)||0)+1); });
+  const out=[]; let seq=0;
+  for(const m of marks){
+    seq++;
+    const p=m.p; let problemNo, idSource, reviewReason='', typeNo='';
+    if(!anyHead){ problemNo='대표'+String(seq).padStart(2,'0'); idSource='app-generated'; }
+    else if(!m.head){ problemNo=`대표-p${m.page}${m.side}${seq}`; idSource='unresolved'; reviewReason='type-number-missing'; }
+    else if(count.get(m.head.no)>1){ problemNo=`유형${String(m.head.no).padStart(2,'0')}-대표@p${m.page}${m.side}`; idSource='unresolved'; reviewReason='type-number-duplicate'; typeNo=String(m.head.no).padStart(2,'0'); }
+    else { typeNo=String(m.head.no).padStart(2,'0'); problemNo=`유형${typeNo}-대표`; idSource='printed-type-number'; }
+    let x0=0,x1=p.width;
+    if(twoCol){ if(m.side==='L'){x0=0;x1=p.width*.505;} else {x0=p.width*.495;x1=p.width;} }
+    const top=Math.max(0,m.top-14);
+    // 아래 끝: 같은 단에서 이 표시 다음에 나오는 번호 문항 또는 다음 유형 제목/대표 표시
+    let nextTop=null;
+    for(const n of numbered) if(n.page===m.page&&(n.column===m.side||(m.side==='FULL'&&n.column==='FULL'))&&n.markerY>m.top+4) nextTop=nextTop===null?n.markerY:Math.min(nextTop,n.markerY);
+    for(const e of ev) if(e!==m&&e.page===m.page&&e.side===m.side&&e.top>m.top+4) nextTop=nextTop===null?e.top:Math.min(nextTop,e.top);
+    const bottom=nextTop!==null?problemPdfRegionBottom(p,x0,x1,top,nextTop):p.height-22;
+    out.push({problemNo,printedProblemNo:'',page:m.page,x0,y0:top,x1,y1:Math.min(p.height,bottom),column:m.side,markerX:m.x,markerY:m.top,
+      segmentationMethod:'text-rail-sequence',markerPrefixLen:0,idSource,typeNo,reviewReason,representative:true});
+  }
+  return out;
+}
+// ---- '심화 01'처럼 유형/문항 번호와 별도 체계를 쓰는 심화문제 ----
+// 빠른정답 표가 '심화01' 답을 제공하는 교재에서는 문제 쪽의 '심화 01' 라벨도 같은 ID로 수집해야 한다.
+const PROBLEM_PDF_ADVANCED_MARK_RE=/^심화\s*0*(\d{1,2})$/;
+function problemPdfAdvancedRegions(plans,numbered){
+  const events=[];
+  for(const p of plans||[]){
+    if(p.isAnswerPage) continue;
+    for(const it of p.items||[]){
+      const str=String(it.str||'').normalize('NFKC').trim(), m=str.match(PROBLEM_PDF_ADVANCED_MARK_RE);
+      if(!m) continue;
+      const tr=it.transform||[], x=Number(tr[4]||0), top=p.height-Number(tr[5]||0), xn=x/Math.max(1,p.width);
+      if(!Number.isFinite(x)||!Number.isFinite(top)||xn<.04||xn>.82||top<p.height*.03||top>p.height*.96) continue;
+      events.push({p,page:p.pageNo,n:Number(m[1]),x,top,xn,side:xn>=.48?'R':'L',item:it});
+    }
+  }
+  if(!events.length) return [];
+  events.sort((a,b)=>a.page-b.page||(a.side===b.side?a.top-b.top:(a.side==='L'?-1:1)));
+  const counts=new Map(); for(const e of events) counts.set(e.n,(counts.get(e.n)||0)+1);
+  const pageHasRight=new Set(events.filter(e=>e.side==='R').map(e=>e.page));
+  return events.map((e,i)=>{
+    const twoCol=pageHasRight.has(e.page), x0=twoCol?(e.side==='L'?0:e.p.width*.495):0, x1=twoCol?(e.side==='L'?e.p.width*.505:e.p.width):e.p.width;
+    const top=Math.max(0,e.top-14), id='심화'+String(e.n).padStart(2,'0');
+    let nextTop=null;
+    for(const n of events) if(n.page===e.page&&n.side===e.side&&n.top>e.top+4) nextTop=nextTop===null?n.top:Math.min(nextTop,n.top);
+    for(const n of numbered||[]){
+      const sameColumn=n.column===e.side||(e.side==='L'&&n.column==='FULL'&&!twoCol);
+      if(n.page===e.page&&sameColumn&&Number.isFinite(n.markerY)&&n.markerY>e.top+4) nextTop=nextTop===null?n.markerY:Math.min(nextTop,n.markerY);
+    }
+    const bottom=nextTop!==null?problemPdfRegionBottom(e.p,x0,x1,top,nextTop):e.p.height-22;
+    const duplicate=counts.get(e.n)>1;
+    return {
+      problemNo:duplicate?id+'@p'+e.page+e.side:id,
+      printedProblemNo:id,page:e.page,x0,y0:top,x1,y1:Math.min(e.p.height,bottom),
+      column:twoCol?e.side:'FULL',markerX:e.x,markerY:e.top,
+      segmentationMethod:'text-rail-sequence',markerPrefixLen:0,
+      idSource:duplicate?'unresolved':'printed-advanced-number',typeNo:id,advanced:true,
+      reviewReason:duplicate?'advanced-number-duplicate':''
+    };
+  });
 }
 function problemPdfBuildRegions(plans){
   const rails=problemPdfClusterRails(plans);
@@ -8285,19 +8424,38 @@ function problemPdfBuildRegions(plans){
     }
     const markerTop=p.height-label.y;
     const top=Math.max(0,markerTop-14);
-    const bottom=next?Math.max(top+55,p.height-next.y-7):p.height-22;
+    const bottom=next?problemPdfRegionBottom(p,x0,x1,top,p.height-next.y):p.height-22;
     const printedNo=String(label.n).padStart(2,'0');
     const problemNo=hasDuplicatePrinted?String(i+1).padStart(3,'0'):printedNo;
     all.push({
       problemNo,printedProblemNo:printedNo,page:p.pageNo,x0,y0:top,x1,y1:Math.min(p.height,bottom),
       column:twoCol?label.side:'FULL',markerX:label.x,markerY:markerTop,
-      segmentationMethod:'text-rail-sequence'
+      segmentationMethod:'text-rail-sequence',markerPrefixLen:Number(label.prefixLen||0)
     });
     usedPrinted.add(printedNo);
+  }
+  const reps=problemPdfRepresentativeRegions(plans,rails,all);
+  const advanced=problemPdfAdvancedRegions(plans,all);
+  if(reps.length||advanced.length){
+    all.push(...reps,...advanced);
+    const rank=r=>r.column==='R'?1:0;
+    const advancedByPage=new Map();
+    for(const r of advanced){ const list=advancedByPage.get(r.page)||[]; list.push(r); advancedByPage.set(r.page,list); }
+    const gridPages=new Set();
+    for(const [page,list] of advancedByPage){
+      if(list.filter(r=>r.column==='L').length>=2&&list.filter(r=>r.column==='R').length>=2) gridPages.add(page);
+    }
+    all.sort((a,b)=>{
+      if(a.page!==b.page) return a.page-b.page;
+      if(gridPages.has(a.page)) return a.y0-b.y0||a.x0-b.x0;
+      return rank(a)-rank(b)||a.y0-b.y0;
+    });
   }
   return {
     regions:all,
     meta:{
+      representative:reps.length,
+      advanced:advanced.length,
       method:'text-rail-sequence',
       quality:seq.quality,
       detected:all.length,
@@ -8308,6 +8466,135 @@ function problemPdfBuildRegions(plans){
       rightRail:rails.right?Number(rails.right.mean.toFixed(4)):null
     }
   };
+}
+
+// ---- 쪽 마지막 문항 아래쪽 정리 ----
+// 다음 문항 번호가 없는 쪽의 마지막 문항은 영역이 쪽 아래 끝까지 늘어나 안내 상자·꼬리말·쪽 번호가 본문 글과 문항 이미지에 섞인다.
+// 보수적 규칙: (1) 문항 안 글 줄 사이에 쪽 높이의 25% 이상 빈틈이 있고 (2) 그 뒤의 글이 모두 쪽 아래 20% 구역에만 있을 때만 그 틈에서 자른다.
+// 빈틈 안에 그림(화면에 그려진 어두운 픽셀 3행 이상)이 있으면 그림 끝까지는 남긴다. 조건이 하나라도 안 맞으면 자르지 않는다(그림·소문항 손실 방지).
+const PROBLEM_PDF_TRAIL_GAP=.25, PROBLEM_PDF_TRAIL_ZONE=.80;
+// 꼬리말 구역 규칙: 쪽 아래 8% 안의 줄이 (a) 쪽 번호 모양("3", "1 / 2", "- 3 -", "3쪽")이거나, (b) 다른 쪽의 같은 위치(±3pt, ±8pt)에도 글이 있거나(반복되는 꼬리말), (c) 쪽 아래 4% 안이면 꼬리말로 본다.
+// 꼬리말은 큰 빈틈이 없어도 문항에서 제외한다. 본문과 꼬리말 사이(빈틈)에 그림이 있으면 아래 ink 검사로 남긴다.
+const PROBLEM_PDF_FOOTER_BAND=.92, PROBLEM_PDF_FOOTER_EDGE=.96;
+const PROBLEM_PDF_PAGE_NUMBER_RE=/^\s*[-–—]?\s*\d{1,4}\s*(?:\/\s*\d{1,4})?\s*(?:쪽|페이지|p|P|page|Page)?\s*[-–—]?\s*$/;
+function problemPdfFooterRecurrence(plans){
+  const bottom=new Map();   // 쪽 번호 -> 아래 구역 글 위치 목록
+  for(const p of plans||[]){
+    const list=[];
+    for(const it of p.items||[]){
+      if(!String(it.str||'').trim()) continue;
+      const tr=it.transform||[], yb=p.height-Number(tr[5]||0), x=Number(tr[4]||0);
+      if(Number.isFinite(yb)&&Number.isFinite(x)&&yb>=PROBLEM_PDF_FOOTER_BAND*p.height) list.push({yb,x});
+    }
+    bottom.set(p.pageNo,list);
+  }
+  return (pageNo,it,pageHeight)=>{
+    if(bottom.size<2) return false;   // 한 쪽짜리 PDF 는 반복 여부를 알 수 없다
+    const tr=it.transform||[], yb=pageHeight-Number(tr[5]||0), x=Number(tr[4]||0);
+    for(const [n,list] of bottom) if(n!==pageNo&&list.some(o=>Math.abs(o.yb-yb)<=3&&Math.abs(o.x-x)<=8)) return true;
+    return false;
+  };
+}
+function problemPdfTrailingCut(items,region,pageHeight,opts){
+  const recur=opts&&opts.recur, rows=[];
+  for(const it of items||[]){
+    const str=String(it.str||'').trim(); if(!str) continue;
+    const tr=it.transform||[], x=Number(tr[4]||0), yb=pageHeight-Number(tr[5]||0);
+    const h=Math.abs(Number(it.height||tr[3]||10))||10;
+    if(!Number.isFinite(x)||!Number.isFinite(yb)) continue;
+    // 쪽 가운데 정렬 꼬리말("M&m · 91")은 두 단 사이 경계를 가로지른다. 오른쪽 단에서는 글 시작점이 단 왼쪽 경계 바로 앞이라도, 쪽 아래 구역 글이 이 영역과 가로로 겹치면 꼬리말로 본다.
+    const w=Number(it.width)||0, inFooterBand=yb>=PROBLEM_PDF_FOOTER_BAND*pageHeight, overlapsRegion=inFooterBand&&x+w>region.x0+2&&x<region.x1-4;
+    if((x<region.x0+8&&!overlapsRegion)||x>region.x1-4||yb<region.y0) continue;
+    rows.push({yb,x,str,top:yb-h*.9,bottom:yb+h*.25,recur:!!(recur&&recur(it))});
+  }
+  rows.sort((a,b)=>a.yb-b.yb||a.x-b.x);
+  const lines=[];
+  for(const r of rows){
+    const l=lines[lines.length-1];
+    if(l&&Math.abs(r.yb-l.yb)<=4){ l.top=Math.min(l.top,r.top); l.bottom=Math.max(l.bottom,r.bottom); l.text+=r.str; l.recur=l.recur||r.recur; }
+    else lines.push({yb:r.yb,top:r.top,bottom:r.bottom,text:r.str,recur:r.recur});
+  }
+  let a=null, b=null;
+  // 규칙 A: 큰 빈틈(쪽 높이 25%↑) 뒤의 글이 모두 쪽 아래 20% 구역
+  for(let i=0;i<lines.length-1&&!a;i++){
+    if(lines[i+1].top-lines[i].bottom<PROBLEM_PDF_TRAIL_GAP*pageHeight) continue;
+    if(lines.slice(i+1).every(l=>l.top>=PROBLEM_PDF_TRAIL_ZONE*pageHeight)) a={lastBodyBottom:lines[i].bottom,trailStart:lines[i+1].top,trailLines:lines.length-1-i,rule:'gap'};
+  }
+  // 규칙 B: 맨 끝의 줄들이 꼬리말(쪽 번호 모양·반복 위치·맨 아래 4%)
+  const isFooter=l=>l.yb>=PROBLEM_PDF_FOOTER_BAND*pageHeight&&(l.yb>=PROBLEM_PDF_FOOTER_EDGE*pageHeight||l.recur||PROBLEM_PDF_PAGE_NUMBER_RE.test(l.text));
+  let f=lines.length; while(f>1&&isFooter(lines[f-1])) f--;
+  if(f<lines.length) b={lastBodyBottom:lines[f-1].bottom,trailStart:lines[f].top,trailLines:lines.length-f,rule:'footer'};
+  if(a&&b) return a.trailStart<=b.trailStart?a:b;
+  return a||b;
+}
+async function problemPdfInkRuns(page,x0,x1,yFrom,yTo,thr=215){
+  const vp=page.getViewport({scale:1}), canvas=document.createElement('canvas');
+  canvas.width=Math.ceil(vp.width); canvas.height=Math.ceil(vp.height);
+  const ctx=canvas.getContext('2d',{alpha:false,willReadFrequently:true}); ctx.fillStyle='#fff'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  await page.render({canvasContext:ctx,viewport:vp}).promise;
+  const xa=Math.max(0,Math.floor(x0)), xb=Math.min(canvas.width,Math.ceil(x1)), ya=Math.max(0,Math.floor(yFrom)), yb=Math.min(canvas.height,Math.ceil(yTo));
+  if(xb<=xa||yb<=ya) return [];
+  const w=xb-xa, data=ctx.getImageData(xa,ya,w,yb-ya).data, rows=[];
+  for(let y=0;y<yb-ya;y++){
+    let n=0; for(let x=0;x<w;x++){ const i=(y*w+x)*4; if(data[i]*.3+data[i+1]*.59+data[i+2]*.11<thr) n++; }
+    rows.push(n>=2);
+  }
+  const runs=[]; let st=-1;
+  for(let y=0;y<=rows.length;y++){
+    if(y<rows.length&&rows[y]){ if(st<0) st=y; }
+    else if(st>=0){ if(y-st>=3) runs.push({top:ya+st,bottom:ya+y}); st=-1; }   // 가는 선(1~2행)은 그림으로 보지 않는다
+  }
+  return runs;
+}
+// ---- 교사용 쪽 안의 "정답/풀이" 줄 잘라내기 ----
+// 교사용 교재는 문제 바로 아래에 빨간 "정답 ④ / 풀이"가 같은 쪽 안에 인쇄돼 있다(실제 교재에서 재현). 그대로 두면 문항 이미지와 본문 글에
+// 정답이 섞여 학생에게 보일 수 있다. 문항 영역 안에서 줄의 맨 앞이 "정답"(뒤에 한글이 붙는 "정답을"·"정답은" 같은 문장은 제외)인 첫 줄을 찾아
+// 그 줄 위에서 영역을 자르고, 잘랐다는 표시(inlineAnswerCut)를 남긴다. 정답 줄이 번호 글줄 바로 밑(18pt 이내)이라 남는 문제 본문이 없으면 자르지 않고 검토 사유를 남긴다.
+// 정답 값 자체는 이 단계에서 읽어 쓰지 않는다(정답표가 있을 때만 연결, 없으면 검토).
+const PROBLEM_PDF_INLINE_ANSWER_RE=/^정답(?:[\s:：]|[^가-힣]|$)/;   // 공백을 남긴 줄 글에서 판정("정답 제3사분면"은 인정, "정답은 …"·"정답을 …" 문장은 제외)
+function problemPdfCutInlineAnswers(plans,regions){
+  for(const r of regions){
+    const plan=plans.find(p=>p.pageNo===r.page); if(!plan) continue;
+    const rows=[];
+    for(const it of plan.items||[]){
+      const str=String(it.str||''); if(!str.trim()) continue;
+      const tr=it.transform||[], x=Number(tr[4]||0), y=plan.height-Number(tr[5]||0);
+      if(!Number.isFinite(x)||!Number.isFinite(y)) continue;
+      if(x<r.x0+8||x>r.x1-4||y<r.y0+20||y>r.y1+4) continue;
+      let row=rows.find(q=>Math.abs(q.y-y)<=3); if(!row){row={y,items:[]};rows.push(row);} row.items.push({x,s:str});
+    }
+    rows.sort((a,b)=>a.y-b.y);
+    for(const row of rows){
+      row.items.sort((a,b)=>a.x-b.x);
+      const text=row.items.map(i=>i.s).join('').normalize('NFKC').replace(/\s+/g,' ').trim();
+      if(!PROBLEM_PDF_INLINE_ANSWER_RE.test(text)) continue;
+      const cut=row.y-14;                       // 글줄 기준선 위로 14pt (글자 윗부분 포함)
+      const base=Number.isFinite(r.markerY)?r.markerY:r.y0+14;   // 번호가 있는 글줄 기준선
+      if(cut>=base+4){ r.y1=Math.min(r.y1,cut); r.inlineAnswerCut=true; }
+      else if(!r.reviewReason) r.reviewReason='inline-answer-not-trimmed';
+      break;
+    }
+  }
+  return regions;
+}
+async function problemPdfTrimTrailingRegions(pages,plans,regions){
+  const recurs=problemPdfFooterRecurrence(plans), last=new Map();
+  for(const r of regions){ const k=r.page+'|'+(r.column||'FULL'), cur=last.get(k); if(!cur||r.y0>cur.y0) last.set(k,r); }
+  for(const r of last.values()){
+    try{
+      const plan=plans.find(p=>p.pageNo===r.page); if(!plan) continue;
+      const cut=problemPdfTrailingCut(plan.items,r,plan.height,{recur:it=>recurs(plan.pageNo,it,plan.height)}); if(!cut) continue;
+      const runs=await problemPdfInkRuns(pages[r.page],r.x0,r.x1,cut.lastBodyBottom+1,cut.trailStart-2);
+      const figBottom=runs.length?Math.max(...runs.map(x=>x.bottom)):0;
+      // 마지막 본문 줄에 바로 이어지는 옅은 음영 영역(안내 상자 등)은 끝까지 포함해 가장자리가 잘리지 않게 한다
+      const light=await problemPdfInkRuns(pages[r.page],r.x0,r.x1,cut.lastBodyBottom+1,cut.trailStart-2,250);
+      const touch=light.find(x=>x.top<=cut.lastBodyBottom+6), boxBottom=touch?touch.bottom:0;
+      const nb=Math.min(Math.max(cut.lastBodyBottom,figBottom,boxBottom)+8,cut.trailStart-2);
+      const y1=Math.min(r.y1,Math.max(nb,r.y0+55));
+      if(y1<r.y1){ r.y1=y1; r.trailingTrimmed=true; }
+    }catch(e){ console.warn('problem region trailing trim skipped',e); }
+  }
+  return regions;
 }
 
 function problemPdfSourceMeta(fileName){
@@ -8384,7 +8671,14 @@ function problemPdfRegionText(items,region,pageHeight){
     if(x<region.x0+8||x>region.x1-4||y<region.y0-4||y>region.y1+4) continue;
     const text=String(it.str||'').trim(); if(!text) continue;
     // 문제번호와 같은 숫자가 본문에 다시 나올 수 있으므로, 실제 marker 좌표의 항목만 제거한다.
-    if(Number.isFinite(region.markerX)&&Number.isFinite(region.markerY)&&Math.abs(x-region.markerX)<12&&Math.abs(y-region.markerY)<12) continue;
+    if(Number.isFinite(region.markerX)&&Number.isFinite(region.markerY)&&Math.abs(x-region.markerX)<12&&Math.abs(y-region.markerY)<12){
+      // 번호와 본문이 한 덩어리인 항목은 번호 앞부분만 떼고 본문은 남긴다.
+      if(region.markerPrefixLen>0){
+        const rest=String(it.str||'').normalize('NFKC').slice(region.markerPrefixLen).trim();
+        if(rest) rows.push({x,y,s:rest});
+      }
+      continue;
+    }
     rows.push({x,y,s:text});
   }
   rows.sort((a,b)=>Math.abs(a.y-b.y)>4?a.y-b.y:a.x-b.x);
@@ -8394,10 +8688,37 @@ function problemPdfRegionText(items,region,pageHeight){
   return problemPdfDecodeText(cleaned);
 }
 
-function problemPdfIsAnswerPageText(pageText){
+const PROBLEM_PDF_ANSWER_TITLE_RE=/정답표|빠른\s*정답|빠른\s*답|정답\s*(?:및|과)\s*해설|정답\s*및\s*풀이|답안표|정답\s*모음|해답/i;
+// 같은 줄(y 좌표가 거의 같은 text item 들)을 붙여 한 줄 글로 만든다. 글자 조각마다 item 이 나뉜 PDF 도 한 줄이 된다.
+// 글 폭(w)을 아는 경우 앞 글 끝과 다음 글 시작 사이가 PROBLEM_PDF_LINE_BREAK_GAP 보다 넓으면 다른 덩어리로 나눈다
+// (꼬리말의 왼쪽 안내문과 오른쪽 끝 라벨이 한 줄로 이어 붙어 제목처럼 보이는 것을 막는다). 글 조각이 맞붙은 PDF 는 간격이 거의 0이라 한 줄로 유지된다.
+const PROBLEM_PDF_LINE_BREAK_GAP=18;
+function problemPdfAnswerTextLines(items){
+  const out=[];
+  for(const r of problemPdfGroupAnswerRows(items)){
+    let cur=[], prevEnd=null;
+    for(const it of r.items){
+      if(cur.length&&prevEnd!==null&&it.w!==null&&it.x-prevEnd>PROBLEM_PDF_LINE_BREAK_GAP){ out.push(cur.join('')); cur=[]; }
+      cur.push(it.text);
+      prevEnd=it.w!==null?it.x+it.w:null;
+    }
+    if(cur.length) out.push(cur.join(''));
+  }
+  return out;
+}
+// 정답표 '제목' 줄: 짧고, 문장이 아니어야 한다. "정답은 마지막 쪽의 정답표에서 확인하세요." 같은 안내 문장은 제목이 아니다.
+function problemPdfLineIsAnswerTitle(line){
+  const t=String(line||'').normalize('NFKC').replace(/\s+/g,'');
+  if(!t||t.length>60||!PROBLEM_PDF_ANSWER_TITLE_RE.test(t)) return false;
+  if(/(?:다|요|까|죠)?[.!?。]$|(?:다|요|까|죠)$/.test(t)) return false;
+  return true;
+}
+// lines: 줄 단위 글(problemPdfAnswerTextLines). 있으면 제목 줄로만 판정하고, 없으면(호환) 종전처럼 쪽 전체에서 키워드를 찾는다.
+function problemPdfIsAnswerPageText(pageText,lines){
   const t=String(pageText||'').normalize('NFKC').replace(/\s+/g,' ').trim();
   if(!t) return false;
-  if(/정답표|빠른\s*정답|빠른\s*답|정답\s*(?:및|과)\s*해설|정답\s*및\s*풀이|답안표|정답\s*모음|해답/i.test(t)) return true;
+  if(Array.isArray(lines)){ if(lines.some(problemPdfLineIsAnswerTitle)) return true; }
+  else if(PROBLEM_PDF_ANSWER_TITLE_RE.test(t)) return true;
   // '정답을 구하시오' 같은 문제 문장과 구분하기 위해 페이지 앞부분의 제목형 '정답/답안'만 인정.
   const head=t.slice(0,180);
   return /^(?:[^가-힣A-Za-z0-9]{0,8})?(?:정답|답안)(?:\s|$|[·:：\-])/i.test(head);
@@ -8407,7 +8728,7 @@ async function problemPdfPagePlan(page,pageNo){
   const items=tc.items||[], pageText=items.map(x=>String(x.str||'')).join(' ');
   return {
     pageNo,width:viewport.width,height:viewport.height,items,pageText,
-    isAnswerPage:problemPdfIsAnswerPageText(pageText),
+    isAnswerPage:problemPdfIsAnswerPageText(pageText,problemPdfAnswerTextLines(items.map(x=>({text:x.str,x:x.transform?.[4],y:x.transform?.[5],w:x.width,h:x.height})))),
     candidates:problemPdfDetectNumberItems(items,viewport)
   };
 }
@@ -8519,10 +8840,15 @@ function problemPdfAnswerNoKey(v){
   if(!Number.isFinite(n)||n<1||n>300) return '';
   return String(n).padStart(2,'0');
 }
+// NFKC 는 전각 숫자·공백 정리에는 좋지만 ²→2, ½→1⁄2, ③→3 처럼 정답의 뜻을 바꾸는 글자도 일반 글자로 바꾼다. 그런 글자는 그대로 둔다.
+const PROBLEM_PDF_KEEP_FORM_CHARS='\u00B2\u00B3\u00B9\u00BC-\u00BE\u2070-\u209F\u2150-\u215F\u2460-\u2473\u2776-\u2793';
+function problemPdfNfkcKeepMath(v){
+  return String(v||'').replace(new RegExp('[^'+PROBLEM_PDF_KEEP_FORM_CHARS+']+','g'),seg=>seg.normalize('NFKC'));
+}
 function problemPdfCleanAnswerText(v){
   const raw=problemPdfDecodeText(String(v||'')).trim();
   if(/^[①②③④⑤]$/.test(raw)) return raw;
-  let t=raw.normalize('NFKC').replace(/\s+/g,' ').trim();
+  let t=problemPdfNfkcKeepMath(raw).replace(/\s+/g,' ').trim();
   if(!t) return '';
   t=t.replace(/^(?:정답|답)\s*[:：]?\s*/,'').trim();
   if(!t || /^[-–—·•]+$/.test(t)) return '';
@@ -8532,7 +8858,8 @@ function problemPdfCleanAnswerText(v){
 }
 function problemPdfGroupAnswerRows(items){
   const clean=(items||[]).filter(x=>String(x.text||'').trim()).map(x=>({
-    text:String(x.text||'').trim(), x:Number(x.x||0), y:Number(x.y||0)
+    text:String(x.text||'').trim(), x:Number(x.x||0), y:Number(x.y||0), w:Number.isFinite(Number(x.w))&&x.w!==null&&x.w!==''?Number(x.w):null,
+    h:Number.isFinite(Number(x.h))&&x.h!==null&&x.h!==''?Number(x.h):null
   })).sort((a,b)=>Math.abs(a.y-b.y)>5?b.y-a.y:a.x-b.x);
   const rows=[];
   for(const it of clean){
@@ -8543,12 +8870,40 @@ function problemPdfGroupAnswerRows(items){
   rows.forEach(r=>r.items.sort((a,b)=>a.x-b.x));
   return rows.sort((a,b)=>b.y-a.y);
 }
+// 한 칸의 답이 여러 text item 으로 쪼개진 경우 이어 붙인다. 앞 글자에 바짝 붙고 더 작고 약간 위에 있는 숫자는 위첨자(cm², x²)로 보고 ²·³ 같은 원래 표기로 되돌린다.
+const PROBLEM_PDF_SUPERSCRIPT_MAP={'0':'\u2070','1':'\u00B9','2':'\u00B2','3':'\u00B3','4':'\u2074','5':'\u2075','6':'\u2076','7':'\u2077','8':'\u2078','9':'\u2079'};
+function problemPdfJoinAnswerCells(cells){
+  let out='', prev=null;
+  for(const c of cells||[]){
+    const t=String(c.text||'').trim(); if(!t){continue;}
+    let piece=t, sep=' ';
+    if(prev){
+      const prevEnd=prev.w!==null&&prev.w!==undefined?prev.x+prev.w:null;
+      const gap=prevEnd===null?99:c.x-prevEnd, rise=c.y-prev.y;
+      const smaller=c.h!==null&&c.h!==undefined&&prev.h!==null&&prev.h!==undefined&&c.h<prev.h*.92;
+      if(gap<=1.5&&rise>=1.5&&rise<=8&&smaller&&/^[0-9]{1,2}$/.test(t)&&/[A-Za-z\uAC00-\uD7A3)\]]$/.test(out)){
+        piece=t.replace(/[0-9]/g,d=>PROBLEM_PDF_SUPERSCRIPT_MAP[d]); sep='';
+      }else if(gap<=0.8) sep='';
+    }else sep='';
+    out+=sep+piece; prev=c;
+  }
+  return out.trim();
+}
 function problemPdfExtractAnswerPairsFromItems(items){
   const out=new Map(), rows=problemPdfGroupAnswerRows(items);
   const setPair=(no,ans,confidence,method)=>{
     const key=problemPdfAnswerNoKey(no), answer=problemPdfCleanAnswerText(ans);
     if(!key||!answer||out.has(key)) return;
-    out.set(key,{answer,confidence,method});
+    out.set(key,{answer,confidence,method,basis:`정답표 문항번호 ${key}`});
+  };
+  // 대표 문항: 정답표의 '유형01 대표 | ④' → 식별자 '유형01-대표'. 같은 유형 번호가 다른 답으로 두 번 나오면 추측하지 않고 충돌로 둔다.
+  const setRep=(typeNo,ans,cells)=>{
+    const id=`유형${String(typeNo).padStart(2,'0')}-대표`, answer=problemPdfCleanAnswerText(ans);
+    if(!answer) return;
+    const isChoice=/^[①②③④⑤]$/.test(answer), basis=`정답표 '유형${String(typeNo).padStart(2,'0')} 대표' 행`;
+    const prev=out.get(id);
+    if(prev){ if(prev.answer!==answer) out.set(id,{answer:'',confidence:0,method:'needs-review',conflict:true,basis:`정답표에 '유형${String(typeNo).padStart(2,'0')} 대표'가 서로 다른 답으로 중복`}); return; }
+    out.set(id,{answer,confidence:isChoice?1:0.93,method:isChoice?'answer-table-choice':'answer-table-text',basis,representative:true});
   };
 
   for(const row of rows){
@@ -8563,6 +8918,32 @@ function problemPdfExtractAnswerPairsFromItems(items){
         if(ans) setPair(m[1],ans,0.97,/^[①②③④⑤]$/.test(ans)?'answer-table-choice':'answer-table-text');
       }
     }
+
+    // R. '유형01 대표' 칸 다음의 칸들(다음 대표 칸이나 앞자리 0 번호 전까지)이 그 대표 문항의 답.
+    const repRe=/^유형\s*0*(\d{1,3})\s*대표(?:\s*(?:유형|문제))?\s*(.*)$/;
+    xs.forEach((x,i)=>{
+      const m=String(x.text||'').trim().match(repRe); if(!m) return;
+      let ans=m[2].trim();
+      if(!ans){
+        let e=i+1; while(e<xs.length&&!repRe.test(String(xs[e].text||'').trim())&&!/^0\d{1,2}$/.test(String(xs[e].text||'').normalize('NFKC').trim())) e++;
+        ans=problemPdfJoinAnswerCells(xs.slice(i+1,e));
+      }
+      setRep(m[1],ans);
+    });
+    const hasRep=xs.some(x=>repRe.test(String(x.text||'').trim()));
+    // C. 앞자리 0이 붙은 번호("001")가 한 행에 여러 개 있는 표: "유형01 대표 | ④ | 001 | a ≠ 2 | 002 | 4".
+    // 앞자리 0 번호는 답과 헷갈릴 일이 거의 없으므로 번호로 보고, 다음 번호 전까지의 모든 칸(여러 text item 으로 쪼개진 답 포함)을 그 번호의 답으로 모은다.
+    // 번호 앞의 칸(유형 이름, 원문자 대표 답)은 번호가 없는 문항의 것이라 이 단계에서는 쓰지 않는다.
+    const zeroIdx=[]; xs.forEach((x,i)=>{ if(/^0\d{1,2}$/.test(String(x.text||'').normalize('NFKC').trim())&&problemPdfAnswerNoKey(x.text)) zeroIdx.push(i); });
+    if(zeroIdx.length){
+      zeroIdx.forEach((zi,k)=>{
+        const end=k+1<zeroIdx.length?zeroIdx[k+1]:xs.length;
+        const ans=problemPdfJoinAnswerCells(xs.slice(zi+1,end));
+        if(ans) setPair(xs[zi].text,ans,/^[①②③④⑤]$/.test(ans)?1:0.93,/^[①②③④⑤]$/.test(ans)?'answer-table-choice':'answer-table-text');
+      });
+      continue;
+    }
+    if(hasRep) continue;   // '유형01 대표 | ④' 행의 원문자 답을 문항 번호 4 로 읽지 않는다
 
     // B. "1 | ③ | 2 | ⑤ | 3 | 12"처럼 번호와 답이 별도 text item인 다열 표.
     // 숫자 답(예: 12)도 있으므로 단순히 "숫자=다음 문제번호"로 보지 않는다.
@@ -8597,10 +8978,72 @@ function problemPdfExtractAnswerPairsFromItems(items){
 function problemPdfInferType(rawText,answerCandidate){
   const t=String(rawText||'').normalize('NFKC');
   if(answerCandidate?.method==='answer-table-choice' || /^[①②③④⑤]$/.test(String(answerCandidate?.answer||''))) return 'mc';
-  const circled=(t.match(/[①②③④⑤]/g)||[]).length;
+  // NFKC 정규화는 ①→1 로 바꿔 보기 번호를 지우므로, 원문에서 센다(정답표가 없는 학생용 PDF 의 객관식 판별).
+  const circled=(String(rawText||'').match(/[①②③④⑤]/g)||[]).length;
   if(circled>=2) return 'mc';
-  if(/증명하시오|서술하시오|풀이\s*과정.*(?:쓰|적|나타내)|과정을\s*쓰시오|이유를\s*쓰시오/.test(t)) return 'constructed';
+  // 풀이 과정 제출 안내("풀이 과정을 식으로 쓰고…")만으로는 서술형으로 단정하지 않는다(최종 답이 정해지면 단답형, 풀이 과정 요구는 현재 저장 구조에 필드가 없음).
+  if(/증명하시오|서술하시오|이유를\s*쓰시오/.test(t)) return 'constructed';
   return 'short';
+}
+function problemPdfExtractQuickAnswerPairsFromItems(items){
+  const out=new Map(), rows=problemPdfGroupAnswerRows(items), allItems=rows.flatMap(r=>r.items);
+  const typeHeads=[];
+  for(const row of rows){
+    for(const it of row.items){
+      const m=String(it.text||'').trim().match(/^유형\s*0*(\d{1,2})$/);
+      if(m) typeHeads.push({typeNo:Number(m[1]),x:it.x,y:it.y});
+    }
+  }
+  if(!typeHeads.length) return out;
+  const nearestColumn=x=>typeHeads.reduce((best,h)=>!best||Math.abs(h.x-x)<Math.abs(best.x-x)?h:best,null);
+  const put=(key,answer,basis,representative=false)=>{
+    const clean=problemPdfCleanAnswerText(answer);
+    if(!key||!clean) return;
+    const choice=/^[①②③④⑤]$/.test(clean);
+    out.set(key,{answer:clean,confidence:choice?1:0.95,method:choice?'answer-table-choice':'answer-table-text',basis,representative});
+  };
+  for(const row of rows){
+    for(const it of row.items){
+      const t=String(it.text||'').trim();
+      const rep=t.match(/^대표\s*([①②③④⑤])$/);
+      if(rep){
+        const col=nearestColumn(it.x);
+        const head=typeHeads.filter(h=>Math.abs(h.x-col.x)<=2&&h.y>it.y&&h.y-it.y<=36).sort((a,b)=>a.y-b.y)[0];
+        if(head) put('유형'+String(head.typeNo).padStart(2,'0')+'-대표',rep[1],"정답표 '유형"+String(head.typeNo).padStart(2,'0')+" 대표' 행",true);
+        continue;
+      }
+      const q=t.match(/^(0\d{2})\s+(.+)$/);
+      if(q){
+        const key=problemPdfAnswerNoKey(q[1]), col=nearestColumn(it.x);
+        const suffix=q[2].trim(), suffixWidth=Math.min(it.w||0,Math.max(4,suffix.length*6));
+        const startX=it.x+Math.max(0,(it.w||0)-suffixWidth);
+        const cells=[{text:suffix,x:startX,y:it.y,w:suffixWidth,h:it.h}];
+        for(const fragment of row.items.filter(x=>x.x>=it.x+(it.w||0)-1&&Math.abs(x.x-col.x)<90&&x.x>it.x).sort((a,b)=>a.x-b.x)){
+          if(fragment===it) continue;
+          const prev=cells[cells.length-1], prevEnd=prev.x+(prev.w||0);
+          if(fragment.x-prevEnd>18) break;
+          cells.push(fragment);
+        }
+        put(key,problemPdfJoinAnswerCells(cells),'정답표 문항번호 '+key);
+        continue;
+      }
+      const advanced=t.match(/^심화\s*0*(\d{1,2})\s*[:：]\s*(.*)$/);
+      if(advanced){
+        const key='심화'+String(Number(advanced[1])).padStart(2,'0'), col=nearestColumn(it.x);
+        let answer=advanced[2].trim();
+        if(!answer){
+          const fragments=allItems.filter(x=>x!==it&&x.x>=it.x+(it.w||0)-1&&Math.abs(x.x-col.x)<90&&x.y<=it.y+14&&x.y>=it.y-14).sort((a,b)=>b.y-a.y||a.x-b.x);
+          const numeric=fragments.filter(x=>/^\d+(?:\.\d+)?$/.test(String(x.text||'').trim()));
+          if(numeric.length===2&&Math.abs(numeric[0].x-numeric[1].x)<=12&&Math.abs(numeric[0].y-numeric[1].y)>=3&&Math.abs(numeric[0].y-numeric[1].y)<=10){
+            const [top,bottom]=numeric[0].y>numeric[1].y?numeric:numeric.slice().reverse();
+            answer=String(top.text).trim()+'/'+String(bottom.text).trim();
+          }else answer=problemPdfJoinAnswerCells(fragments);
+        }
+        put(key,answer,'정답표 심화 문항번호 '+key);
+      }
+    }
+  }
+  return out;
 }
 async function problemPdfExtractAnswerCandidates(pdf){
   const out=new Map();
@@ -8609,16 +9052,47 @@ async function problemPdfExtractAnswerCandidates(pdf){
     const items=(tc.items||[]).map(it=>({
       text:String(it.str||'').trim(),
       x:Number(it.transform?.[4]||0),
-      y:Number(it.transform?.[5]||0)
+      y:Number(it.transform?.[5]||0),
+      w:it.width,
+      h:it.height
     }));
     const pageText=items.map(x=>x.text).join(' ');
-    if(!problemPdfIsAnswerPageText(pageText)) continue;
-    const pairs=problemPdfExtractAnswerPairsFromItems(items);
+    if(!problemPdfIsAnswerPageText(pageText,problemPdfAnswerTextLines(items))) continue;
+    const quickPairs=problemPdfExtractQuickAnswerPairsFromItems(items);
+    const pairs=quickPairs.size?quickPairs:problemPdfExtractAnswerPairsFromItems(items);
     for(const [key,val] of pairs.entries()){
       if(!out.has(key)) out.set(key,{...val,answerPage:n});
     }
   }
   return out;
+}
+
+function problemPdfPairedRole(fileName){
+  const name=String(fileName||'').replace(/\\.pdf$/i,'');
+  const token=/(^|[^A-Za-z0-9가-힣])(?:학생용|학생|student)(?=$|[^A-Za-z0-9가-힣])/i;
+  const teacherToken=/(^|[^A-Za-z0-9가-힣])(?:교사용|교사|teacher)(?=$|[^A-Za-z0-9가-힣])/i;
+  const student=token.test(name), teacher=teacherToken.test(name);
+  return student===teacher?'':student?'student':'teacher';
+}
+function problemPdfPairStem(fileName){
+  return String(fileName||'').replace(/\\.pdf$/i,'').normalize('NFKC').toLowerCase()
+    .replace(/학생용|교사용|학생|교사|student|teacher/gi,'')
+    .replace(/[^a-z0-9가-힣]+/g,'');
+}
+function problemPdfFindStudentTeacherPair(files){
+  if(!Array.isArray(files)||files.length!==2) return null;
+  const student=files.filter(f=>problemPdfPairedRole(f.name)==='student');
+  const teacher=files.filter(f=>problemPdfPairedRole(f.name)==='teacher');
+  if(student.length!==1||teacher.length!==1) return null;
+  const studentStem=problemPdfPairStem(student[0].name), teacherStem=problemPdfPairStem(teacher[0].name);
+  if(!studentStem||studentStem!==teacherStem) return null;
+  return {student:student[0],teacher:teacher[0]};
+}
+async function problemPdfExtractAnswerMapFromFile(file){
+  const pdfjs=await loadMnmPdfJs(), bytes=new Uint8Array(await file.arrayBuffer());
+  const pdf=await pdfjs.getDocument({data:bytes,cMapUrl:PROBLEM_PDF_CMAP_URL,cMapPacked:true}).promise;
+  const map=await problemPdfExtractAnswerCandidates(pdf);
+  return new Map([...map.entries()].map(([key,value])=>[key,{...value,sourceFile:file.name}]));
 }
 
 async function supersedeOlderProblemSourceDrafts(fileName,newSourceId){
@@ -8644,9 +9118,32 @@ async function supersedeOlderProblemSourceDrafts(fileName,newSourceId){
   }
 }
 
-async function autoIngestProblemPdf(input){
+async function autoIngestProblemPdf(input,options={}){
   const files=Array.from(input?.files||[]); if(!files.length) return; input.value='';
   if(files.length>1){
+    if(files.some(f=>problemPdfPairedRole(f.name))){
+      const pair=problemPdfFindStudentTeacherPair(files), status=document.getElementById('problemPdfAutoStatus');
+      if(!pair){
+        if(status) status.textContent='학생용·교사용 PDF 이름을 한 쌍으로 확인할 수 없어 처리를 멈췄어요. 같은 교재·단원 이름 뒤에 학생용/교사용을 붙여 각각 올려 주세요.';
+        return;
+      }
+      try{
+        if(status) status.textContent='교사용 PDF 정답표 확인 중…';
+        const answerMap=await problemPdfExtractAnswerMapFromFile(pair.teacher);
+        if(!answerMap.size) throw new Error('교사용 PDF에서 연결 가능한 정답표를 찾지 못했습니다. 두 파일은 수집하지 않았어요.');
+        const dt=new DataTransfer(); dt.items.add(pair.student);
+        await autoIngestProblemPdf({files:dt.files,value:''},{answerMap,answerSourceFile:pair.teacher.name,pairMode:true});
+        const liveStatus=document.getElementById('problemPdfAutoStatus');
+        if(liveStatus&&!String(liveStatus.textContent||'').startsWith('자동분리 중단')){
+          liveStatus.textContent='짝 등록 완료 · 학생용 문항만 저장 · 교사용 정답표 '+answerMap.size+'개 연결 · '+pair.teacher.name;
+        }
+      }catch(e){
+        const liveStatus=document.getElementById('problemPdfAutoStatus');
+        if(liveStatus) liveStatus.textContent='학생용·교사용 짝 처리 중단 · '+(e?.message||e);
+        alert('학생용·교사용 PDF를 처리하지 못했습니다.\\n'+(e?.message||e));
+      }
+      return;
+    }
     for(let i=0;i<files.length;i++){
       const dt=new DataTransfer(); dt.items.add(files[i]);
       const proxy={files:dt.files,value:''};
@@ -8664,7 +9161,7 @@ async function autoIngestProblemPdf(input){
   try{
     say('PDF 엔진 불러오는 중…');
     const pdfjs=await loadMnmPdfJs(), bytes=new Uint8Array(await file.arrayBuffer());
-    const pdf=await pdfjs.getDocument({data:bytes}).promise, pages=[], plans=[];
+    const pdf=await pdfjs.getDocument({data:bytes,cMapUrl:PROBLEM_PDF_CMAP_URL,cMapPacked:true}).promise, pages=[], plans=[];
     for(let n=1;n<=pdf.numPages;n++){ say(`페이지 분석 ${n}/${pdf.numPages}`); const pg=await pdf.getPage(n); pages[n]=pg; plans.push(await problemPdfPagePlan(pg,n)); }
     const built=problemPdfBuildRegions(plans);
     let regions=built.regions, segmentationMeta=built.meta;
@@ -8675,9 +9172,14 @@ async function autoIngestProblemPdf(input){
       segmentationMeta={method:'ai-page-vision',quality:regions.length?1:0,detected:regions.length,layout:'vision'};
       textDetected=false;
     }
+    if(textDetected&&regions.length){ regions=problemPdfCutInlineAnswers(plans,regions); regions=await problemPdfTrimTrailingRegions(pages,plans,regions); }
     if(!regions.length) throw new Error('문항을 찾지 못했습니다. 텍스트 탐지와 AI 이미지 탐지를 모두 확인해주세요.');
     say(`문항 ${regions.length}개 탐지 · ${segmentationMeta.layout||''} · 경계품질 ${Math.round(Number(segmentationMeta.quality||0)*100)}% · 정답표 확인 중…`);
-    const answerMap=await problemPdfExtractAnswerCandidates(pdf), sourceMeta=problemPdfSourceMeta(file.name);
+    const answerMap=options.answerMap instanceof Map?options.answerMap:await problemPdfExtractAnswerCandidates(pdf), sourceMeta=problemPdfSourceMeta(file.name);
+    // 정답표에는 있는데 문제 쪽에서 짝을 못 찾은 대표 항목은 추측해 붙이지 않고 기록만 한다(쪽 포함).
+    const usedRepIds=new Set(regions.filter(r=>r.representative&&r.idSource==='printed-type-number').map(r=>r.problemNo));
+    const unmatchedRep=[...answerMap.entries()].filter(([k,v])=>v&&v.representative&&!usedRepIds.has(k)).map(([k,v])=>({id:k,answerPage:v.answerPage||null}));
+    if(unmatchedRep.length) segmentationMeta={...segmentationMeta,unmatchedRepresentativeAnswers:unmatchedRep};
     const problems=[];
     for(let i=0;i<regions.length;i++){
       const r=regions[i]; say(`문항 crop·업로드 ${i+1}/${regions.length}`);
@@ -8689,10 +9191,16 @@ async function autoIngestProblemPdf(input){
       const cropKey=photoStorageKey(photo);
       if(!cropKey) throw new Error(`문항 ${r.problemNo} crop이 R2에 저장되지 않았습니다.`);
       uploadedRefs.push(photo);
-      const printedNo=r.printedProblemNo||r.problemNo;
-      const key=answerMap.get(printedNo), plan=plans.find(x=>x.pageNo===r.page);
+      const printedNo=r.representative?'':(r.printedProblemNo||r.problemNo);
+      // 대표 문항은 식별자가 '유형NN-대표'(원본 유형 번호)일 때만 정답표와 연결한다. 앱 생성 번호('대표NN')·번호 누락·중복은 추측하지 않는다.
+      const linkKey=r.representative?(r.idSource==='printed-type-number'?r.problemNo:''):printedNo;
+      const key=linkKey?answerMap.get(linkKey):null, plan=plans.find(x=>x.pageNo===r.page);
+      let reviewReason=r.reviewReason||'';
+      if(!reviewReason&&r.representative&&r.idSource==='app-generated') reviewReason='app-generated-number-no-answer-link';
+      if(!reviewReason&&r.representative&&r.idSource==='printed-type-number'&&!key) reviewReason='answer-table-entry-missing';
+      if(!reviewReason&&key?.conflict) reviewReason='answer-table-conflict';
       const rawText=plan?problemPdfRegionText(plan.items,r,plan.height):'';
-      problems.push({problemNo:r.problemNo,printedProblemNo:printedNo,page:r.page,rawText,rawTextDecoded:true,type:problemPdfInferType(rawText,key),grade:sourceMeta.grade,semester:sourceMeta.semester,majorUnit:sourceMeta.majorUnit,middleUnit:sourceMeta.middleUnit,cropUrl:'',cropKey,cropHash,media:photo?[photo]:[],segmentationMethod:r.segmentationMethod||segmentationMeta.method||'',segmentationQuality:Number(segmentationMeta.quality||0),answer:key?.answer||'',answerConfidence:key?.confidence||0,answerMethod:key?.method||'needs-review',status:'review'});
+      problems.push({problemNo:r.problemNo,printedProblemNo:printedNo,idSource:r.representative?r.idSource:'printed-number',typeNo:r.typeNo||'',reviewReason,answerSourcePage:key&&key.answerPage?key.answerPage:null,answerLinkBasis:key&&key.basis?key.basis:'',answerSourceFile:key&&key.answerPage?(key.sourceFile||options.answerSourceFile||file.name):'',page:r.page,rawText,rawTextDecoded:true,type:problemPdfInferType(rawText,key),grade:sourceMeta.grade,semester:sourceMeta.semester,majorUnit:sourceMeta.majorUnit,middleUnit:sourceMeta.middleUnit,cropUrl:'',cropKey,cropHash,media:photo?[photo]:[],segmentationMethod:r.segmentationMethod||segmentationMeta.method||'',segmentationQuality:Number(segmentationMeta.quality||0),answer:key?.answer||'',answerConfidence:key?.confidence||0,answerMethod:key?.method||'needs-review',status:'review'});
     }
     say('수집 대기열 저장 중…');
     const ingestOut=await createProblemDraftsFromManifest({source:{title:file.name.replace(/\.pdf$/i,''),fileName:file.name,sourceType:'pdf',pageCount:pdf.numPages,grade:sourceMeta.grade,semester:sourceMeta.semester,majorUnit:sourceMeta.majorUnit,middleUnit:sourceMeta.middleUnit,ingestMethod:'browser-pdfjs-v3-rail-sequence',segmentationMeta},problems},{confirmWarnings:false});
@@ -8927,7 +9435,7 @@ function renderProblemIngest(){
   ${problemStore.saveRun.errors?.length?`<div style="margin-top:7px;padding:9px 10px;background:#fff1ef;border:1px solid #f2c8c2;border-radius:8px;font-size:11px;line-height:1.65;color:#8b3f36;"><b>저장 실패 상세</b><br>${problemStore.saveRun.errors.slice(0,8).map(x=>`${escapeHtml(String(x.no))} · ${escapeHtml(String(x.error))}`).join('<br>')}<div style="margin-top:7px;"><button class="btn sm outline" onclick="saveAllReadyProblemDrafts()">실패/남은 저장가능 문항 다시 저장</button></div></div>`:''}
   <div style="margin-top:10px;padding:10px;background:#faf8f2;border-radius:9px;font-size:12px;line-height:1.7;"><b>저장 원칙</b> · PDF/학습보관함/학생질문은 모두 같은 문제저장소로 유입 · 문제/도형 원본은 <code>problems</code> · 유입경로는 <code>problemSources/problemDrafts</code> · 정답/선생님 해설은 학생 비공개 <code>problemKeys</code></div><div id="problemPdfAutoStatus" style="margin-top:8px;font-size:12px;color:${problemStore.analysisRun.error?'#b5473d':problemStore.analysisRun.active?'#7a5b00':'#6f6a59'};font-weight:${problemStore.analysisRun.active?'700':'400'};">${escapeHtml(problemStore.analysisRun.message||'태블릿·PC에서 PDF 파일을 선택하세요 · 여러 PDF 동시 선택 가능 · 선택 후 자동분리 시작')}</div></div>
   <div class="card" style="margin-bottom:12px;"><div class="row" style="gap:8px;flex-wrap:wrap;"><select onchange="problemStore.ingest.sourceFilter=this.value;render();"><option value="">모든 원본</option>${ing.sources.map(x=>`<option value="${x.id}" ${ing.sourceFilter===x.id?'selected':''}>${escapeHtml(x.title||x.fileName||x.id)}</option>`).join('')}</select><select onchange="problemStore.ingest.statusFilter=this.value;render();"><option value="">모든 상태</option>${['queued','analyzing','review','ready','saved','superseded','error'].map(x=>`<option value="${x}" ${ing.statusFilter===x?'selected':''}>${ingestStatusLabel(x)}</option>`).join('')}</select><select onchange="problemStore.ingest.aiFilter=this.value;render();"><option value="" ${!ing.aiFilter?'selected':''}>모든 AI 상태</option><option value="done" ${ing.aiFilter==='done'?'selected':''}>AI 분석완료</option><option value="review" ${ing.aiFilter==='review'?'selected':''}>AI 검토필요</option><option value="pending" ${ing.aiFilter==='pending'?'selected':''}>이미지분석 대기</option></select><span class="badge gray">원본 ${ing.sources.length}</span><span class="badge gray">초안 ${drafts.length}</span><span class="badge green">저장가능 ${sum.ready}</span><span class="badge yellow">검토 ${sum.review}</span><span class="badge gray">이미지분석 ${sum.vision}</span><span class="badge gray">정답확인 ${sum.answer}</span></div></div>
-  <div class="card">${ing.loading&&!ing.loaded?'<div class="empty">수집 대기열 불러오는 중…</div>':drafts.length?drafts.map(d=>{const crop=problemDraftCropSrc(d),miss=problemDraftMissing(d),glyph=problemTextGlyphIssue(d.problemText||d.rawText||'');return `<div style="padding:12px 0;border-bottom:1px solid var(--line);"><div class="row between"><div><b>${escapeHtml(d.problemNo||d.no||'문항')}</b> <span class="badge ${problemDraftStatus(d)==='review'?'yellow':problemDraftStatus(d)==='ready'?'green':'gray'}">${ingestStatusLabel(problemDraftStatus(d))}</span>${d.analysis?.status==='analyzed'?(problemAiQuality(d).valid?'<span class="badge green">AI 완료</span>':'<span class="badge yellow">AI 검토필요</span>'):''}<span class="badge gray">자료완성도 ${problemDraftConfidence(d)}%</span></div><span style="font-size:11px;color:#8a8674;">${d.page?`p.${d.page}`:''}</span></div><div style="display:grid;grid-template-columns:minmax(160px,260px) 1fr;gap:12px;margin-top:8px;align-items:start;">${crop?`<img src="${escapeHtml(crop)}" style="width:100%;max-height:300px;object-fit:contain;background:white;border:1px solid var(--line);border-radius:8px;" loading="lazy">`:`<div class="empty" style="padding:20px 8px;">원본 crop 없음</div>`}<div><div style="font-size:12px;">${escapeHtml(problemReadableProblemText(d)||'원본 이미지 분석 대기')}</div>${glyph.has?`<div style="font-size:10px;color:#7a6b4b;margin-top:4px;">✓ PDF 수식글꼴 자동보정${glyph.unknown?` · 미확인 기호 ${glyph.unknown}개는 원본 이미지 기준`:''}</div>`:''}<div style="font-size:11px;color:#8a8674;margin-top:6px;">${[d.grade,d.semester,d.majorUnit,d.middleUnit,d.geometryStructure,d.askType].filter(Boolean).map(escapeHtml).join(' · ')||'분류 대기'}</div>
+  <div class="card">${ing.loading&&!ing.loaded?'<div class="empty">수집 대기열 불러오는 중…</div>':drafts.length?drafts.map(d=>{const crop=problemDraftCropSrc(d),miss=problemDraftMissing(d),glyph=problemTextGlyphIssue(d.problemText||d.rawText||'');return `<div style="padding:12px 0;border-bottom:1px solid var(--line);"><div class="row between"><div><b>${escapeHtml(d.problemNo||d.no||'문항')}</b>${d.idSource==='app-generated'?' <span class="badge gray" title="원본에 인쇄된 번호가 아니라 앱이 쪽 순서대로 붙인 번호">앱 생성 번호</span>':''}${d.reviewReason?` <span class="badge yellow" title="${escapeHtml(d.reviewReason)}">번호·정답 검토</span>`:''} <span class="badge ${problemDraftStatus(d)==='review'?'yellow':problemDraftStatus(d)==='ready'?'green':'gray'}">${ingestStatusLabel(problemDraftStatus(d))}</span>${d.analysis?.status==='analyzed'?(problemAiQuality(d).valid?'<span class="badge green">AI 완료</span>':'<span class="badge yellow">AI 검토필요</span>'):''}<span class="badge gray">자료완성도 ${problemDraftConfidence(d)}%</span></div><span style="font-size:11px;color:#8a8674;">${d.page?`p.${d.page}`:''}</span></div><div style="display:grid;grid-template-columns:minmax(160px,260px) 1fr;gap:12px;margin-top:8px;align-items:start;">${crop?`<img src="${escapeHtml(crop)}" style="width:100%;max-height:300px;object-fit:contain;background:white;border:1px solid var(--line);border-radius:8px;" loading="lazy">`:`<div class="empty" style="padding:20px 8px;">원본 crop 없음</div>`}<div><div style="font-size:12px;">${escapeHtml(problemReadableProblemText(d)||'원본 이미지 분석 대기')}</div>${glyph.has?`<div style="font-size:10px;color:#7a6b4b;margin-top:4px;">✓ PDF 수식글꼴 자동보정${glyph.unknown?` · 미확인 기호 ${glyph.unknown}개는 원본 이미지 기준`:''}</div>`:''}<div style="font-size:11px;color:#8a8674;margin-top:6px;">${[d.grade,d.semester,d.majorUnit,d.middleUnit,d.geometryStructure,d.askType].filter(Boolean).map(escapeHtml).join(' · ')||'분류 대기'}</div>
 ${d.analysis?.status==='analyzed'?`<div style="margin-top:8px;">
   <button class="btn sm outline" onclick="currentSubState._problemAiDetail=currentSubState._problemAiDetail||{};currentSubState._problemAiDetail['${d.id}']=!currentSubState._problemAiDetail['${d.id}'];render();">${currentSubState._problemAiDetail?.[d.id]?'AI 분석결과 닫기':'AI 분석결과 보기'}</button>
   ${problemAiQuality(d).valid?'<span class="badge green" style="margin-left:5px;">AI 분석완료</span>':`<span class="badge yellow" style="margin-left:5px;">AI 검토필요</span><button class="btn sm outline" style="margin-left:5px;" onclick="queueProblemDraftReanalysis('${d.id}')">AI 재분석 대기</button>`}
@@ -9067,7 +9575,13 @@ async function assignSelectedProblems(){
 }
 
 const ANSWER_WRONG_REASONS = ['개념부족','문제해석','풀이방법을 떠올리지 못함','계산실수','조건누락','마킹실수','기타'];
-function normalizeAnswerValue(v){ return String(v??'').trim().replace(/\s+/g,''); }
+// 답 비교용 정규화: 공백 제거 + 동그라미 숫자(①~⑩)·전각 숫자를 일반 숫자로. PDF 정답표는 ③ 로 오고 학생 답지는 1~5 로 입력되므로 같은 답으로 봐야 한다.
+// (NFKC 전체를 쓰지 않는다 — x² 와 x2 처럼 서로 다른 답이 같아지는 것을 막기 위해)
+function normalizeAnswerValue(v){
+  return String(v??'').trim().replace(/\s+/g,'')
+    .replace(/[\u2460-\u2469]/g,c=>String(c.charCodeAt(0)-0x2460+1))
+    .replace(/[\uFF10-\uFF19]/g,c=>String(c.charCodeAt(0)-0xFF10));
+}
 function assignmentPublicCopy(a){
   if(!a) return null;
   return {...a, problems:(a.problems||[]).map(({answer,acceptedAnswers,explanation,...p})=>p)};
@@ -9075,7 +9589,10 @@ function assignmentPublicCopy(a){
 function localGradeProblem(problem, answer){
   if(problem.type==='constructed') return {state:'pending', earnedPoints:null};
   const given=normalizeAnswerValue(answer);
-  const accepted=(problem.acceptedAnswers&&problem.acceptedAnswers.length?problem.acceptedAnswers:[problem.answer]).map(normalizeAnswerValue);
+  const candidates=(problem.acceptedAnswers&&problem.acceptedAnswers.length?problem.acceptedAnswers:[problem.answer]).filter(v=>v!==undefined&&v!==null&&String(v).trim()!=='');
+  // 정답키가 없으면 오답으로 단정하지 않고 '확인중'으로 둔다(저장소 문제는 정답키가 problemKeys 에만 있다).
+  if(!candidates.length) return {state:'pending', earnedPoints:null, keyMissing:true};
+  const accepted=candidates.map(normalizeAnswerValue);
   const correct=accepted.includes(given);
   return {state:correct?'correct':'wrong',earnedPoints:correct?Number(problem.points||1):0};
 }
@@ -9152,10 +9669,47 @@ async function completeAnswerLearning(assignmentId,stuId){
   if(!wrong.every(i=>sub.wrongReasons&&sub.wrongReasons[i])){alert('틀린 문제의 이유를 모두 선택해주세요.');return;}
   const at=new Date().toISOString(); const ok=await fsUpdate('answerSubmissions',id,{learningCompletedAt:at}); if(ok){sub.learningCompletedAt=at;render();}
 }
+// 문제저장소에서 배정한 문항은 정답키가 배정 문서에 없다(학생에게 내려가는 문서와 분리). 원장 채점 때만 problemKeys 에서 읽는다.
+// 테스트 세트(정답이 배정 문서에 들어 있는 경우)는 그대로 사용한다.
+async function problemWithGradingKey(problem){
+  if(!problem || problem.type==='constructed') return problem;
+  if(problem.answer!==undefined || (problem.acceptedAnswers&&problem.acceptedAnswers.length)) return problem;
+  if(!problem.problemId) return problem;
+  try{
+    const doc=await fsdb.collection('problemKeys').doc(problem.problemId).get();
+    if(doc.exists){ const k=doc.data()||{}; return {...problem, answer:k.answer, acceptedAnswers:k.acceptedAnswers}; }
+  }catch(e){ console.error('정답키 조회 실패',problem.problemId,e); }
+  return problem;
+}
+// 채점 공통부: 이미 정답키를 합친 문항(graded)으로 한 학생의 제출을 채점해 저장한다.
+async function gradeSubmissionWithKeys(assignmentId,stuId,graded){
+  const id=answerSubmissionId(assignmentId,stuId), sub=db.answerSubmissions[id]; if(!sub) return null;
+  const results=graded.map((p,i)=>localGradeProblem(p,(sub.originalAnswers||[])[i]));
+  const missing=results.filter(r=>r.keyMissing).length;
+  const ok=await fsUpdate('answerSubmissions',id,{autoResults:results}); if(ok){sub.autoResults=results;}
+  return {ok:!!ok,missing};
+}
 async function directorGradeAnswerSubmission(assignmentId,stuId){
   const a=db.assignments[assignmentId], id=answerSubmissionId(assignmentId,stuId), sub=db.answerSubmissions[id]; if(!a||!sub)return;
-  const results=(a.problems||[]).map((p,i)=>localGradeProblem(p,(sub.originalAnswers||[])[i]));
-  const ok=await fsUpdate('answerSubmissions',id,{autoResults:results}); if(ok){sub.autoResults=results;render();}
+  const graded=await Promise.all((a.problems||[]).map(p=>problemWithGradingKey(p)));
+  const r=await gradeSubmissionWithKeys(assignmentId,stuId,graded); if(!r)return;
+  if(r.missing) alert(`정답키를 찾지 못한 문항이 ${r.missing}개 있어요. 해당 문항은 '확인중'으로 두었으니 직접 채점해주세요.`);
+  if(r.ok) render();
+}
+// 채점 대기('grading') 상태인 제출만 한꺼번에 채점한다. 최종확인·수동 수정이 끝난 제출과 서술형은 건드리지 않는다.
+function pendingGradingStudentIds(a){
+  return (a?.studentIds||[]).filter(stuId=>{const sub=db.answerSubmissions[answerSubmissionId(a.id,stuId)];return sub&&!sub.review?.finalizedAt&&(sub.autoResults||[]).some(r=>r&&r.state==='grading');});
+}
+async function directorGradeAllPending(assignmentId){
+  const a=db.assignments[assignmentId]; if(!a)return;
+  const targets=pendingGradingStudentIds(a);
+  if(!targets.length){alert('채점 대기 중인 제출이 없어요.');return;}
+  if(!confirm(`채점 대기 ${targets.length}명을 정답키로 ○/× 채점할까요?\n서술형과 이미 최종확인한 제출은 건드리지 않아요.`))return;
+  const graded=await Promise.all((a.problems||[]).map(p=>problemWithGradingKey(p))); // 정답키는 문항마다 한 번만 읽는다
+  let done=0,failed=0,missing=0;
+  for(const stuId of targets){ const r=await gradeSubmissionWithKeys(assignmentId,stuId,graded); if(r&&r.ok){done++;missing+=r.missing;}else failed++; }
+  alert(`채점 완료 ${done}명`+(failed?` · 저장 실패 ${failed}명(다시 눌러주세요)`:'')+(missing?`\n정답키를 찾지 못한 문항이 있어 '확인중'으로 남았어요(합계 ${missing}건).`:''));
+  render();
 }
 function renderDirectorAnswerReview(a,stuId){
   const id=answerSubmissionId(a.id,stuId), sub=db.answerSubmissions[id]; if(!sub)return '<div class="empty">아직 답지를 제출하지 않았어요.</div>';
@@ -9185,7 +9739,7 @@ function ensureClassAnswerAssignmentsLoaded(clsId){const k=`classans_${clsId}`;i
 function renderClassAnswerSheetAdmin(cls){
   ensureClassAnswerAssignmentsLoaded(cls.id);
   const rows=Object.values(db.assignments||{}).filter(a=>a.classId===cls.id).sort((a,b)=>String(b.assignedAt||'').localeCompare(String(a.assignedAt||'')));
-  return `<div class="card"><div class="row between"><div><h3 style="margin:0;">📝 답지 제출 · 원장 확인</h3><div style="font-size:11px;color:#8a8674;margin-top:3px;">문제은행 연결 전 테스트용 최소 세트 생성기 · 객관식/단답은 ○/× 채점 후 필요한 문항만 수정</div></div><button class="btn sm outline" onclick="createTestAnswerAssignment('${cls.id}')">+ 테스트 세트</button></div>${rows.length?rows.map(a=>`<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line);"><b>${escapeHtml(a.title)}</b> <span class="badge gray">${(a.problems||[]).length}문항</span>${(a.studentIds||[]).map(stuId=>{const s=studentById(stuId),sub=db.answerSubmissions[answerSubmissionId(a.id,stuId)];return `<div style="padding:7px 0;"><div class="row between"><span>${s?escapeHtml(s.name):stuId}</span>${sub?`<div class="row"><span class="badge ${sub.review?.finalizedAt?'green':'yellow'}">${sub.review?.finalizedAt?'최종확인':'제출완료'}</span>${!sub.autoResults?.some(r=>r.state==='grading')?'':(a.source==='problem-repository'?'<span class="badge gray">서버채점 연결 대기</span>':`<button class="btn sm outline" onclick="directorGradeAnswerSubmission('${a.id}','${stuId}')">○/× 채점</button>`)}</div>`:'<span class="badge gray">미제출</span>'}</div>${sub?renderDirectorAnswerReview(a,stuId):''}</div>`;}).join('')}</div>`).join(''):'<div class="empty">배정된 답지 세트가 없어요.</div>'}</div>`;
+  return `<div class="card"><div class="row between"><div><h3 style="margin:0;">📝 답지 제출 · 원장 확인</h3><div style="font-size:11px;color:#8a8674;margin-top:3px;">문제은행 연결 전 테스트용 최소 세트 생성기 · 객관식/단답은 ○/× 채점 후 필요한 문항만 수정</div></div><button class="btn sm outline" onclick="createTestAnswerAssignment('${cls.id}')">+ 테스트 세트</button></div>${rows.length?rows.map(a=>`<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line);"><b>${escapeHtml(a.title)}</b> <span class="badge gray">${(a.problems||[]).length}문항</span>${(()=>{const n=pendingGradingStudentIds(a).length;return n?` <span class="badge yellow">채점 대기 ${n}명</span> <button class="btn sm gold" onclick="directorGradeAllPending('${a.id}')">대기 일괄 채점</button>`:'';})()}${(a.studentIds||[]).map(stuId=>{const s=studentById(stuId),sub=db.answerSubmissions[answerSubmissionId(a.id,stuId)];return `<div style="padding:7px 0;"><div class="row between"><span>${s?escapeHtml(s.name):stuId}</span>${sub?`<div class="row"><span class="badge ${sub.review?.finalizedAt?'green':'yellow'}">${sub.review?.finalizedAt?'최종확인':'제출완료'}</span>${!sub.autoResults?.some(r=>r.state==='grading')?'':`<button class="btn sm outline" onclick="directorGradeAnswerSubmission('${a.id}','${stuId}')">○/× 채점</button>`}</div>`:'<span class="badge gray">미제출</span>'}</div>${sub?renderDirectorAnswerReview(a,stuId):''}</div>`;}).join('')}</div>`).join(''):'<div class="empty">배정된 답지 세트가 없어요.</div>'}</div>`;
 }
 
 // 학생 두 번째 페이지: 기존 숙제계획/영상과 기존 숙제인증/Q&A 기능을 한 화면에 재배치한다.
