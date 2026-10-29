@@ -5129,10 +5129,10 @@ async function resetSubmissionReview(stuId,date){
 
 const ERROR_TYPES = ['개념부족','계산실수','문제해석','유형미숙','성실부족'];
 function draftStorageKey(stuId,date){ return `mnm_draft_${stuId}_${date}`; }
-function saveDraftLocal(stuId,date){
+function saveDraftLocal(stuId,date,draft=currentSubState._draftSub){
   try{
-    if(!currentSubState._draftSub) return;
-    localStorage.setItem(draftStorageKey(stuId,date), JSON.stringify(currentSubState._draftSub));
+    if(!draft) return;
+    localStorage.setItem(draftStorageKey(stuId,date), JSON.stringify(draft));
   }catch(e){}
 }
 function loadDraftLocal(stuId,date){
@@ -5288,12 +5288,21 @@ async function uploadSubPhoto(inputEl, field){
     return;
   }
 
+  const draftRef=currentSubState._draftSub;
+  const draftKey=currentSubState._draftSubKey;
+  const draftStuId=draftActiveStuId;
+  const draftDate=draftActiveDate;
+  const basePhotos=[...(draftRef[field]||[])];
   Object.assign(homeworkUploadState,{active:true,total:files.length,done:0,failed:0});
   render(); // 시작할 때 1회만: 모든 사진선택 버튼 잠금
 
-  const baseCount=(currentSubState._draftSub.hwPhotos||[]).length+(currentSubState._draftSub.practicePhotos||[]).length+(currentSubState._draftSub.timerPhotos||[]).length;
+  const baseCount=(draftRef.hwPhotos||[]).length+(draftRef.practicePhotos||[]).length+(draftRef.timerPhotos||[]).length;
   const results=new Array(files.length);
   let cursor=0;
+  const persistCompletedPhotos=()=>{
+    draftRef[field]=dedupeHomeworkPhotos([...basePhotos,...results.filter(Boolean)]);
+    if(draftStuId&&draftDate) saveDraftLocal(draftStuId,draftDate,draftRef);
+  };
 
   const updateProgress=()=>{
     const el=document.getElementById('hwUploadStatus');
@@ -5314,6 +5323,8 @@ async function uploadSubPhoto(inputEl, field){
           photo={...photo,clientFingerprint:homeworkFileFingerprint(f),originalName:String(f.name||'').slice(0,120)};
         }
         results[idx]=photo;
+        // 한 장씩 끝날 때마다 현재 초안에 반영해, 나머지 업로드가 지연돼도 성공한 사진을 보존한다.
+        persistCompletedPhotos();
       }catch(e){
         console.error('Homework photo upload failed.',e);
         homeworkUploadState.failed++;
@@ -5327,9 +5338,7 @@ async function uploadSubPhoto(inputEl, field){
   try{
     const concurrency=Math.min(3,files.length);
     await Promise.all(Array.from({length:concurrency},()=>worker()));
-    const added=results.filter(Boolean);
-    currentSubState._draftSub[field]=dedupeHomeworkPhotos([...(currentSubState._draftSub[field]||[]),...added]);
-    saveActiveHomeworkDraft();
+    persistCompletedPhotos();
     homeworkUploadState.recentSig=batchSig;
     homeworkUploadState.recentAt=Date.now();
     if(homeworkUploadState.failed){
