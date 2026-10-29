@@ -3,9 +3,15 @@
    - 저장: monthlyReports/{YYYY-MM}_{학생ID}. 자동 초안(generated)과 원장 수정본(edited)을 따로 보관하고,
      수정본이 있으면 재생성이 덮어쓰지 않는다(새 초안은 versions에 쌓고 알림만 켠다).
    - 자동 발송 없음. 원장이 검토·수정한 뒤 복사해서 전달한다. */
+/* 보안 잠금(2026-10-19): 현재 Firestore 규칙은 로그인한 모든 세션(학생 익명 로그인 포함)이 모든 문서를 읽고 쓸 수 있고,
+   원장 로그인은 브라우저에서만 비교하는 비밀번호라 서버가 신뢰할 수 있는 원장 권한이 아니다.
+   서버가 검증하는 원장 인증(custom claims)이 갖춰지기 전에는 학생 데이터가 담긴 월말 리포트를 Firestore에 저장·조회하지 않는다.
+   자세한 내용과 해제 조건: docs/SECURITY_MONTHLY_REPORTS.md */
+const MONTHLY_REPORT_CLIENT_ENABLED=false;
 function mrState(){ currentSubState.mr = currentSubState.mr || {month:mrPrevMonthOf(todayISO()), docs:null, loading:false, busy:'', open:'', text:'', showNew:false, msg:''}; return currentSubState.mr; }
 function mrDocId(ym,stuId){ return ym+'_'+stuId; }
 async function mrLoadDocs(ym){
+  if(!MONTHLY_REPORT_CLIENT_ENABLED) return;
   const st=mrState(); st.loading=true; st.docs=null; scheduleRender();
   try{
     const snap=await fsdb.collection('monthlyReports').where('month','==',ym).get();
@@ -45,6 +51,7 @@ function mrInputForStudent(s,ym,raw){
 }
 // 한 학생 문서를 트랜잭션으로 생성/갱신 → 중복 실행돼도 문서는 월·학생당 1개, 같은 자료면 변경 없음
 async function mrWriteOne(s,ym,raw){
+  if(!MONTHLY_REPORT_CLIENT_ENABLED) throw new Error('MONTHLY_REPORT_DISABLED');
   const built=mrBuildMonthlyReport(mrInputForStudent(s,ym,raw));
   const ref=fsdb.collection('monthlyReports').doc(mrDocId(ym,s.id));
   const nowISO=new Date().toISOString();
@@ -57,6 +64,7 @@ async function mrWriteOne(s,ym,raw){
   });
 }
 async function mrGenerate(onlyStuId){
+  if(!MONTHLY_REPORT_CLIENT_ENABLED) return;
   const st=mrState(); if(st.busy) return;
   const ym=st.month;
   if(ym>=todayISO().slice(0,7) && !confirm('아직 끝나지 않은 달이에요. 지금까지의 기록으로 초안을 만들까요?')) return;
@@ -73,6 +81,7 @@ async function mrGenerate(onlyStuId){
 function mrCurrentText(doc){ return (doc.edited&&doc.edited.text)||(doc.generated&&doc.generated.text)||''; }
 function mrOpen(stuId){ const st=mrState(); st.open=stuId; st.showNew=false; const d=st.docs&&st.docs[stuId]; st.text=d?mrCurrentText(d):''; scheduleRender(); }
 async function mrSaveEdit(stuId){
+  if(!MONTHLY_REPORT_CLIENT_ENABLED) return;
   const st=mrState(), d=st.docs&&st.docs[stuId]; if(!d) return;
   const text=(document.getElementById('mrText')||{}).value??st.text;
   const ok=await fsSet('monthlyReports',d.id,{edited:{text,editedAt:new Date().toISOString(),basedOnVersion:(d.generated&&d.generated.version)||1},status:'edited'});
@@ -80,11 +89,13 @@ async function mrSaveEdit(stuId){
   scheduleRender();
 }
 async function mrMarkReviewed(stuId){
+  if(!MONTHLY_REPORT_CLIENT_ENABLED) return;
   const st=mrState(), d=st.docs&&st.docs[stuId]; if(!d) return;
   const next=d.status==='reviewed'?(d.edited?'edited':'draft'):'reviewed';
   const ok=await fsSet('monthlyReports',d.id,{status:next}); if(ok){ d.status=next; scheduleRender(); }
 }
 async function mrAdoptNewDraft(stuId){
+  if(!MONTHLY_REPORT_CLIENT_ENABLED) return;
   const st=mrState(), d=st.docs&&st.docs[stuId]; if(!d||!d.generated) return;
   if(!confirm('새 초안으로 바꿀까요? 지금 수정본은 버전 기록에 보관돼요.')) return;
   const versions=(d.versions||[]).slice();
@@ -94,6 +105,7 @@ async function mrAdoptNewDraft(stuId){
   if(ok){ Object.assign(d,patch); st.text=mrCurrentText(d); st.showNew=false; st.msg='새 초안을 적용했어요.'; scheduleRender(); }
 }
 async function mrKeepEdited(stuId){
+  if(!MONTHLY_REPORT_CLIENT_ENABLED) return;
   const st=mrState(), d=st.docs&&st.docs[stuId]; if(!d) return;
   const ok=await fsSet('monthlyReports',d.id,{hasNewerDraft:false}); if(ok){ d.hasNewerDraft=false; st.showNew=false; scheduleRender(); }
 }
@@ -109,6 +121,8 @@ function mrStatusBadge(d){
   return '<span class="badge gray">초안</span>';
 }
 function renderMonthlyReports(){
+  if(!MONTHLY_REPORT_CLIENT_ENABLED) return `<h1 class="page-title">월말 리포트</h1><div class="card"><b>🔒 보안 인증 준비 중이라 잠시 사용할 수 없어요.</b>
+    <div style="font-size:12px;color:#6b6858;margin-top:8px;line-height:1.7;">월말 리포트에는 학생의 출결·점수·관찰 기록이 담겨요. 현재 서버 규칙으로는 학생 로그인 세션도 읽을 수 있어서, 원장 권한을 서버가 확인하는 방식이 갖춰질 때까지 저장·조회를 막아 두었습니다. 기존 학부모 학습안내의 월말 리포트는 그대로 쓸 수 있어요.</div></div>`;
   const st=mrState();
   if(st.docs===null && !st.loading) setTimeout(()=>mrLoadDocs(st.month),0);
   const students=(db.students||[]).filter(s=>s.status!=='withdrawn').sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));

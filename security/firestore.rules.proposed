@@ -1,0 +1,22 @@
+rules_version = '2';
+// 제안안 — 배포하지 않았다. 배포 전 절차: docs/SECURITY_MONTHLY_REPORTS.md
+//
+// 기존 정책(request.auth != null)은 월말 리포트를 제외한 모든 컬렉션에 그대로 유지한다(앱 동작 보존).
+// 규칙의 허용 조건은 OR 로 합쳐지므로, 넓은 catch-all 이 monthlyReports 를 허용하지 못하도록
+// catch-all 자체에서 monthlyReports 를 제외한다. monthlyReports 는 서버가 발급한 custom claim(mnmDirector)이 있어야 한다.
+// custom claim 은 Admin SDK(서버)로만 부여할 수 있고, 현재 앱의 원장 로그인(브라우저 비밀번호 비교)은 이를 부여하지 않는다.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /monthlyReports/{document=**} {
+      allow read, write: if request.auth != null
+                         && request.auth.token.mnmDirector == true
+                         && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    // 월말 리포트 외 기존 컬렉션: 지금과 동일
+    match /{colName}/{document=**} {
+      allow read, write: if request.auth != null && colName != 'monthlyReports';
+    }
+  }
+}
