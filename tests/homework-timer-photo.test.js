@@ -143,6 +143,8 @@ const check = (name, ok, detail) => {
         };
         window.setTimeout = (callback, delay, ...args) =>
           originalSetTimeout(callback, delay === 20000 ? 200 : delay, ...args);
+        draftActiveStuId = sid;
+        draftActiveDate = date;
         currentSubState._draftSub = { hwPhotos: [], practicePhotos: [], timerPhotos: [], memo: '' };
         currentSubState._draftSubKey = sid + '_' + date;
         saveDraftLocal(sid, date, currentSubState._draftSub);
