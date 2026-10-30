@@ -2286,6 +2286,24 @@ async function deleteSelectedAuditWarnings(targets){
   render();
 }
 
+// 대시보드 '어제' 보기: 어제가 지난주라면 그 주 숙제표를 한 번 읽어 온다. 읽는 중이면 true.
+const dashPlanLoads={};
+function ensureDashWeekPlans(wk){
+  let loading=false;
+  (db.classes||[]).forEach(c=>{
+    const key=c.id+'_'+wk;
+    if(key in db.weeklyPlans) return;
+    if(wk===weekStartISO(todayISO())) return; // 이번 주는 로그인 때 이미 읽는다(문서가 없는 반은 키가 없음)
+    loading=true;
+    if(dashPlanLoads[key]) return;
+    dashPlanLoads[key]=true;
+    fsdb.collection('weeklyPlans').doc(key).get()
+      .then(doc=>{ db.weeklyPlans[key]=doc.exists?doc.data():{}; })
+      .catch(e=>{ console.warn('[대시보드 숙제표]',key,e?.code||e); db.weeklyPlans[key]={}; })
+      .finally(()=>{ delete dashPlanLoads[key]; scheduleRender(); });
+  });
+  return loading;
+}
 function renderDashboard(){
   const dow = new Date().getDay();
   const todaysClasses = db.classes.filter(c=> (c.dayGroup==='mon-wed'&&(dow===1||dow===3)) || (c.dayGroup==='tue-thu'&&(dow===2||dow===4)) );
@@ -2327,23 +2345,27 @@ function renderDashboard(){
   const missingHwToday = homeworkRowsToday.filter(x=>x.submitted < x.total && !x.days.some(d=>d.state==='unknown'));
 
   // 오늘 날짜 숙제가 계획된 학생 중 아직 '인정'되지 않은 학생 (단톡 공지용)
-  const hwDay = academicTodayISO();
+  const hwToday = academicTodayISO();
+  const hwIsYesterday = currentSubState.dashHwDay==='yesterday';
+  const hwDay = hwIsYesterday ? addDaysISO(hwToday,-1) : hwToday;
+  const hwPlansLoading = ensureDashWeekPlans(weekStartISO(hwDay));
   const todayHwNotDone = [], todayHwPending = [];
-  let todayHwPlanned = 0;
+  let todayHwPlanned = 0, hwRecordsUnknown = false;
   db.students.filter(s=>s.status!=='withdrawn').forEach(s=>{
     const clsList = homeworkClassesForDate(s.id, hwDay);
     if(!clsList.length) return;
     todayHwPlanned++;
     const states = clsList.map(c=>({cls:c, state:homeworkEffectiveState(subForClass(s.id,c.id,hwDay),hwDay,s.id)}));
-    const notDone = states.filter(x=>x.state!=='approved' && x.state!=='pending');
+    if(states.some(x=>x.state==='unknown')) hwRecordsUnknown=true;
+    const notDone = states.filter(x=>x.state!=='approved' && x.state!=='pending' && x.state!=='unknown');
     const pending = states.filter(x=>x.state==='pending');
     if(notDone.length) todayHwNotDone.push({student:s, items:notDone});
     else if(pending.length) todayHwPending.push({student:s, items:pending});
   });
   const byName=(a,b)=>(a.student.name||'').localeCompare(b.student.name||'');
   todayHwNotDone.sort(byName); todayHwPending.sort(byName);
-  const todayHwLoading = homeworkRecentLoadState!=='ready';
-  const todayHwNotice = `${fmtDate(hwDay)} 오늘 숙제 제출이 확인되지 않습니다.\n\n${todayHwNotDone.map(x=>x.student.name).join('\n')}`;
+  const todayHwLoading = homeworkRecentLoadState!=='ready' || hwPlansLoading || hwRecordsUnknown;
+  const todayHwNotice = `${fmtDate(hwDay)} ${hwIsYesterday?'':'오늘 '}숙제 제출이 확인되지 않습니다.\n\n${todayHwNotDone.map(x=>x.student.name).join('\n')}`;
 
   // HOME 개입 필요 학생 = '원장이 실제 행동해야 하는 학생'만 노출한다.
   // SLOW/STOP은 학생 상세의 학습상태로 유지하되, 그것만으로 HOME 명단에 올리지는 않는다.
@@ -2383,20 +2405,25 @@ function renderDashboard(){
     <div class="stat-card" style="cursor:pointer;" onclick="currentSubState.qnaFilter='pending';goto('qna')"><div class="num">${pendingQ}</div><div class="lbl">답변 대기 질문</div></div>
     ${stadSettlementPending.length ? `<div class="stat-card" style="cursor:pointer;" onclick="goto('stadAdmin')"><div class="num">${stadSettlementPending.length}</div><div class="lbl">STAD 정산 대기</div></div>` : ''}
   </div>
-  ${todayHwPlanned ? `<div class="card" style="${todayHwNotDone.length&&!todayHwLoading?'border-color:var(--red);':''}">
+  <div class="card" style="${todayHwNotDone.length&&!todayHwLoading?'border-color:var(--red);':''}">
     <div class="row between" style="margin-bottom:8px;gap:8px;flex-wrap:wrap;">
-      <h3 style="margin:0;">📸 ${fmtDate(hwDay)} 숙제 미확인 ${todayHwLoading?'':`<span style="color:var(--red);">${todayHwNotDone.length}명</span>`}</h3>
-      ${!todayHwLoading && todayHwNotDone.length ? `<button class="btn sm outline" onclick="copyText(this)" data-text="${encodeURIComponent(todayHwNotice)}">공지 문구 복사</button>` : ''}
+      <h3 style="margin:0;">📸 ${fmtDate(hwDay)} 숙제 미확인 ${todayHwLoading||!todayHwPlanned?'':`<span style="color:var(--red);">${todayHwNotDone.length}명</span>`}</h3>
+      <div class="row" style="gap:6px;">
+        <button class="btn sm ${hwIsYesterday?'':'outline'}" onclick="currentSubState.dashHwDay='yesterday';render();">어제</button>
+        <button class="btn sm ${hwIsYesterday?'outline':''}" onclick="currentSubState.dashHwDay='today';render();">오늘</button>
+        ${!todayHwLoading && todayHwNotDone.length ? `<button class="btn sm outline" onclick="copyText(this)" data-text="${encodeURIComponent(todayHwNotice)}">공지 문구 복사</button>` : ''}
+      </div>
     </div>
     ${todayHwLoading ? `<div class="empty" style="padding:12px 0;">${homeworkRecentLoadState==='error'?'숙제 기록을 불러오지 못했어요. 새로고침해 주세요.':'숙제 기록을 불러오는 중이에요…'}</div>`
-    : todayHwNotDone.length ? `<div style="font-size:13px;color:#5a5648;margin-bottom:8px;">오늘 숙제 제출이 확인되지 않습니다.</div>
+    : !todayHwPlanned ? `<div class="empty" style="padding:12px 0;">이 날은 숙제표에 숙제가 적힌 학생이 없어요.</div>`
+    : todayHwNotDone.length ? `<div style="font-size:13px;color:#5a5648;margin-bottom:8px;">${hwIsYesterday?'':'오늘 '}숙제 제출이 확인되지 않습니다.</div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;">${todayHwNotDone.map(x=>{
         const again = x.items.some(i=>i.state==='rejected'||i.state==='finalRejected');
         return `<span title="${x.items.map(i=>i.cls.name).join(', ')}" style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;padding:5px 10px;border-radius:999px;border:1px solid #f3c5c0;background:#fff3f1;color:#c94236;font-size:13px;font-weight:700;" onclick="goto('students');currentSubState.studentDetail='${x.student.id}';render();">${x.student.name}${again?' <span style="font-size:11px;">(다시)</span>':''}</span>`;
       }).join('')}</div>`
-    : `<div class="empty" style="padding:12px 0;">오늘 숙제가 있는 ${todayHwPlanned}명 모두 확인됐어요 🎉</div>`}
+    : `<div class="empty" style="padding:12px 0;">${hwIsYesterday?'어제':'오늘'} 숙제가 있는 ${todayHwPlanned}명 모두 확인됐어요 🎉</div>`}
     ${!todayHwLoading && todayHwPending.length ? `<div style="margin-top:10px;font-size:12px;color:#9a6b16;">사진은 올라왔고 검토 대기 ${todayHwPending.length}명: ${todayHwPending.map(x=>x.student.name).join(', ')} <a href="#" onclick="event.preventDefault();goto('hwreview')" style="color:var(--navy2);font-weight:800;">검토하러 가기</a> <span style="color:#8a8674;">(공지 명단에는 넣지 않았어요)</span></div>` : ''}
-  </div>` : ''}
+  </div>
   ${stadApprovedToday.length ? (()=>{
     const hour = new Date().getHours();
     const absent = stadApprovedToday.filter(x=>{ const d=stadDailyFor(x.studentId,stadToday); return !(d&&d.attended); });
