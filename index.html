@@ -1331,7 +1331,7 @@ async function storePhotoFile(file, options={}){
       // 시간 초과도 아래 압축 사진 대체 저장 경로로 이어진다.
       const controller=new AbortController();
       const uploadTimeout=setTimeout(()=>controller.abort(),20000);
-      let res;
+      let res,out;
       try{
         res=await fetch(PHOTO_API_BASE.replace(/\/$/,'')+'/upload',{
           method:'POST',
@@ -1339,10 +1339,11 @@ async function storePhotoFile(file, options={}){
           body:form,
           signal:controller.signal
         });
+        // 응답 헤더만 도착하고 본문(JSON)이 멈추는 경우도 같은 제한시간으로 중단한다.
+        out=await res.json().catch(()=>({}));
       }finally{
         clearTimeout(uploadTimeout);
       }
-      const out=await res.json().catch(()=>({}));
       if(!res.ok) throw new Error(out?.error || ('R2 upload '+res.status));
       const raw=out.photo || out;
       const key=raw.storageKey || raw.key || raw.r2Key || raw.r2_key || '';
