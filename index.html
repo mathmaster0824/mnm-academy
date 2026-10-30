@@ -6152,8 +6152,25 @@ function currentMissedStreakForStudent(stuId){
   }
   return streak;
 }
+// 다음 수업에서 검사할 숙제 중 오늘까지의 날짜(아직 검사 전). 표에 보여주기만 하고 경고(연속 미제출) 계산에는 넣지 않는다.
+function homeworkUpcomingRowsForStudent(stuId, skipDates){
+  const today=todayISO(), byDate=new Map();
+  classesForStudent(stuId).forEach(c=>{
+    let next=null;
+    for(let i=1;i<=7 && !next;i++){ const d=addDaysISO(today,i); if(isLessonDay(c.dayGroup,d)) next=d; }
+    if(!next) return;
+    homeworkDateRangeDates(c.dayGroup,next).filter(d=>d<=today && !skipDates.has(d)).forEach(d=>{
+      const st=homeworkEffectiveState(subForClass(stuId,c.id,d),d,stuId);
+      const rank={missing:6,finalRejected:6,rejected:5,pending:4,unknown:3,open:2,approved:1};
+      const prev=byDate.get(d);
+      if(!prev || (rank[st]||0)>(rank[prev.state]||0)) byDate.set(d,{date:d,state:st,clsId:c.id,upcoming:true,content:homeworkContentForDate(stuId,c.id,d)});
+    });
+  });
+  return [...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date));
+}
 function renderHomeworkGlanceForWarning(stuId){
-  const rows = homeworkGlanceRowsForStudent(stuId, 14);
+  const checkedRows = homeworkGlanceRowsForStudent(stuId, 14);
+  const rows = checkedRows.concat(homeworkUpcomingRowsForStudent(stuId, new Set(checkedRows.map(r=>r.date))));
   const labelFor = st => ({approved:'인정', pending:'검토대기', rejected:'불합격(재제출)', finalRejected:'최종불합격', missing:'미제출', open:'대기중', unknown:'조회 전'}[st] || st);
   const colorFor = st => ({approved:'green', pending:'yellow', rejected:'yellow', finalRejected:'red', missing:'red', open:'gray', unknown:'gray'}[st] || 'gray');
   const missedStreak = currentMissedStreakForStudent(stuId);
@@ -6174,7 +6191,7 @@ function renderHomeworkGlanceForWarning(stuId){
           : `<span class="badge ${colorFor(r.state)}" style="font-size:10px;">${lab}</span>`;
         const msg = canVerify && ui && ui.state!=='saving' && ui.msg ? `<div data-hwverify-detail-msg="${r.date}" style="font-size:10px;margin-top:3px;color:${ui.state==='error'?'var(--red)':'var(--green)'};">${ui.msg}</div>` : '';
         return `<tr>
-        <td style="font-size:11px;color:#6b6858;white-space:nowrap;">${r.date.slice(5).replace('-','/')}</td>
+        <td style="font-size:11px;color:#6b6858;white-space:nowrap;">${r.date.slice(5).replace('-','/')}${r.upcoming?'<div style="font-size:10px;color:#9c9880;">다음 수업 검사</div>':''}</td>
         <td>${badge}${msg}</td>
         <td style="font-size:12px;color:${r.content?'var(--ink)':'#b3aea0'};">${r.content || '(등록된 숙제 내용 없음)'}</td>
       </tr>`; }).join('')}
