@@ -760,11 +760,13 @@ function attachRoleListeners(){
     },roleListenerError('submissions-pending')));
   }else if(stuId){
     // 보안 규칙이 "studentId가 본인인 문서"만 허용하므로, 학생은 studentId로 조회하고 날짜는 화면에서 거른다.
+    // 숙제 표에서 지난 몇 주를 넘겨 볼 수 있으므로, 학생은 최근 GRID_WEEKS_BACK주 치를 들고 있는다.
+    const stuSubStart=[recentStart, gridOldestWeekStart()].sort()[0];
     subs.push(fsdb.collection('submissions').where('studentId','==',stuId).onSnapshot(snap=>{
       const keep={};
-      snap.docs.forEach(d=>{ if((d.data().date||d.id.slice(-10))>=recentStart) keep[d.id]=d.data(); });
+      snap.docs.forEach(d=>{ if((d.data().date||d.id.slice(-10))>=stuSubStart) keep[d.id]=d.data(); });
       Object.keys(db.submissions).forEach(k=>{
-        if(k.startsWith(stuId+'_') && (db.submissions[k]?.date||k.slice(-10))>=recentStart) delete db.submissions[k];
+        if(k.startsWith(stuId+'_') && (db.submissions[k]?.date||k.slice(-10))>=stuSubStart) delete db.submissions[k];
       });
       Object.assign(db.submissions,keep); scheduleRender();
     },roleListenerError('submissions')));
@@ -7522,19 +7524,52 @@ const GRID_SUB_STYLE = {
   rejected:{icon:'🔁',label:'다시',bg:'#fff3f1',border:'#f3c5c0',color:'#a83b32'},
   none:{icon:'📸',label:'올리기',bg:'var(--navy2)',border:'var(--navy2)',color:'#fff'}
 };
+// 학생 숙제 표에서 넘겨 볼 수 있는 지난주 수(이번 주 포함 GRID_WEEKS_BACK+1주)
+const GRID_WEEKS_BACK = 4;
+function gridOldestWeekStart(){ return addDaysISO(weekStartISO(todayISO()), -7*GRID_WEEKS_BACK); }
+function gridViewWeek(){
+  const cur=weekStartISO(todayISO());
+  const w=currentSubState.gridWeek;
+  return (w && w<=cur && w>=gridOldestWeekStart()) ? w : cur;
+}
+function gridCanSubmitDate(date){ return date<=academicTodayISO(); }
+function moveGridWeek(delta){
+  if(currentSubState._draftSub && !confirm('작성 중인 숙제 인증이 있어요. 다른 주로 옮길까요? (작성 중인 내용은 사라질 수 있어요)')) return;
+  currentSubState._draftSub=null; currentSubState._draftSubKey=null;
+  currentSubState.gridSub=null; currentSubState.subDate=null;
+  const cur=weekStartISO(todayISO());
+  let w=addDaysISO(gridViewWeek(), 7*delta);
+  if(w>cur) w=cur;
+  if(w<gridOldestWeekStart()) w=gridOldestWeekStart();
+  currentSubState.gridWeek=w;
+  render();
+}
+// 지난주 계획표는 학생 로그인 때 불러오지 않으므로(이번 주만), 그 주를 볼 때 한 번 읽어 온다.
+const gridPlanLoads={};
+function ensureGridWeekPlans(stuId, wk){
+  classesForStudent(stuId).forEach(c=>{
+    const key=c.id+'_'+wk;
+    if(key in db.weeklyPlans || gridPlanLoads[key]) return;
+    gridPlanLoads[key]=true;
+    fsdb.collection('weeklyPlans').doc(key).get()
+      .then(doc=>{ db.weeklyPlans[key]=doc.exists?doc.data():{}; scheduleRender(); })
+      .catch(e=>{ console.warn('[지난주 숙제 계획]',key,e?.code||e); delete gridPlanLoads[key]; });
+  });
+}
 function gridSubmitCount(stuId){
   if(session?.mode!=='student') return 0;
   const wk=weekStartISO(todayISO()), today=academicTodayISO();
   let n=0;
   classesForStudent(stuId).forEach(c=>{
     const plan=(db.weeklyPlans[c.id+'_'+wk]||{})[stuId]||{};
-    ['mon','tue','wed','thu','fri','sat','sun'].forEach((k,i)=>{ if(plan[k] && addDaysISO(wk,i)<=today) n++; });
+    ['mon','tue','wed','thu','fri','sat','sun'].forEach((k,i)=>{ if(plan[k] && gridCanSubmitDate(addDaysISO(wk,i))) n++; });
   });
   return n;
 }
 function renderWeekPlanGrids(stuId,title,withSubmit){
-  const wk=weekStartISO(todayISO());
-  const today=academicTodayISO();
+  const curWk=weekStartISO(todayISO());
+  const wk=withSubmit ? gridViewWeek() : curWk;
+  if(withSubmit && wk!==curWk) ensureGridWeekPlans(stuId, wk);
   const classes=classesForStudent(stuId);
   const many=classes.length>1;
   const list=classes.length?classes:[null];
@@ -7544,7 +7579,7 @@ function renderWeekPlanGrids(stuId,title,withSubmit){
     const cells=['mon','tue','wed','thu','fri','sat','sun'].map((k,i)=>{
       const date=addDaysISO(wk,i);
       let btn='';
-      if(withSubmit && c && plan[k] && date<=today){
+      if(withSubmit && c && plan[k] && gridCanSubmitDate(date)){
         const sub=subForClass(stuId,c.id,date);
         const st=sub?submissionReviewState(sub,date,stuId):'none';
         const look=GRID_SUB_STYLE[st]||GRID_SUB_STYLE.none;
@@ -7555,8 +7590,17 @@ function renderWeekPlanGrids(stuId,title,withSubmit){
     }).join('');
     const panel=(withSubmit && c && open && open.clsId===c.id)
       ? `<div id="gridSubPanel">${renderSubmissionCard(stuId,false,false)}</div>` : '';
+    const isCur=wk===curWk;
+    const loadingPlan=withSubmit && c && !isCur && !((c.id+'_'+wk) in db.weeklyPlans);
+    const nav=withSubmit ? `<div class="row" style="gap:6px;align-items:center;margin:-4px 0 10px;flex-wrap:wrap;">
+      <button class="btn sm outline" ${wk<=gridOldestWeekStart()?'disabled':''} onclick="moveGridWeek(-1)">◀ 지난주</button>
+      <span style="font-size:12.5px;font-weight:700;color:${isCur?'var(--navy2)':'#a8742a'};">${isCur?'이번 주':'지난 숙제'} · ${fmtDate(wk)} ~ ${fmtDate(addDaysISO(wk,6))}</span>
+      ${isCur?'':`<button class="btn sm outline" onclick="moveGridWeek(1)">다음 주 ▶</button><button class="btn sm gold" onclick="currentSubState.gridWeek=null;moveGridWeek(0)">이번 주로</button>`}
+    </div>` : '';
     return `<div class="card">
-    <h3 style="margin-top:0;">${title}${many?` · <span style="color:var(--navy2);">${escapeHtml(c.name)}</span>`:''}</h3>
+    <h3 style="margin-top:0;">${withSubmit&&!isCur?title.replace('이번 주','지난'):title}${many?` · <span style="color:var(--navy2);">${escapeHtml(c.name)}</span>`:''}</h3>
+    ${nav}
+    ${loadingPlan?`<div style="font-size:12px;color:#9c9880;margin-bottom:6px;">숙제 계획을 불러오는 중…</div>`:''}
     <div class="weekgrid" style="grid-template-columns:70px repeat(7,1fr);">
       <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div class="hd">${DAY_LABEL[k]}</div>`).join('')}
       <div></div>${cells}
