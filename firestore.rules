@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// M&m 수학훈련소 Firestore 보안 규칙 (2단계)
+// M&m 수학훈련소 Firestore 보안 규칙 (3단계: 반 출석부는 원장 전용, 학생은 자기 사본만)
 // - 원장: Firebase 이메일 로그인 계정(아래 UID)만 모든 데이터를 읽고 쓴다.
 // - 학생: 익명 로그인 → 학생 코드 + 비밀번호 4자리로 studentSessions/{내 uid}를 만든 사람.
 //         세션의 비밀번호가 studentPins와 맞고, 코드가 퇴원 처리되지 않았을 때만 학생으로 인정한다.
@@ -83,13 +83,25 @@ service cloud.firestore {
     match /weekendClasses/{d} { allow read: if isDirector() || isStudent(); allow write: if isDirector(); }
     match /stadSettings/{d} { allow read: if isDirector() || isStudent(); allow write: if isDirector(); }
     match /weeklyPlans/{d} { allow read: if isDirector() || isStudent(); allow write: if isDirector(); }
-    match /fridaySupp/{d} { allow read: if isDirector() || isStudent(); allow write: if isDirector(); }
-    // 반 수업 기록: 학생은 읽기, 그리고 영상 과제 체크처럼 자기 이름 칸만 고칠 수 있다.
+    // 금요 보강 기록: 학생 화면에서 쓰지 않으므로 원장 전용
+    match /fridaySupp/{d} { allow read, write: if isDirector(); }
+    // 반 수업 기록(반 출석부): 한 문서에 반 전원의 출결·진도·점수·특이사항이 있으므로 학생은 읽지 못한다.
+    // 학생은 자기 칸의 영상 과제 체크(videoAssignments)만 바꿀 수 있다.
     match /classRecords/{d} {
-      allow read: if isDirector() || isStudent();
+      allow read, create, delete: if isDirector();
+      allow update: if isDirector() || (isStudent()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([me()])
+        && request.resource.data[me()].diff(resource.data[me()]).affectedKeys().hasOnly(['videoAssignments']));
+    }
+    // 학생별 수업 기록 사본: 원장 화면이 만들고, 학생은 자기 것만 읽는다. 영상 과제 체크만 바꿀 수 있다.
+    match /studentRecords/{d} {
+      allow get: if isDirector() || (isStudent() && ownsExisting());
+      allow list: if isDirector() || (isStudent() && resource.data.studentId == me());
       allow create, delete: if isDirector();
       allow update: if isDirector() || (isStudent()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([me()]));
+        && resource.data.studentId == me()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rec'])
+        && request.resource.data.rec.diff(resource.data.rec).affectedKeys().hasOnly(['videoAssignments']));
     }
     // 답지 과제: 학생은 자기에게 낸 과제만 읽는다.
     match /assignments/{d} {
