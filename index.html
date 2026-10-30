@@ -186,7 +186,8 @@
       <button id="tabStudent" onclick="setLoginMode('student')">학생 모드</button>
     </div>
     <div id="directorLogin">
-      <input type="password" id="pwInput" placeholder="비밀번호를 입력해주세요" maxlength="20">
+      <input type="email" id="emailInput" placeholder="원장 이메일" autocomplete="username" style="margin-bottom:8px;">
+      <input type="password" id="pwInput" placeholder="비밀번호를 입력해주세요" maxlength="64" autocomplete="current-password" onkeydown="if(event.key==='Enter')tryDirectorLogin()">
       <div class="login-err" id="pwErr"></div>
       <button class="btn-gold" onclick="tryDirectorLogin()">원장 모드로 입장</button>
       <div class="setup-note" id="pwSetupNote"></div>
@@ -274,6 +275,9 @@ const firestorePersistenceReady = fsdb.enablePersistence({synchronizeTabs:true})
     return false;
   });
 
+// 원장 계정(Firebase Authentication 이메일 로그인)의 UID. Firestore 규칙의 isDirector()와 같은 값이어야 한다.
+const DIRECTOR_UID = 'bcCt2VfFy2dyS786zXGpH0fuHIi2';
+let coreDataStarted = false;
 let session = null;
 let loginMode = 'director';
 let currentView = 'dashboard';
@@ -286,7 +290,7 @@ let listenersReady = { settings:false, students:false, classes:false };
 
 // local in-memory mirror, kept in sync by Firestore real-time listeners
 let db = {
-  settings:{ adminPassword:'0000', isDefaultPassword:true },
+  settings:{},
   classes:[], students:[], courses:[], videos:[],
   classRecords:{}, weeklyPlans:{}, fridaySupp:{}, submissions:{}, practiceProgress:{},
   questions:[], feedbacks:[], kmm:[], schoolExams:[], schoolScores:{}, timerState:{}, weekendSettings:{enabled:false}, weekendClasses:[], weekendSubmissions:{},
@@ -365,17 +369,59 @@ const SEED_DATA = {
 };
 
 /* ---------------- FIRESTORE INIT & REAL-TIME LISTENERS ---------------- */
+// 보안: 로그인 전에는 어떤 운영 데이터도 읽지 않는다.
+// 원장 = Firebase 이메일 로그인(DIRECTOR_UID), 학생 = 익명 로그인 + 학생 코드로 만든 studentSessions/{uid}.
+// Firestore 규칙이 이 두 가지로만 읽기/쓰기를 허용한다.
+function waitForAuthUser(){
+  return new Promise(resolve=>{ const off=fauth.onAuthStateChanged(u=>{ off(); resolve(u); }); });
+}
+async function ensureAnonymousUser(){
+  let user=fauth.currentUser;
+  if(user && user.isAnonymous) return user;
+  if(user) await fauth.signOut();
+  return (await fauth.signInAnonymously()).user;
+}
+async function restoreSavedSession(user){
+  let saved=null;
+  try{ saved=JSON.parse(localStorage.getItem('mnm_session')||'null'); }catch(e){}
+  if(!saved || !user) return null;
+  if(saved.mode==='director') return (!user.isAnonymous && user.uid===DIRECTOR_UID) ? {mode:'director'} : null;
+  if(saved.mode==='student' && saved.code && user.isAnonymous){
+    try{
+      const doc=await fsdb.collection('studentSessions').doc(user.uid).get();
+      if(doc.exists && doc.data().studentId===saved.studentId) return {mode:'student', studentId:saved.studentId, code:saved.code};
+    }catch(e){ console.warn('[세션 복원]', e?.code||e); }
+  }
+  return null;
+}
+function showLoginScreen(){
+  document.getElementById('loadingScreen').style.display='none';
+  document.getElementById('loginScreen').style.display='flex';
+  const emailEl=document.getElementById('emailInput');
+  try{ if(emailEl && !emailEl.value) emailEl.value=localStorage.getItem('mnm_director_email')||''; }catch(e){}
+}
+function startCoreData(){
+  if(coreDataStarted) return;
+  coreDataStarted=true;
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('loadingScreen').style.display='';
+  attachCoreListeners();
+  startLoadingTimeoutWatchdog();
+}
 async function initFirebase(){
+  let user=null;
   try{
     await firestorePersistenceReady;
     try{ await fauth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){}
-    if(!fauth.currentUser) await fauth.signInAnonymously();
+    user=await waitForAuthUser();
+    if(!user) user=(await fauth.signInAnonymously()).user;
   }catch(e){
     showFatalError('로그인 서버에 연결하지 못했어요. 인터넷 연결을 확인한 뒤 새로고침 해주세요.');
     return;
   }
-  attachCoreListeners();
-  startLoadingTimeoutWatchdog();
+  const restored=await restoreSavedSession(user);
+  if(restored){ session=restored; startCoreData(); }
+  else{ try{ localStorage.removeItem('mnm_session'); }catch(e){} showLoginScreen(); }
 }
 
 function showFatalError(msg){
@@ -407,20 +453,29 @@ function setConnStatus(ok){
 // 로그인 전부터 필요하고, 시간이 지나도 크게 늘어나지 않는 "기준정보" 컬렉션들.
 // 원장/학생 구분 없이 항상 전체를 구독해도 안전함 (읽기량이 크지 않음).
 function attachCoreListeners(){
+  const isDirectorSession = session && session.mode==='director';
+  // meta/settings는 원장만 읽는다(규칙도 원장 전용). 학생은 읽지 않고 바로 준비 완료로 본다.
+  if(!isDirectorSession){ listenersReady.settings = true; }
   const subs = [
-    fsdb.collection('meta').doc('settings').onSnapshot(async doc=>{
-      if(doc.exists){ db.settings = doc.data(); }
-      else{
-        db.settings = { adminPassword:'0000', isDefaultPassword:true };
-        try{ await fsdb.collection('meta').doc('settings').set(db.settings); }catch(e){}
+    ...(isDirectorSession ? [fsdb.collection('meta').doc('settings').onSnapshot(async doc=>{
+      db.settings = doc.exists ? doc.data() : {};
+      // 예전 방식의 원장 비밀번호(평문)가 남아 있으면 지운다. 이제 원장 로그인은 Firebase 계정으로만 한다.
+      if(doc.exists && ('adminPassword' in db.settings || 'isDefaultPassword' in db.settings)){
+        try{
+          await fsdb.collection('meta').doc('settings').update({
+            adminPassword: firebase.firestore.FieldValue.delete(),
+            isDefaultPassword: firebase.firestore.FieldValue.delete()
+          });
+        }catch(e){ console.warn('[예전 원장 비밀번호 삭제]', e?.code||e); }
       }
       listenersReady.settings = true;
       maybeFinishLoading();
       scheduleRender();
-    }, err=>{ setConnStatus(false); }),
+    }, err=>{ setConnStatus(false); })] : []),
 
     fsdb.collection('students').onSnapshot(snap=>{
       db.students = snap.docs.map(d=>({id:d.id, ...d.data()}));
+      if(isDirectorSession) scheduleStudentCodeSync();
       listenersReady.students = true;
       maybeFinishLoading();
       scheduleRender();
@@ -754,22 +809,17 @@ function maybeFinishLoading(){
   if(!(listenersReady.settings && listenersReady.students && listenersReady.classes)) return;
   document.getElementById('loadingScreen').style.display='none';
   if(appEntered) return;
-  if(!session){
-    // 저장된 로그인 상태가 있으면 자동으로 복원 (화면 꺼짐/백그라운드 새로고침으로 로그인이 풀리는 것 방지)
-    try{
-      const saved = JSON.parse(localStorage.getItem('mnm_session') || 'null');
-      if(saved && saved.mode==='director'){ session = saved; }
-      else if(saved && saved.mode==='student'){
-        const stu = studentById(saved.studentId);
-        if(stu && stu.status!=='withdrawn'){ session = saved; }
-      }
-    }catch(e){}
+  // 로그인(또는 저장된 로그인 복원)이 끝난 뒤에만 데이터를 불러오므로, 여기서는 세션이 항상 있다.
+  if(session && session.mode==='student'){
+    const stu = studentById(session.studentId);
+    if(!stu || stu.status==='withdrawn'){
+      alert('더 이상 사용할 수 없는 코드예요. 선생님께 문의해주세요.');
+      logout();
+      return;
+    }
   }
   if(session){ enterApp(); return; }
-  document.getElementById('loginScreen').style.display='flex';
-  if(db.settings.isDefaultPassword){
-    document.getElementById('pwSetupNote').textContent = '최초 접속이에요. 기본 비밀번호(0000)로 먼저 로그인한 뒤, 대시보드에서 비밀번호를 변경해주세요.';
-  }
+  showLoginScreen();
 }
 
 /* ---------------- LOGIN ---------------- */
@@ -780,45 +830,115 @@ function setLoginMode(m){
   document.getElementById('directorLogin').style.display = m==='director' ? 'block':'none';
   document.getElementById('studentLogin').style.display = m==='student' ? 'block':'none';
 }
-function tryDirectorLogin(){
-  const v = document.getElementById('pwInput').value;
-  if(v === db.settings.adminPassword){ session = {mode:'director'}; saveSessionLocal(); enterApp(); }
-  else{ document.getElementById('pwErr').textContent = '비밀번호가 올바르지 않아요. 다시 확인해주세요.'; }
+let loginBusy = false;
+async function tryDirectorLogin(){
+  if(loginBusy) return;
+  const email = String(document.getElementById('emailInput').value||'').trim();
+  const pw = document.getElementById('pwInput').value;
+  const err = document.getElementById('pwErr');
+  err.textContent = '';
+  if(!email || !pw){ err.textContent = '이메일과 비밀번호를 모두 입력해주세요.'; return; }
+  loginBusy = true;
+  try{
+    const cred = await fauth.signInWithEmailAndPassword(email, pw);
+    if(cred.user.uid !== DIRECTOR_UID){
+      await fauth.signOut();
+      await fauth.signInAnonymously();
+      err.textContent = '원장 계정이 아니에요. Firebase에 등록한 원장 이메일로 로그인해주세요.';
+      return;
+    }
+    try{ localStorage.setItem('mnm_director_email', email); }catch(e){}
+    session = {mode:'director'};
+    saveSessionLocal();
+    startCoreData();
+  }catch(e){
+    const code = String(e?.code||'');
+    err.textContent = /too-many-requests/.test(code) ? '여러 번 틀려서 잠시 막혔어요. 몇 분 뒤에 다시 시도해주세요.'
+      : /network/.test(code) ? '인터넷 연결을 확인한 뒤 다시 시도해주세요.'
+      : '이메일 또는 비밀번호가 올바르지 않아요. 다시 확인해주세요.';
+  }finally{ loginBusy = false; }
 }
-function tryStudentLogin(){
+// 학생 코드로 학생 ID 찾기. studentCodes/{코드}는 원장 화면이 학생 명단에서 자동으로 만든다.
+// (전환기 대비) studentCodes가 아직 없으면 예전 방식으로 학생 명단에서 찾는다 — 새 규칙 적용 후에는 이 경로가 막힌다.
+async function lookupStudentByCode(code){
+  const doc = await fsdb.collection('studentCodes').doc(code).get();
+  if(doc.exists) return {studentId:doc.data().studentId, status:doc.data().status||'active'};
+  try{
+    for(const v of [code, Number(code)]){
+      if(typeof v==='number' && !Number.isFinite(v)) continue;
+      const snap = await fsdb.collection('students').where('code','==',v).limit(1).get();
+      if(!snap.empty){ const d=snap.docs[0]; return {studentId:d.id, status:d.data().status||'active'}; }
+    }
+  }catch(e){ /* 새 규칙에서는 권한 없음: studentCodes만 사용 */ }
+  return null;
+}
+async function tryStudentLogin(){
+  if(loginBusy) return;
   const input = document.getElementById('codeInput');
   const err = document.getElementById('codeErr');
   const v = String(input ? input.value : '').trim();
-
-  // 기존 학생 code 값 자체는 절대 수정하지 않는다.
-  // Firestore에 숫자/문자열 어느 형식으로 저장돼 있어도 입력 코드와 같은 값이면 로그인한다.
-  const stu = (db.students||[]).find(s => String(s.code ?? '').trim() === v);
-
-  if(stu && stu.status==='withdrawn'){
-    if(err) err.textContent = '더 이상 사용할 수 없는 코드예요. 선생님께 문의해주세요.';
-    return;
-  }
-  if(stu){
-    session = {mode:'student', studentId:stu.id};
+  if(err) err.textContent = '';
+  if(!/^[0-9A-Za-z]{1,20}$/.test(v)){ if(err) err.textContent = '학생 코드를 다시 확인해주세요.'; return; }
+  loginBusy = true;
+  try{
+    const user = await ensureAnonymousUser();
+    const found = await lookupStudentByCode(v);
+    if(!found){ if(err) err.textContent = '등록되지 않은 코드예요. 선생님께 코드를 다시 확인해주세요.'; return; }
+    if(found.status==='withdrawn'){ if(err) err.textContent = '더 이상 사용할 수 없는 코드예요. 선생님께 문의해주세요.'; return; }
+    await fsdb.collection('studentSessions').doc(user.uid).set({
+      studentId: found.studentId, code: v, at: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    session = {mode:'student', studentId:found.studentId, code:v};
     saveSessionLocal();
-    enterApp();
-  }else{
-    if(err) err.textContent = '등록되지 않은 코드예요. 선생님께 코드를 다시 확인해주세요.';
-  }
+    startCoreData();
+  }catch(e){
+    console.error('[학생 로그인]', e);
+    if(err) err.textContent = '로그인 중 문제가 생겼어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.';
+  }finally{ loginBusy = false; }
+}
+// 원장 화면: 학생 명단의 코드로 studentCodes/{코드} = {studentId, status}를 맞춰 둔다.
+// 학생 로그인은 이 문서 하나만 읽을 수 있고(목록 조회 불가), 명단 전체는 볼 수 없다.
+let studentCodeSyncTimer = null;
+function scheduleStudentCodeSync(){
+  clearTimeout(studentCodeSyncTimer);
+  studentCodeSyncTimer = setTimeout(()=>{ syncStudentCodes().catch(e=>console.warn('[학생 코드 동기화]', e?.code||e)); }, 1500);
+}
+async function syncStudentCodes(){
+  if(!session || session.mode!=='director') return;
+  const want = {};
+  (db.students||[]).forEach(s=>{
+    const code = String(s.code ?? '').trim();
+    if(/^[0-9A-Za-z]{1,20}$/.test(code)) want[code] = {studentId:s.id, status:s.status||'active'};
+  });
+  const snap = await fsdb.collection('studentCodes').get();
+  const have = {};
+  snap.docs.forEach(d=>{ have[d.id] = d.data(); });
+  const batch = fsdb.batch();
+  let n = 0;
+  Object.entries(want).forEach(([code,v])=>{
+    const h = have[code];
+    if(!h || h.studentId!==v.studentId || (h.status||'active')!==v.status){ batch.set(fsdb.collection('studentCodes').doc(code), v); n++; }
+  });
+  Object.keys(have).forEach(code=>{ if(!want[code]){ batch.delete(fsdb.collection('studentCodes').doc(code)); n++; } });
+  if(n) await batch.commit();
 }
 function saveSessionLocal(){ try{ localStorage.setItem('mnm_session', JSON.stringify(session)); }catch(e){} }
-function logout(){
+async function logout(){
   homeworkLoadGen++; homeworkRecentLoadState='idle'; homeworkKnownDates.clear(); homeworkKnownStudents.clear();
   roleUnsubscribers.forEach(u=>{ try{ u(); }catch(e){} });
   roleUnsubscribers = [];
+  unsubscribers.forEach(u=>{ try{ u(); }catch(e){} });
+  unsubscribers = [];
   clearViewListeners();
   loadedViewData.clear();
+  const wasStudent = session && session.mode==='student';
   session = null;
   try{ localStorage.removeItem('mnm_session'); }catch(e){}
   document.getElementById('appShell').style.display='none';
-  document.getElementById('loginScreen').style.display='flex';
-  document.getElementById('pwInput').value=''; document.getElementById('codeInput').value='';
-  document.getElementById('pwErr').textContent=''; document.getElementById('codeErr').textContent='';
+  // 다음 사람이 이 기기에서 이전 사람의 권한을 쓰지 못하도록 Firebase 로그인도 끊고, 화면을 새로 연다.
+  try{ if(wasStudent && fauth.currentUser) await fsdb.collection('studentSessions').doc(fauth.currentUser.uid).delete(); }catch(e){}
+  try{ await fauth.signOut(); }catch(e){}
+  location.reload();
 }
 function studentLessonRecords(stuId){
   const seen = new Set();
@@ -1909,7 +2029,7 @@ function renderDashboard(){
   const stadSettlementPending = stadApprovedToday.filter(x=>{ const d=stadDailyFor(x.studentId,stadToday); return d && d.settlementText && !d.settlementApproved; });
   const stadAttendanceDone = stadApprovedToday.filter(x=>{ const d=stadDailyFor(x.studentId,stadToday); return d && d.attended; }).length;
   const outStudents = db.students.filter(s=>verifiedWarnings(s).length>=3);
-  const pwWarn = db.settings.isDefaultPassword;
+  const pwWarn = false; // 원장 비밀번호는 이제 Firebase 계정에서 관리한다
   const today = todayISO();
   // v1: 관리자 대시보드에서는 '몇 개 제출'뿐 아니라 날짜별 제출/미제출을 함께 보여준다.
   // 기존 Firebase submissions 데이터는 읽기만 하며 저장/경고 로직은 건드리지 않는다.
@@ -2046,10 +2166,8 @@ function renderDashboard(){
   `;
 }
 async function changePassword(){
-  const p1=document.getElementById('newPw1').value, p2=document.getElementById('newPw2').value;
-  if(!p1 || p1.length<4){ alert('4자 이상의 비밀번호를 입력해주세요.'); return; }
-  if(p1!==p2){ alert('두 비밀번호가 일치하지 않아요.'); return; }
-  await fsSet('meta','settings',{adminPassword:p1, isDefaultPassword:false});
+  // 원장 비밀번호는 더 이상 Firestore에 저장하지 않는다. Firebase 콘솔 › Authentication에서 바꾼다.
+  alert('원장 비밀번호는 Firebase 콘솔의 Authentication 화면에서 바꿀 수 있어요.');
 }
 
 /* ---------------- SEED LOADER ---------------- */

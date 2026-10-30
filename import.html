@@ -147,7 +147,10 @@ function switchTab(which){
 }
 
 async function loadData(){
-  await fauth.signInAnonymously();
+  await (async()=>{ /* 원장 전용 화면: 원장 화면(index.html)에서 로그인한 Firebase 계정을 그대로 쓴다 */
+    const u = await new Promise(r=>{ const off=fauth.onAuthStateChanged(x=>{ off(); r(x); }); });
+    if(!u || u.isAnonymous){ alert('원장 전용 화면이에요. M&m 수학훈련소에서 원장으로 로그인한 뒤 다시 열어주세요.'); throw new Error('director login required'); }
+  })();
   const [courseSnap, videoSnap] = await Promise.all([
     fsdb.collection('courses').get(),
     fsdb.collection('videos').get()
