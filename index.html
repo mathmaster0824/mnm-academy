@@ -1533,8 +1533,104 @@ async function deleteStoredPhoto(photo){
     return res.ok;
   }catch(e){ console.warn('R2 photo delete failed',e); return false; }
 }
+/* ---------- 올리기 전 사진 정리 ----------
+   어떤 폰·형식(아이폰/갤럭시 HEIC·HEIF, 아주 큰 사진 등)으로 올려도 어디서나 보이는 JPG로 바꿔 올린다.
+   - 브라우저가 직접 못 읽는 HEIC/HEIF는 변환 도구(heic2any)를 그때만 불러와 바꾼다.
+   - 긴 변 2000px로 줄인다(글씨는 충분히 보이고, 올리기가 빨라진다).
+   - 바꾸다 실패하면 원본을 그대로 올린다(제출이 막히지 않게). PDF 등 사진이 아닌 파일은 손대지 않는다. */
+const HEIC_LIB_URL='https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js';
+const UPLOAD_MAX_SIDE=2000, UPLOAD_JPEG_QUALITY=0.85;
+let heicLibPromise=null;
+function loadHeicLib(){
+  if(window.heic2any) return Promise.resolve(window.heic2any);
+  if(!heicLibPromise) heicLibPromise=new Promise((res,rej)=>{
+    const sc=document.createElement('script'); sc.src=HEIC_LIB_URL; sc.async=true;
+    sc.onload=()=>window.heic2any?res(window.heic2any):rej(new Error('heic2any missing'));
+    sc.onerror=()=>{ heicLibPromise=null; rej(new Error('heic2any load failed')); };
+    document.head.appendChild(sc);
+  });
+  return heicLibPromise;
+}
+function isHeicLike(file){ return /hei[cf]/i.test(file?.type||'') || /\.(heic|heif)$/i.test(file?.name||''); }
+async function heicToJpegBlob(blob){
+  const lib=await loadHeicLib();
+  const out=await lib({blob, toType:'image/jpeg', quality:0.9});
+  return Array.isArray(out)?out[0]:out;
+}
+function decodeImageBlob(blob){
+  return new Promise((res,rej)=>{
+    const url=URL.createObjectURL(blob), img=new Image();
+    img.onload=()=>res({img,url});
+    img.onerror=()=>{ URL.revokeObjectURL(url); rej(new Error('image decode failed')); };
+    img.src=url;
+  });
+}
+async function normalizePhotoForUpload(file){
+  try{
+    if(!file) return file;
+    const type=String(file.type||'').toLowerCase(), name=String(file.name||'');
+    const looksImage=type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|bmp)$/i.test(name);
+    if(!looksImage || type==='image/gif' || type==='image/svg+xml') return file;
+    let converted=isHeicLike(file), decoded;
+    try{ decoded=await decodeImageBlob(file); }
+    catch(e){ decoded=await decodeImageBlob(await heicToJpegBlob(file)); converted=true; }
+    const {img,url}=decoded;
+    const w=img.naturalWidth||img.width, h=img.naturalHeight||img.height;
+    if(!w||!h){ URL.revokeObjectURL(url); return file; }
+    const scale=Math.min(1, UPLOAD_MAX_SIDE/Math.max(w,h));
+    const plainOk=/^image\/(jpeg|png)$/.test(type) && scale===1 && file.size<=2.5*1024*1024;
+    if(!converted && plainOk){ URL.revokeObjectURL(url); return file; }
+    const canvas=document.createElement('canvas');
+    canvas.width=Math.round(w*scale); canvas.height=Math.round(h*scale);
+    const ctx=canvas.getContext('2d');
+    ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(img,0,0,canvas.width,canvas.height);
+    URL.revokeObjectURL(url);
+    const blob=await new Promise(r=>canvas.toBlob(r,'image/jpeg',UPLOAD_JPEG_QUALITY));
+    if(!blob) return file;
+    if(!converted && blob.size>=file.size && scale===1) return file;
+    return new File([blob], (name.replace(/\.[^.]+$/,'')||'photo')+'.jpg', {type:'image/jpeg', lastModified:Date.now()});
+  }catch(e){
+    console.warn('[사진 정리] 원본 그대로 올립니다:', e);
+    return file;
+  }
+}
+
+/* 이미 올라간 사진 중 이 기기 브라우저가 못 보여주는 것(HEIC 등)은 받아서 바꿔 보여주고,
+   저장소에 없는 사진은 '사진을 불러오지 못했어요' 표시로 바꾼다. */
+const photoFixCache=new Map();
+function photoApiImageUrl(src){ return !!PHOTO_API_BASE && typeof src==='string' && src.startsWith(PHOTO_API_BASE.replace(/\/$/,'')+'/photo?'); }
+async function repairPhotoImage(img){
+  const src=img.getAttribute('src')||'';
+  if(img.dataset.photoFix || !photoApiImageUrl(src)) return;
+  img.dataset.photoFix='1';
+  try{
+    let fixed=photoFixCache.get(src);
+    if(!fixed){
+      fixed=(async()=>{
+        const res=await fetch(src);
+        if(!res.ok) return {missing:true};
+        const blob=await res.blob();
+        const jpg=await heicToJpegBlob(blob);
+        return {url:URL.createObjectURL(jpg)};
+      })();
+      photoFixCache.set(src,fixed);
+    }
+    const out=await fixed;
+    if(out.url){ img.src=out.url; return; }
+    throw new Error('missing');
+  }catch(e){
+    img.alt='사진을 불러오지 못했어요';
+    img.title='사진을 불러오지 못했어요. 학생에게 다시 올려 달라고 해주세요.';
+    img.style.background='#f6f4ec';
+    img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><rect width="160" height="160" fill="#f6f4ec"/><text x="80" y="72" font-size="30" text-anchor="middle">📷</text><text x="80" y="104" font-size="13" fill="#8a8674" text-anchor="middle">사진을 불러오지</text><text x="80" y="122" font-size="13" fill="#8a8674" text-anchor="middle">못했어요</text></svg>');
+  }
+}
+document.addEventListener('error', ev=>{ const t=ev.target; if(t && t.tagName==='IMG') repairPhotoImage(t); }, true);
+
 async function storePhotoFile(file, options={}){
   const maxW=options.maxW||480, quality=options.quality??0.4;
+  file=await normalizePhotoForUpload(file);
   if(PHOTO_API_BASE){
     try{
       const token=await photoApiToken();
