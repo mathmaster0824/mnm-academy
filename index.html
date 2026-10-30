@@ -1306,6 +1306,48 @@ function attachDirectorViewListeners(v){
   }
 }
 function goto(v){ currentView=v; currentSubState={}; attachDirectorViewListeners(v); buildNav(); render(); toggleSidebar(false); }
+/* ---------------- 뒤로가기(브라우저 방문 기록) ---------------- */
+// 앱 안에서 화면이 바뀔 때(메뉴 이동, 학생 상세, 반 열기 등) 브라우저 방문 기록을 남긴다.
+// 그래서 휴대폰·브라우저의 뒤로가기를 누르면 앱을 나가지 않고 이전 화면으로 돌아간다.
+// 사진 크게 보기·확인창·모바일 메뉴가 열려 있으면 뒤로가기는 그것부터 닫는다.
+let navRestoring=false, navLastKey=null;
+function navScreen(){ return {mnm:1, view:currentView, studentDetail:currentSubState.studentDetail||null, classId:currentSubState.classId||null}; }
+function navKey(st){ return [st.view, st.studentDetail||'', st.classId||''].join('|'); }
+function navTrack(){
+  if(!appEntered || navRestoring || !session) return;
+  const st=navScreen(), k=navKey(st);
+  if(k===navLastKey) return;
+  try{ if(navLastKey===null) history.replaceState(st,''); else history.pushState(st,''); }catch(e){}
+  navLastKey=k;
+}
+function navCloseOverlay(){
+  const lb=document.getElementById('lightbox'), modal=document.getElementById('modalBg'), sb=document.getElementById('sidebar');
+  let closed=false;
+  if(lb && lb.style.display==='flex'){ lb.style.display='none'; closed=true; }
+  if(modal && modal.style.display==='flex'){ modal.style.display='none'; closed=true; }
+  if(sb && sb.classList.contains('open')){ sb.classList.remove('open'); closed=true; }
+  return closed;
+}
+window.addEventListener('popstate', e=>{
+  if(!appEntered || !session) return;
+  const keepHere=()=>{ try{ history.pushState(navScreen(),''); }catch(err){} };
+  if(navCloseOverlay()){ keepHere(); return; }
+  const st=e.state;
+  if(!st || !st.mnm) return; // 앱 첫 화면보다 더 뒤로 가면 브라우저 기본 동작(앱 나가기)
+  if(currentSubState._draftSub && !confirm('작성 중인 내용이 있어요. 이전 화면으로 갈까요? (작성 중인 내용은 사라질 수 있어요)')){ keepHere(); return; }
+  navRestoring=true;
+  try{
+    const viewChanged = st.view!==currentView;
+    currentView=st.view;
+    currentSubState={};
+    if(st.studentDetail) currentSubState.studentDetail=st.studentDetail;
+    if(st.classId){ currentSubState.classId=st.classId; currentSubState.classDate=todayISO(); }
+    if(viewChanged) attachDirectorViewListeners(currentView);
+    buildNav(); render();
+  }finally{ navRestoring=false; }
+  navLastKey=navKey(navScreen());
+  try{ window.scrollTo(0,0); }catch(err){}
+});
 function toggleSidebar(open){ document.getElementById('sidebar').classList.toggle('open', open); }
 
 /* ---------------- MODAL / CONFIRM ---------------- */
@@ -1818,7 +1860,7 @@ async function fsUpdate(col, id, data){
 /* ---------------- RENDER DISPATCH ---------------- */
 function render(){
   if(!session) { buildNav(); return; }
-  try{ renderInner(); }
+  try{ renderInner(); navTrack(); }
   catch(err){
     console.error('render error:', err);
     const main = document.getElementById('mainArea');
