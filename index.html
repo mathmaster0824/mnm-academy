@@ -198,8 +198,14 @@
     </div>
     <div id="studentLogin" style="display:none;">
       <input type="password" id="codeInput" placeholder="학생 코드 4자리" maxlength="4" inputmode="numeric" autocomplete="off">
+      <input type="password" id="pinInput" placeholder="비밀번호 4자리" maxlength="4" inputmode="numeric" autocomplete="off" onkeydown="if(event.key==='Enter')tryStudentLogin()">
+      <div id="pinSetupBox" style="display:none;">
+        <div class="setup-note" style="margin:0 0 8px;color:#e8cf95;">처음 로그인이에요. 앞으로 쓸 비밀번호 4자리를 한 번 더 입력해주세요.</div>
+        <input type="password" id="pinConfirmInput" placeholder="비밀번호 4자리 다시 입력" maxlength="4" inputmode="numeric" autocomplete="off" onkeydown="if(event.key==='Enter')tryStudentLogin()">
+      </div>
       <div class="login-err" id="codeErr"></div>
       <button class="btn-gold" onclick="tryStudentLogin()">내 페이지 열기</button>
+      <div class="setup-note" style="margin-top:10px;">비밀번호가 기억나지 않으면 선생님께 초기화를 부탁하세요.</div>
     </div>
   </div>
 </div>
@@ -393,7 +399,13 @@ async function restoreSavedSession(user){
   if(saved.mode==='student' && saved.code && user.isAnonymous){
     try{
       const doc=await fsdb.collection('studentSessions').doc(user.uid).get();
-      if(doc.exists && doc.data().studentId===saved.studentId) return {mode:'student', studentId:saved.studentId, code:saved.code};
+      // 비밀번호(pin) 없이 만든 예전 세션은 복원하지 않고 다시 로그인하게 한다.
+      if(doc.exists && doc.data().studentId===saved.studentId && doc.data().pin){
+        // 원장이 비밀번호를 초기화했거나 퇴원 처리했으면 규칙이 막으므로, 본인 문서를 한 번 읽어 세션이 살아 있는지 확인한다.
+        try{ await fsdb.collection('students').doc(saved.studentId).get({source:'server'}); }
+        catch(e){ if(isPermissionError(e)) return null; }
+        return {mode:'student', studentId:saved.studentId, code:saved.code};
+      }
     }catch(e){ console.warn('[세션 복원]', e?.code||e); }
   }
   return null;
@@ -477,13 +489,22 @@ function attachCoreListeners(){
       scheduleRender();
     }, err=>{ setConnStatus(false); })] : []),
 
-    fsdb.collection('students').onSnapshot(snap=>{
-      db.students = snap.docs.map(d=>({id:d.id, ...d.data()}));
-      if(isDirectorSession) scheduleStudentCodeSync();
-      listenersReady.students = true;
-      maybeFinishLoading();
-      scheduleRender();
-    }, err=>{ setConnStatus(false); }),
+    // 학생은 학생 명단 전체가 아니라 본인 문서만 읽는다(보안 규칙도 본인 문서만 허용).
+    (isDirectorSession
+      ? fsdb.collection('students').onSnapshot(snap=>{
+          db.students = snap.docs.map(d=>({id:d.id, ...d.data()}));
+          scheduleStudentCodeSync();
+          scheduleOwnerFieldBackfill();
+          listenersReady.students = true;
+          maybeFinishLoading();
+          scheduleRender();
+        }, err=>{ setConnStatus(false); })
+      : fsdb.collection('students').doc(session.studentId).onSnapshot(doc=>{
+          db.students = doc.exists ? [{id:doc.id, ...doc.data()}] : [];
+          listenersReady.students = true;
+          maybeFinishLoading();
+          scheduleRender();
+        }, err=>{ setConnStatus(false); if(isPermissionError(err)) checkStudentSessionStillValid(); })),
 
     fsdb.collection('classes').onSnapshot(snap=>{
       db.classes = snap.docs.map(d=>({id:d.id, ...d.data()}));
@@ -539,7 +560,24 @@ function roleListenerError(colName){
   return (err)=>{
     console.error('[역할별 리스너 오류]', colName, err);
     setConnStatus(false);
+    if(session && session.mode==='student' && isPermissionError(err)) checkStudentSessionStillValid();
   };
+}
+// 원장이 비밀번호를 초기화하거나 퇴원 처리하면 그 학생의 기존 로그인은 규칙에서 막힌다.
+// 권한 오류가 나면 본인 학생 문서를 다시 읽어 보고, 그것도 막혔으면 세션이 끝난 것으로 보고 로그인 화면으로 보낸다.
+let studentSessionCheckRunning=false;
+async function checkStudentSessionStillValid(){
+  if(studentSessionCheckRunning || !session || session.mode!=='student') return;
+  studentSessionCheckRunning=true;
+  try{
+    await fsdb.collection('students').doc(session.studentId).get({source:'server'});
+  }catch(e){
+    if(isPermissionError(e)){
+      alert('로그인이 만료됐어요. 학생 코드와 비밀번호로 다시 로그인해주세요.');
+      logout();
+      return;
+    }
+  }finally{ studentSessionCheckRunning=false; }
 }
 function dateDaysAgoISO(days){
   const d=new Date(); d.setHours(12,0,0,0); d.setDate(d.getDate()-Number(days||0));
@@ -721,9 +759,10 @@ function attachRoleListeners(){
       pendingIds=next; scheduleRender();
     },roleListenerError('submissions-pending')));
   }else if(stuId){
-    subs.push(idRecentRangeQuery('submissions',stuId+'_',recentStart).onSnapshot(snap=>{
+    // 보안 규칙이 "studentId가 본인인 문서"만 허용하므로, 학생은 studentId로 조회하고 날짜는 화면에서 거른다.
+    subs.push(fsdb.collection('submissions').where('studentId','==',stuId).onSnapshot(snap=>{
       const keep={};
-      snap.docs.forEach(d=>keep[d.id]=d.data());
+      snap.docs.forEach(d=>{ if((d.data().date||d.id.slice(-10))>=recentStart) keep[d.id]=d.data(); });
       Object.keys(db.submissions).forEach(k=>{
         if(k.startsWith(stuId+'_') && (db.submissions[k]?.date||k.slice(-10))>=recentStart) delete db.submissions[k];
       });
@@ -736,8 +775,8 @@ function attachRoleListeners(){
   if(isDirector){
     subscribeWeekendAdminWeek(currentSubState.weekendWeek || weekendReviewWeekStart(academicTodayISO()));
   }else if(stuId){
-    subs.push(idRecentRangeQuery('weekendSubmissions',stuId+'_',currentWeek).onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>m[d.id]=d.data()); db.weekendSubmissions=m; scheduleRender();
+    subs.push(fsdb.collection('weekendSubmissions').where('studentId','==',stuId).onSnapshot(snap=>{
+      const m={}; snap.docs.forEach(d=>{ const x=d.data(); if(String(x.weekStart||'')>=currentWeek) m[d.id]=x; }); db.weekendSubmissions=m; scheduleRender();
     },roleListenerError('weekendSubmissions')));
   }
 
@@ -751,11 +790,11 @@ function attachRoleListeners(){
     },roleListenerError('stadDaily')));
   }else if(stuId){
     db.stadApplications={}; db.stadDaily={};
-    subs.push(idRangeQuery('stadApplications',stuId+'_').onSnapshot(snap=>{
+    subs.push(fsdb.collection('stadApplications').where('studentId','==',stuId).onSnapshot(snap=>{
       const m={}; snap.docs.forEach(d=>m[d.id]=d.data()); db.stadApplications=m; scheduleRender();
     },roleListenerError('stadApplications')));
-    subs.push(idRecentRangeQuery('stadDaily',stuId+'_',recentStart).onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>m[d.id]=d.data()); db.stadDaily=m; scheduleRender();
+    subs.push(fsdb.collection('stadDaily').where('studentId','==',stuId).onSnapshot(snap=>{
+      const m={}; snap.docs.forEach(d=>{ const x=d.data(); if((x.date||d.id.slice(-10))>=recentStart) m[d.id]=x; }); db.stadDaily=m; scheduleRender();
     },roleListenerError('stadDaily')));
   }
 
@@ -801,6 +840,14 @@ function attachRoleListeners(){
       const m={}; snap.docs.forEach(d=>m[d.id]=d.data()); db.focusHistory=m; scheduleRender();
     },roleListenerError('focusHistory')));
   }else db.focusHistory={};
+
+  // 학생 비밀번호: 원장 화면은 "설정됨/미설정"만 보여주고 초기화(삭제)만 한다. 학생은 이 컬렉션을 읽지 못한다.
+  db.studentPins={};
+  if(isDirector){
+    subs.push(fsdb.collection('studentPins').onSnapshot(snap=>{
+      const m={}; snap.docs.forEach(d=>{ m[d.id]=true; }); db.studentPins=m; scheduleRender();
+    },roleListenerError('studentPins')));
+  }
 
   roleUnsubscribers=subs;
 }
@@ -876,28 +923,70 @@ async function lookupStudentByCode(code){
   }catch(e){ /* 새 규칙에서는 권한 없음: studentCodes만 사용 */ }
   return null;
 }
+// 학생 로그인 = 학생 코드 + 비밀번호 4자리.
+// 비밀번호는 studentPins/{코드}에 저장되고 학생은 이 문서를 읽을 수 없다. 대신 보안 규칙이
+// studentSessions/{uid}를 만들 때 넣은 pin과 studentPins의 pin이 같은지 대조한다.
+// 첫 로그인(아직 비밀번호 없음)이면 같은 비밀번호를 한 번 더 입력받아 studentPins를 만든다.
+function isPermissionError(e){ return /permission/i.test(String(e?.code||'')+' '+String(e?.message||'')); }
+function showPinSetup(on){
+  const box=document.getElementById('pinSetupBox');
+  if(box) box.style.display=on?'block':'none';
+  if(!on){ const c=document.getElementById('pinConfirmInput'); if(c) c.value=''; }
+}
 async function tryStudentLogin(){
   if(loginBusy) return;
-  const input = document.getElementById('codeInput');
   const err = document.getElementById('codeErr');
-  const v = String(input ? input.value : '').trim();
-  if(err) err.textContent = '';
-  if(!/^[0-9A-Za-z]{1,20}$/.test(v)){ if(err) err.textContent = '학생 코드를 다시 확인해주세요.'; return; }
+  const v = String(document.getElementById('codeInput')?.value||'').trim();
+  const pin = String(document.getElementById('pinInput')?.value||'').trim();
+  const setupOn = document.getElementById('pinSetupBox')?.style.display==='block';
+  const pin2 = String(document.getElementById('pinConfirmInput')?.value||'').trim();
+  const say = t=>{ if(err) err.textContent=t; };
+  say('');
+  if(!/^[0-9A-Za-z]{1,20}$/.test(v)){ say('학생 코드를 다시 확인해주세요.'); return; }
+  if(!/^[0-9]{4}$/.test(pin)){ say('비밀번호 숫자 4자리를 입력해주세요.'); return; }
+  if(setupOn && pin!==pin2){ say('두 번 입력한 비밀번호가 달라요. 다시 입력해주세요.'); return; }
   loginBusy = true;
   try{
     const user = await ensureAnonymousUser();
     const found = await lookupStudentByCode(v);
-    if(!found){ if(err) err.textContent = '등록되지 않은 코드예요. 선생님께 코드를 다시 확인해주세요.'; return; }
-    if(found.status==='withdrawn'){ if(err) err.textContent = '더 이상 사용할 수 없는 코드예요. 선생님께 문의해주세요.'; return; }
-    await fsdb.collection('studentSessions').doc(user.uid).set({
-      studentId: found.studentId, code: v, at: firebase.firestore.FieldValue.serverTimestamp()
-    });
+    if(!found){ say('등록되지 않은 코드예요. 선생님께 코드를 다시 확인해주세요.'); return; }
+    if(found.status==='withdrawn'){ say('더 이상 사용할 수 없는 코드예요. 선생님께 문의해주세요.'); return; }
+    if(setupOn){
+      try{
+        await fsdb.collection('studentPins').doc(v).set({pin, setAt: firebase.firestore.FieldValue.serverTimestamp()});
+      }catch(e){
+        if(!isPermissionError(e)) throw e;
+        showPinSetup(false);
+        say('이 코드는 이미 비밀번호가 있어요. 기억나지 않으면 선생님께 초기화를 부탁하세요.');
+        return;
+      }
+    }
+    const sessRef = fsdb.collection('studentSessions').doc(user.uid);
+    const at = firebase.firestore.FieldValue.serverTimestamp();
+    try{
+      await sessRef.set({studentId: found.studentId, code: v, pin, at});
+    }catch(e){
+      if(!isPermissionError(e)) throw e;
+      let legacyOk = false;
+      // 전환기: 비밀번호를 모르는 예전 규칙이 아직 걸려 있으면 비밀번호 없이 연다(새 규칙에서는 이 경로가 막힌다).
+      try{ await sessRef.set({studentId: found.studentId, code: v, at}); legacyOk = true; }catch(e2){}
+      if(!legacyOk){
+        if(!setupOn){
+          showPinSetup(true);
+          say('비밀번호가 맞지 않아요. 처음 로그인이라면 아래 칸에 같은 비밀번호를 한 번 더 입력하고 다시 눌러주세요.');
+        }else{
+          say('로그인하지 못했어요. 비밀번호를 다시 확인해주세요.');
+        }
+        return;
+      }
+    }
+    showPinSetup(false);
     session = {mode:'student', studentId:found.studentId, code:v};
     saveSessionLocal();
     startCoreData();
   }catch(e){
     console.error('[학생 로그인]', e);
-    if(err) err.textContent = '로그인 중 문제가 생겼어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.';
+    say('로그인 중 문제가 생겼어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.');
   }finally{ loginBusy = false; }
 }
 // 원장 화면: 학생 명단의 코드로 studentCodes/{코드} = {studentId, status}를 맞춰 둔다.
@@ -4694,6 +4783,42 @@ async function loadHomeworkReviewDate(date){
   }
 }
 
+function renderStudentPinStatus(s){
+  const code=String(s.code??'').trim();
+  if(!code) return '';
+  const has=!!(db.studentPins||{})[code];
+  return `<div style="margin-top:6px;font-size:12px;color:#7a7666;">학생 비밀번호: ${has
+    ? `<b style="color:#2c7a3d;">설정됨</b> <button class="btn sm outline" style="margin-left:6px;" onclick="resetStudentPin('${escapeHtml(code)}','${escapeHtml(s.name||'')}')">비밀번호 초기화</button>`
+    : `<b>아직 없음</b> <span>(학생이 처음 로그인할 때 직접 정해요)</span>`}</div>`;
+}
+async function resetStudentPin(code,name){
+  if(!confirm(`${name} 학생의 비밀번호를 초기화할까요?\n지금 로그인된 기기에서도 로그아웃되고, 다음 로그인 때 학생이 새 비밀번호를 정해요.`)) return;
+  try{ await fsdb.collection('studentPins').doc(code).delete(); alert('초기화했어요. 학생에게 다음 로그인 때 새 비밀번호를 정하라고 알려주세요.'); }
+  catch(e){ console.error('[비밀번호 초기화]',e); alert('초기화하지 못했어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.'); }
+}
+// 학생별 기록은 보안 규칙이 studentId 필드로 주인을 확인한다. 예전 기록 중 studentId가 빠진 것이 있으면
+// 원장 화면이 열릴 때 문서 ID에서 학생을 찾아 한 번 채워 둔다(최근 기록만, 이미 있으면 건드리지 않음).
+let ownerBackfillDone=false, ownerBackfillTimer=null;
+function scheduleOwnerFieldBackfill(){
+  if(ownerBackfillDone) return;
+  clearTimeout(ownerBackfillTimer);
+  ownerBackfillTimer=setTimeout(()=>{ backfillOwnerFields().catch(e=>console.warn('[주인 표시 채우기]',e?.code||e)); },8000);
+}
+async function backfillOwnerFields(){
+  if(ownerBackfillDone || !session || session.mode!=='director') return;
+  ownerBackfillDone=true;
+  const known=new Set((db.students||[]).map(x=>x.id));
+  const jobs=[];
+  const add=(col,id,stu)=>{ if(stu && known.has(stu)) jobs.push([col,id,stu]); };
+  Object.entries(db.submissions||{}).forEach(([id,d])=>{ if(d && !d.studentId) add('submissions',id,baseStudentId(id.slice(0,-11))); });
+  Object.entries(db.stadDaily||{}).forEach(([id,d])=>{ if(d && !d.studentId) add('stadDaily',id,id.slice(0,-11)); });
+  Object.entries(db.stadApplications||{}).forEach(([id,d])=>{ if(d && !d.studentId) add('stadApplications',id,id.slice(0,-8)); });
+  for(const [col,id,stu] of jobs){
+    try{ await fsdb.collection(col).doc(id).set({studentId:stu},{merge:true}); }catch(e){ console.warn('[주인 표시 채우기]',col,id,e?.code||e); }
+  }
+  if(jobs.length) console.info('[주인 표시 채우기] '+jobs.length+'건');
+}
+
 function renderStudentDetail(stuId, directorView){
   const s = studentById(stuId);
   if(!s) return `<div class="empty">학생 정보를 찾을 수 없어요.</div>`;
@@ -4734,6 +4859,7 @@ function renderStudentDetail(stuId, directorView){
       <div>
         <h2 style="margin:0 0 4px;">${s.name} <span style="font-size:14px;color:#9c9880;">(${s.grade})</span> ${s.status==='withdrawn'?'<span class="badge gray">퇴원생</span>':''}</h2>
         <span class="studentcode">${s.code}</span> · ${escapeHtml(classNamesForStudent(stuId))} · ${statusBadge(status)} ${warningCountBadge(verifiedWarnings(s).length)}
+        ${directorView ? renderStudentPinStatus(s) : ''}
       </div>
       ${directorView? `<div class="row">
         <button class="btn sm ${currentSubState.previewAsStudent?'gold':'outline'}" onclick="currentSubState.previewAsStudent=!currentSubState.previewAsStudent;render();">${currentSubState.previewAsStudent?'✓ 학생 화면 미리보기 중':'🔍 학생 화면 그대로 보기'}</button>

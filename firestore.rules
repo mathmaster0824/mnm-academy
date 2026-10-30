@@ -1,9 +1,11 @@
 rules_version = '2';
 
-// M&m 수학훈련소 Firestore 보안 규칙 (1단계)
+// M&m 수학훈련소 Firestore 보안 규칙 (2단계)
 // - 원장: Firebase 이메일 로그인 계정(아래 UID)만 모든 데이터를 읽고 쓴다.
-// - 학생: 익명 로그인 후 학생 코드로 studentSessions/{내 uid}를 만든 사람만 운영 데이터를 쓴다.
-// - 그 외(로그인 화면만 연 사람): 학생 코드 문서 한 건 조회와 자기 세션 만들기만 가능하다.
+// - 학생: 익명 로그인 → 학생 코드 + 비밀번호 4자리로 studentSessions/{내 uid}를 만든 사람.
+//         세션의 비밀번호가 studentPins와 맞고, 코드가 퇴원 처리되지 않았을 때만 학생으로 인정한다.
+//         학생은 공용 자료는 읽기만, 학생별 기록은 studentId가 본인인 것만 읽고 쓴다.
+// - 그 외(로그인 화면만 연 사람): 코드 한 건 조회, 첫 비밀번호 만들기, 자기 세션 만들기만 가능.
 // 이 파일은 Firebase 콘솔 › Firestore Database › 규칙 에 붙여넣어 게시한다.
 // (index.html의 DIRECTOR_UID와 같은 값이어야 한다.)
 service cloud.firestore {
@@ -13,41 +15,142 @@ service cloud.firestore {
     function isDirector() {
       return signedIn() && request.auth.uid == 'bcCt2VfFy2dyS786zXGpH0fuHIi2';
     }
+    function docPath(coll, id) { return /databases/$(database)/documents/$(coll)/$(id); }
+    function sess() { return get(docPath('studentSessions', request.auth.uid)).data; }
     function isStudent() {
       return signedIn()
-        && exists(/databases/$(database)/documents/studentSessions/$(request.auth.uid));
+        && exists(docPath('studentSessions', request.auth.uid))
+        && ('pin' in sess())
+        && exists(docPath('studentPins', sess().code))
+        && get(docPath('studentPins', sess().code)).data.pin == sess().pin
+        && get(docPath('studentCodes', sess().code)).data.studentId == sess().studentId
+        && get(docPath('studentCodes', sess().code)).data.status != 'withdrawn';
     }
-    function codeDoc(code) {
-      return /databases/$(database)/documents/studentCodes/$(code);
-    }
+    function me() { return sess().studentId; }
+    // 학생별 기록: 기존 문서도, 새로 쓰는 내용도 studentId가 본인이어야 한다.
+    function ownsExisting() { return resource == null || resource.data.studentId == me(); }
+    function ownsNew() { return request.resource.data.studentId == me(); }
 
-    // 학생 코드 → 학생 ID. 로그인한 사람은 코드 하나를 알 때만 그 문서를 읽을 수 있다(목록 조회 불가).
+    // ---------- 로그인용 ----------
     match /studentCodes/{code} {
       allow get: if signedIn();
       allow list, write: if isDirector();
     }
-
-    // 학생 세션: 자기 uid 문서만, 실제 코드와 학생 ID가 맞을 때만 만들 수 있다.
+    // 학생 비밀번호: 학생은 읽을 수 없다. 아직 없을 때 한 번만 만들 수 있고, 초기화(삭제)는 원장만.
+    match /studentPins/{code} {
+      allow read, update, delete: if isDirector();
+      allow create: if isDirector() || (signedIn()
+        && request.resource.data.keys().hasOnly(['pin', 'setAt'])
+        && request.resource.data.pin is string
+        && request.resource.data.pin.matches('^[0-9]{4}$')
+        && exists(docPath('studentCodes', code))
+        && get(docPath('studentCodes', code)).data.status != 'withdrawn');
+    }
+    // 학생 세션: 자기 uid 문서만, 코드·학생·비밀번호가 모두 맞을 때만 만들 수 있다.
     match /studentSessions/{uid} {
       allow get, delete: if isDirector() || (signedIn() && request.auth.uid == uid);
       allow list: if isDirector();
       allow create, update: if signedIn() && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['studentId', 'code', 'at'])
+        && request.resource.data.keys().hasOnly(['studentId', 'code', 'pin', 'at'])
         && request.resource.data.code is string
-        && exists(codeDoc(request.resource.data.code))
-        && get(codeDoc(request.resource.data.code)).data.studentId == request.resource.data.studentId
-        && get(codeDoc(request.resource.data.code)).data.status != 'withdrawn';
+        && exists(docPath('studentCodes', request.resource.data.code))
+        && get(docPath('studentCodes', request.resource.data.code)).data.studentId == request.resource.data.studentId
+        && get(docPath('studentCodes', request.resource.data.code)).data.status != 'withdrawn'
+        && exists(docPath('studentPins', request.resource.data.code))
+        && get(docPath('studentPins', request.resource.data.code)).data.pin == request.resource.data.pin;
     }
 
-    // 운영 설정: 원장 전용
-    match /meta/{doc} {
-      allow read, write: if isDirector();
+    // ---------- 원장 전용 ----------
+    match /meta/{d} { allow read, write: if isDirector(); }
+
+    // ---------- 학생: 본인 정보만 ----------
+    match /students/{id} {
+      allow get: if isDirector() || (isStudent() && id == me());
+      allow list, write: if isDirector();
+    }
+    match /practiceProgress/{id} {
+      allow get: if isDirector() || (isStudent() && id == me());
+      allow list, write: if isDirector();
     }
 
-    // 나머지 운영 데이터: 원장 또는 로그인한 학생 (2단계에서 학생은 자기 기록만으로 좁힌다)
+    // ---------- 공용 자료: 학생은 읽기만 ----------
+    match /classes/{d} { allow read: if isDirector() || isStudent(); allow write: if isDirector(); }
+    match /courses/{d} { allow read: if isDirector() || isStudent(); allow write: if isDirector(); }
+    match /videos/{d} { allow read: if isDirector() || isStudent(); allow write: if isDirector(); }
+    match /schoolExams/{d} { allow read: if isDirector() || isStudent(); allow write: if isDirector(); }
+    match /solutionPhotos/{d} { allow read: if isDirector() || isStudent(); allow write: if isDirector(); }
+    match /weekendSettings/{d} { allow read: if isDirector() || isStudent(); allow write: if isDirector(); }
+    match /weekendClasses/{d} { allow read: if isDirector() || isStudent(); allow write: if isDirector(); }
+    match /stadSettings/{d} { allow read: if isDirector() || isStudent(); allow write: if isDirector(); }
+    match /weeklyPlans/{d} { allow read: if isDirector() || isStudent(); allow write: if isDirector(); }
+    match /fridaySupp/{d} { allow read: if isDirector() || isStudent(); allow write: if isDirector(); }
+    // 반 수업 기록: 학생은 읽기, 그리고 영상 과제 체크처럼 자기 이름 칸만 고칠 수 있다.
+    match /classRecords/{d} {
+      allow read: if isDirector() || isStudent();
+      allow create, delete: if isDirector();
+      allow update: if isDirector() || (isStudent()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([me()]));
+    }
+    // 답지 과제: 학생은 자기에게 낸 과제만 읽는다.
+    match /assignments/{d} {
+      allow read: if isDirector() || (isStudent() && me() in resource.data.studentIds);
+      allow write: if isDirector();
+    }
+
+    // ---------- 학생별 기록: 본인 것만 ----------
+    // 학생이 읽기만 하는 것
+    match /schoolScores/{d} {
+      allow get: if isDirector() || (isStudent() && ownsExisting());
+      allow list: if isDirector() || (isStudent() && resource.data.studentId == me());
+      allow write: if isDirector();
+    }
+    match /kmm/{d} {
+      allow get: if isDirector() || (isStudent() && ownsExisting());
+      allow list: if isDirector() || (isStudent() && resource.data.studentId == me());
+      allow write: if isDirector();
+    }
+    // 학생이 직접 올리고 고치는 것
+    match /submissions/{d} {
+      allow get: if isDirector() || (isStudent() && ownsExisting());
+      allow list: if isDirector() || (isStudent() && resource.data.studentId == me());
+      allow create, update: if isDirector() || (isStudent() && ownsExisting() && ownsNew());
+      allow delete: if isDirector();
+    }
+    match /answerSubmissions/{d} {
+      allow get: if isDirector() || (isStudent() && ownsExisting());
+      allow list: if isDirector() || (isStudent() && resource.data.studentId == me());
+      allow create, update: if isDirector() || (isStudent() && ownsExisting() && ownsNew());
+      allow delete: if isDirector();
+    }
+    match /questions/{d} {
+      allow get: if isDirector() || (isStudent() && ownsExisting());
+      allow list: if isDirector() || (isStudent() && resource.data.studentId == me());
+      allow create, update: if isDirector() || (isStudent() && ownsExisting() && ownsNew());
+      allow delete: if isDirector();
+    }
+    match /stadApplications/{d} {
+      allow get: if isDirector() || (isStudent() && ownsExisting());
+      allow list: if isDirector() || (isStudent() && resource.data.studentId == me());
+      allow create, update: if isDirector() || (isStudent() && ownsExisting() && ownsNew());
+      allow delete: if isDirector();
+    }
+    match /stadDaily/{d} {
+      allow get: if isDirector() || (isStudent() && ownsExisting());
+      allow list: if isDirector() || (isStudent() && resource.data.studentId == me());
+      allow create, update: if isDirector() || (isStudent() && ownsExisting() && ownsNew());
+      allow delete: if isDirector();
+    }
+    match /weekendSubmissions/{d} {
+      allow get: if isDirector() || (isStudent() && ownsExisting());
+      allow list: if isDirector() || (isStudent() && resource.data.studentId == me());
+      allow create, update: if isDirector() || (isStudent() && ownsExisting() && ownsNew());
+      allow delete: if isDirector() || (isStudent() && resource.data.studentId == me());
+    }
+
+    // ---------- 그 밖의 모든 데이터: 원장만 ----------
+    // (월말 리포트, 피드백, 집중관리, 문제저장소, 정답키, 문제 원본, 타이머 기록 등)
     match /{coll}/{rest=**} {
-      allow read, write: if !(coll in ['studentCodes', 'studentSessions', 'meta'])
-        && (isDirector() || isStudent());
+      allow read, write: if isDirector();
     }
   }
 }
