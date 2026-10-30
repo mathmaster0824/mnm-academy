@@ -7532,7 +7532,8 @@ function gridViewWeek(){
   const w=currentSubState.gridWeek;
   return (w && w<=cur && w>=gridOldestWeekStart()) ? w : cur;
 }
-function gridCanSubmitDate(date){ return date<=academicTodayISO(); }
+// 지난 날짜는 언제든, 이번 주 숙제는 날짜 전이라도 미리 올릴 수 있다("할 일 먼저 하자": 가족 일정이 있으면 미리 해 둔다).
+function gridCanSubmitDate(date){ return date<=academicTodayISO() || weekStartISO(date)===weekStartISO(academicTodayISO()); }
 function moveGridWeek(delta){
   if(currentSubState._draftSub && !confirm('작성 중인 숙제 인증이 있어요. 다른 주로 옮길까요? (작성 중인 내용은 사라질 수 있어요)')) return;
   currentSubState._draftSub=null; currentSubState._draftSubKey=null;
@@ -7605,7 +7606,7 @@ function renderWeekPlanGrids(stuId,title,withSubmit){
       <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div class="hd">${DAY_LABEL[k]}</div>`).join('')}
       <div></div>${cells}
     </div>
-    ${withSubmit && c && gridSubmitCount(stuId)? `<div style="font-size:11.5px;color:#8a8674;margin-top:8px;">숙제를 다 했으면 그 날짜 칸의 📸 버튼을 눌러 사진을 올려요.<span class="hwlegend" style="display:none;margin-top:3px;">📸 올리기 · ⏳ 검토중 · ✅ 완료 · 🔁 다시 올리기</span></div>`:''}
+    ${withSubmit && c && gridSubmitCount(stuId)? `<div style="font-size:11.5px;color:#8a8674;margin-top:8px;">숙제를 다 했으면 그 날짜 칸의 📸 버튼을 눌러 사진을 올려요. 이번 주 숙제는 미리 해서 올려도 돼요.<span class="hwlegend" style="display:none;margin-top:3px;">📸 올리기 · ⏳ 검토중 · ✅ 완료 · 🔁 다시 올리기</span></div>`:''}
   </div>${panel}`;}).join('');
 }
 function openGridSubmission(clsId,date){
