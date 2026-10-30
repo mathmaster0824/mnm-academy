@@ -2286,6 +2286,29 @@ async function deleteSelectedAuditWarnings(targets){
   render();
 }
 
+// 대시보드 숙제 미확인 명단에서 원장이 뺀 학생 (미리 사정을 말한 학생, 프로그램 오류 등). 숙제 기록 자체는 바꾸지 않는다.
+// dashHwHidden/{날짜} = {ids:[학생ID...]} — 원장 전용(규칙의 나머지 컬렉션).
+const dashHwHidden={}, dashHwHiddenLoads={};
+function ensureDashHwHidden(date){
+  if(date in dashHwHidden) return false;
+  if(!dashHwHiddenLoads[date]){
+    dashHwHiddenLoads[date]=true;
+    fsdb.collection('dashHwHidden').doc(date).get()
+      .then(doc=>{ dashHwHidden[date]=(doc.exists&&Array.isArray(doc.data().ids))?doc.data().ids:[]; })
+      .catch(e=>{ console.warn('[숙제 명단 제외 목록]',date,e?.code||e); dashHwHidden[date]=[]; })
+      .finally(()=>{ delete dashHwHiddenLoads[date]; scheduleRender(); });
+  }
+  return true;
+}
+async function setDashHwHidden(date, stuId, hide){
+  const st=studentById(stuId), name=st?st.name:'';
+  if(hide && !confirm(`${name} 학생을 ${fmtDate(date)} 숙제 미확인 명단에서 뺄까요?\n(공지 명단에서만 빠지고, 숙제 기록은 그대로예요)`)) return;
+  const cur=dashHwHidden[date]||[];
+  const next=hide ? [...new Set([...cur,stuId])] : cur.filter(x=>x!==stuId);
+  dashHwHidden[date]=next; render();
+  const ok=await fsSet('dashHwHidden', date, {ids:next, updatedAt:Date.now()}, false);
+  if(!ok){ dashHwHidden[date]=cur; render(); }
+}
 // 대시보드 '어제' 보기: 어제가 지난주라면 그 주 숙제표를 한 번 읽어 온다. 읽는 중이면 true.
 const dashPlanLoads={};
 function ensureDashWeekPlans(wk){
@@ -2349,6 +2372,9 @@ function renderDashboard(){
   const hwIsYesterday = currentSubState.dashHwDay==='yesterday';
   const hwDay = hwIsYesterday ? addDaysISO(hwToday,-1) : hwToday;
   const hwPlansLoading = ensureDashWeekPlans(weekStartISO(hwDay));
+  const hwHiddenLoading = ensureDashHwHidden(hwDay);
+  const hwHiddenIds = new Set(dashHwHidden[hwDay]||[]);
+  const todayHwHidden = [];
   const todayHwNotDone = [], todayHwPending = [];
   let todayHwPlanned = 0, hwRecordsUnknown = false;
   db.students.filter(s=>s.status!=='withdrawn').forEach(s=>{
@@ -2359,12 +2385,13 @@ function renderDashboard(){
     if(states.some(x=>x.state==='unknown')) hwRecordsUnknown=true;
     const notDone = states.filter(x=>x.state!=='approved' && x.state!=='pending' && x.state!=='unknown');
     const pending = states.filter(x=>x.state==='pending');
-    if(notDone.length) todayHwNotDone.push({student:s, items:notDone});
+    if(notDone.length && hwHiddenIds.has(s.id)) todayHwHidden.push({student:s, items:notDone});
+    else if(notDone.length) todayHwNotDone.push({student:s, items:notDone});
     else if(pending.length) todayHwPending.push({student:s, items:pending});
   });
   const byName=(a,b)=>(a.student.name||'').localeCompare(b.student.name||'');
   todayHwNotDone.sort(byName); todayHwPending.sort(byName);
-  const todayHwLoading = homeworkRecentLoadState!=='ready' || hwPlansLoading || hwRecordsUnknown;
+  const todayHwLoading = homeworkRecentLoadState!=='ready' || hwPlansLoading || hwRecordsUnknown || hwHiddenLoading;
   const todayHwNotice = `${fmtDate(hwDay)} ${hwIsYesterday?'':'오늘 '}숙제 제출이 확인되지 않습니다.\n\n${todayHwNotDone.map(x=>x.student.name).join('\n')}`;
 
   // HOME 개입 필요 학생 = '원장이 실제 행동해야 하는 학생'만 노출한다.
@@ -2419,9 +2446,11 @@ function renderDashboard(){
     : todayHwNotDone.length ? `<div style="font-size:13px;color:#5a5648;margin-bottom:8px;">${hwIsYesterday?'':'오늘 '}숙제 제출이 확인되지 않습니다.</div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;">${todayHwNotDone.map(x=>{
         const again = x.items.some(i=>i.state==='rejected'||i.state==='finalRejected');
-        return `<span title="${x.items.map(i=>i.cls.name).join(', ')}" style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;padding:5px 10px;border-radius:999px;border:1px solid #f3c5c0;background:#fff3f1;color:#c94236;font-size:13px;font-weight:700;" onclick="goto('students');currentSubState.studentDetail='${x.student.id}';render();">${x.student.name}${again?' <span style="font-size:11px;">(다시)</span>':''}</span>`;
+        return `<span title="${x.items.map(i=>i.cls.name).join(', ')}" style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;padding:5px 10px;border-radius:999px;border:1px solid #f3c5c0;background:#fff3f1;color:#c94236;font-size:13px;font-weight:700;" onclick="setDashHwHidden('${hwDay}','${x.student.id}',true)">${x.student.name}${again?' <span style="font-size:11px;">(다시)</span>':''} <span style="font-size:11px;opacity:.6;">✕</span></span>`;
       }).join('')}</div>`
     : `<div class="empty" style="padding:12px 0;">${hwIsYesterday?'어제':'오늘'} 숙제가 있는 ${todayHwPlanned}명 모두 확인됐어요 🎉</div>`}
+    ${!todayHwLoading && todayHwNotDone.length ? `<div style="margin-top:6px;font-size:11px;color:#8a8674;">이름을 누르면 공지 명단에서 뺄 수 있어요. (미리 사정을 말한 학생, 프로그램 오류 등)</div>` : ''}
+    ${!todayHwLoading && todayHwHidden.length ? `<div style="margin-top:8px;font-size:12px;color:#8a8674;">명단에서 뺀 학생: ${todayHwHidden.map(x=>`${x.student.name} <a href="#" onclick="event.preventDefault();setDashHwHidden('${hwDay}','${x.student.id}',false)" style="color:var(--navy2);font-weight:800;">되돌리기</a>`).join(' · ')}</div>` : ''}
     ${!todayHwLoading && todayHwPending.length ? `<div style="margin-top:10px;font-size:12px;color:#9a6b16;">사진은 올라왔고 검토 대기 ${todayHwPending.length}명: ${todayHwPending.map(x=>x.student.name).join(', ')} <a href="#" onclick="event.preventDefault();goto('hwreview')" style="color:var(--navy2);font-weight:800;">검토하러 가기</a> <span style="color:#8a8674;">(공지 명단에는 넣지 않았어요)</span></div>` : ''}
   </div>
   ${stadApprovedToday.length ? (()=>{
@@ -7681,7 +7710,7 @@ async function migrateWeekStartBug(){
 // (2) 저장 = 사용자가 다시 누른 순간 바로 다운로드. 태블릿 브라우저는 오래 기다린 뒤의
 // 자동 다운로드를 조용히 막기 때문에, 저장은 반드시 새 버튼 클릭에서 시작한다.
 const BACKUP_ARRAY_COLS=['classes','students','courses','videos','questions','feedbacks','kmm','schoolExams','weekendClasses','solutionPhotos'];
-const BACKUP_MAP_COLS=['classRecords','weeklyPlans','fridaySupp','submissions','practiceProgress','schoolScores','timerState','weekendSubmissions','stadApplications','stadDaily','focusHistory','assignments','answerSubmissions','problems','problemDrafts','problemSources','problemKeys','monthlyReports','weekendSettings','stadSettings','meta'];
+const BACKUP_MAP_COLS=['classRecords','weeklyPlans','fridaySupp','submissions','practiceProgress','schoolScores','timerState','weekendSubmissions','stadApplications','stadDaily','focusHistory','assignments','answerSubmissions','problems','problemDrafts','problemSources','problemKeys','monthlyReports','weekendSettings','stadSettings','dashHwHidden','meta'];
 let preparedBackup=null;
 function setBackupStatus(text, isError){
   const el=document.getElementById('backupStatus');
