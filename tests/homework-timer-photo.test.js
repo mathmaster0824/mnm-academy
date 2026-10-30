@@ -86,6 +86,8 @@ const check = (name, ok, detail) => {
       const fallbackPrefix = 'data:image/jpeg;base64,';
       let timeoutSignalObserved = false;
       let timeoutUploadRecovered = false;
+      let responseBodyAbortObserved = false;
+      let responseBodyTimeoutRecovered = false;
       let returnPartial = { partialDraftSaved: false, uploadStillActiveWhenPartialSaved: false };
       let inFlight = 0;
       let maxConcurrent = 0;
@@ -120,6 +122,28 @@ const check = (name, ok, detail) => {
           currentSubState._draftSub.hwPhotos.length === timeoutPhotoCount &&
           currentSubState._draftSub.hwPhotos.every(photo => photo.startsWith(fallbackPrefix)) &&
           maxConcurrent === 3;
+
+        // 응답 헤더는 도착했지만 JSON 본문이 멈춘 경우도 시간 초과 후 압축 저장되어야 한다.
+        window.fetch = (_url, options) => Promise.resolve({
+          ok: true,
+          json: () => new Promise((_resolve, reject) => {
+            responseBodyAbortObserved = options.signal instanceof AbortSignal;
+            options.signal.addEventListener('abort', () => reject(new DOMException('body aborted', 'AbortError')), { once: true });
+          })
+        });
+        window.setTimeout = (callback, delay, ...args) =>
+          originalSetTimeout(callback, delay === 20000 ? 0 : delay, ...args);
+        currentSubState._draftSub = { hwPhotos: [], practicePhotos: [], timerPhotos: [], memo: '' };
+        currentSubState._draftSubKey = sid + '_' + date;
+        await uploadSubPhoto({
+          files: [new File(['body-stall'], 'body-stall.jpg', { type: 'image/jpeg', lastModified: 77 })],
+          value: ''
+        }, 'hwPhotos');
+        responseBodyTimeoutRecovered = !homeworkUploadState.active &&
+          homeworkUploadState.done === 1 &&
+          homeworkUploadState.failed === 0 &&
+          currentSubState._draftSub.hwPhotos.length === 1 &&
+          currentSubState._draftSub.hwPhotos[0].startsWith(fallbackPrefix);
 
         // 먼저 끝난 사진은 나머지 업로드가 계속 중이어도 기기 임시 초안에 남아야 한다.
         let partialDraftSaved = false;
@@ -173,6 +197,7 @@ const check = (name, ok, detail) => {
       return {
         newDraftHasNoTime, draftHasTimerPhotos, hasCameraInput, hasGalleryInput,
         timeoutSignalObserved, timeoutUploadRecovered,
+        responseBodyAbortObserved, responseBodyTimeoutRecovered,
         partialDraftSaved: returnPartial.partialDraftSaved,
         uploadStillActiveWhenPartialSaved: returnPartial.uploadStillActiveWhenPartialSaved,
         timerMarkup, timerControlsGone, teacherSeesTimerPhoto, legacyTimeHidden,
@@ -185,6 +210,7 @@ const check = (name, ok, detail) => {
 
     check('먼저 완료된 사진은 나머지 업로드 중에도 초안에 보존됨', result.partialDraftSaved && result.uploadStillActiveWhenPartialSaved, JSON.stringify(result));
     check('업로드 요청 시간 초과 시 사진 업로드 상태가 해제되고 압축 대체 저장으로 복구', result.timeoutSignalObserved && result.timeoutUploadRecovered, JSON.stringify(result));
+    check('응답 본문이 멈춰도 시간 초과 후 압축 대체 저장으로 복구', result.responseBodyAbortObserved && result.responseBodyTimeoutRecovered, JSON.stringify(result));
     check('새 숙제 입력에는 분 단위 타이머 상태가 생기지 않음', result.newDraftHasNoTime && result.timerControlsGone, JSON.stringify(result));
     check('타이머 사진은 카메라와 갤러리에서 추가할 수 있음', result.timerMarkup && result.hasCameraInput && result.hasGalleryInput && result.draftHasTimerPhotos, JSON.stringify(result));
     check('시간 필드가 없는 새 숙제도 undefined 없이 저장됨', result.undefinedTimeSaved, JSON.stringify(result));
