@@ -7130,9 +7130,11 @@ function renderBackup(){
     <h3 style="margin-top:0;">전체 데이터 내보내기</h3>
     <p style="font-size:12.5px;color:#7a7666;">지금 이 순간의 전체 데이터를 파일로 저장하거나 텍스트로 복사할 수 있어요.</p>
     <div class="row">
-      <button class="btn gold sm" onclick="downloadBackup()">JSON 파일로 다운로드</button>
+      <button class="btn gold sm" id="backupPrepareBtn" onclick="downloadBackup()">1. 백업 준비하기</button>
+      <button class="btn gold sm" id="backupSaveBtn" style="display:none;" onclick="saveBackupFile()">2. 파일로 저장하기</button>
       <button class="btn outline sm" onclick="showBackupText()">텍스트로 보기</button>
     </div>
+    <div id="backupStatus" style="margin-top:10px;font-size:12.5px;color:#7a7666;"></div>
     <div id="backupTextArea" style="display:none;margin-top:12px;">
       <textarea id="backupTextContent" readonly rows="8" style="width:100%;font-size:10px;font-family:monospace;"></textarea>
       <button class="btn sm gold" style="margin-top:8px;" onclick="copyBackupText()">전체 복사하기</button>
@@ -7181,29 +7183,49 @@ async function migrateWeekStartBug(){
     alert(`${fixedCount}개 항목을 복구했어요:\n\n${fixedList.join('\n')}\n\n반 페이지에서 확인해보세요.`);
   }
 }
-async function buildFullBackupSnapshot(){
-  // 화면 성능을 위해 메모리에 일부 기록만 들고 있으므로, 백업할 때만 Firestore 원본 전체를 읽는다.
-  const arrayCols=['classes','students','courses','videos','questions','feedbacks','kmm','schoolExams','weekendClasses','solutionPhotos'];
-  const mapCols=['classRecords','weeklyPlans','fridaySupp','submissions','practiceProgress','schoolScores','timerState','weekendSubmissions','stadApplications','stadDaily','focusHistory','assignments','answerSubmissions'];
-  const out={_backupMeta:{createdAt:new Date().toISOString(),version:'v87',source:'Firestore full snapshot'}};
-  await Promise.all(arrayCols.map(async col=>{
-    const snap=await fsdb.collection(col).get();
-    out[col]=snap.docs.map(d=>({id:d.id,...d.data()}));
-  }));
-  await Promise.all(mapCols.map(async col=>{
-    const snap=await fsdb.collection(col).get(); const m={};
-    snap.docs.forEach(d=>{m[d.id]=d.data();}); out[col]=m;
-  }));
-  const singles=[['settings','main'],['weekendSettings','main'],['stadSettings','main']];
-  await Promise.all(singles.map(async ([name,id])=>{
-    const doc=await fsdb.collection(name).doc(id).get(); out[name]=doc.exists?doc.data():{};
-  }));
+// 백업은 두 단계다: (1) 준비 = Firestore 원본을 컬렉션 하나씩 읽으며 진행 상황 표시,
+// (2) 저장 = 사용자가 다시 누른 순간 바로 다운로드. 태블릿 브라우저는 오래 기다린 뒤의
+// 자동 다운로드를 조용히 막기 때문에, 저장은 반드시 새 버튼 클릭에서 시작한다.
+const BACKUP_ARRAY_COLS=['classes','students','courses','videos','questions','feedbacks','kmm','schoolExams','weekendClasses','solutionPhotos'];
+const BACKUP_MAP_COLS=['classRecords','weeklyPlans','fridaySupp','submissions','practiceProgress','schoolScores','timerState','weekendSubmissions','stadApplications','stadDaily','focusHistory','assignments','answerSubmissions','problems','problemDrafts','problemSources','problemKeys','monthlyReports','weekendSettings','stadSettings','meta'];
+let preparedBackup=null;
+function setBackupStatus(text, isError){
+  const el=document.getElementById('backupStatus');
+  if(el){ el.textContent=text; el.style.color=isError?'#a83b32':'#7a7666'; }
+}
+async function buildFullBackupSnapshot(onProgress){
+  const out={_backupMeta:{createdAt:new Date().toISOString(),version:'v88',source:'Firestore full snapshot',failed:[]}};
+  const all=[...BACKUP_ARRAY_COLS.map(c=>[c,'array']),...BACKUP_MAP_COLS.map(c=>[c,'map'])];
+  let docCount=0;
+  for(let i=0;i<all.length;i++){
+    const [col,kind]=all[i];
+    if(onProgress) onProgress(`불러오는 중… ${i+1}/${all.length} (${col})`);
+    try{
+      const snap=await fsdb.collection(col).get();
+      docCount+=snap.size;
+      if(kind==='array'){
+        out[col]=snap.docs.map(d=>({id:d.id,...d.data()}));
+      }else{
+        const m={};
+        snap.docs.forEach(d=>{
+          const data={...d.data()};
+          if(col==='meta') delete data.adminPassword; // 비밀번호는 백업 파일에 남기지 않는다
+          m[d.id]=data;
+        });
+        out[col]=m;
+      }
+    }catch(e){
+      console.error('[백업] '+col,e);
+      out._backupMeta.failed.push(col);
+    }
+  }
+  out._backupMeta.docCount=docCount;
   return out;
 }
 async function showBackupText(){
   const area=document.getElementById('backupTextArea'), ta=document.getElementById('backupTextContent');
   area.style.display='block'; ta.value='전체 데이터를 불러오는 중...';
-  try{ ta.value=JSON.stringify(await buildFullBackupSnapshot()); }
+  try{ ta.value=JSON.stringify(await buildFullBackupSnapshot(t=>{ ta.value=t; })); }
   catch(e){ console.error(e); ta.value=''; alert('전체 백업 데이터를 불러오지 못했어요. 연결 상태를 확인해주세요.'); }
 }
 function copyBackupText(){
@@ -7211,15 +7233,35 @@ function copyBackupText(){
   navigator.clipboard.writeText(el.value).then(()=>{ alert('복사됐어요!'); }).catch(()=>{ alert('자동 복사가 안 됐어요. 텍스트를 길게 눌러 직접 복사해주세요.'); });
 }
 async function downloadBackup(){
+  const prepBtn=document.getElementById('backupPrepareBtn');
+  const saveBtn=document.getElementById('backupSaveBtn');
+  preparedBackup=null;
+  if(saveBtn) saveBtn.style.display='none';
+  if(prepBtn) prepBtn.disabled=true;
   try{
-    const full=await buildFullBackupSnapshot();
-    const blob = new Blob([JSON.stringify(full,null,2)], {type:'application/json'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href=url; a.download = `mnm_backup_${todayISO()}.json`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    setTimeout(()=>URL.revokeObjectURL(url), 3000);
-  }catch(e){ console.error(e); alert('전체 백업 다운로드에 실패했어요. 연결 상태를 확인해주세요.'); }
+    const full=await buildFullBackupSnapshot(t=>setBackupStatus(t));
+    preparedBackup=full;
+    const failed=full._backupMeta.failed;
+    const msg=`준비 완료: 문서 ${full._backupMeta.docCount.toLocaleString()}개. 아래 "2. 파일로 저장하기"를 눌러주세요.`;
+    setBackupStatus(failed.length? `${msg} (읽지 못한 항목: ${failed.join(', ')})` : msg, failed.length>0);
+    if(saveBtn) saveBtn.style.display='';
+  }catch(e){
+    console.error(e);
+    setBackupStatus('백업 준비에 실패했어요. 인터넷 연결을 확인한 뒤 다시 눌러주세요.', true);
+  }finally{
+    if(prepBtn) prepBtn.disabled=false;
+  }
+}
+function saveBackupFile(){
+  if(!preparedBackup){ setBackupStatus('먼저 "1. 백업 준비하기"를 눌러주세요.', true); return; }
+  const name=`mnm_backup_${todayISO()}.json`;
+  const blob=new Blob([JSON.stringify(preparedBackup,null,2)], {type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url), 60000);
+  setBackupStatus(`"${name}" 저장을 시작했어요. 태블릿은 '파일' 앱의 다운로드 폴더를 확인해주세요.`);
 }
 
 /* ---------------- STUDENT HOME ---------------- */
