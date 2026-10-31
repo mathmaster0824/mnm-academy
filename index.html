@@ -725,6 +725,7 @@ function attachRoleListeners(){
         if(d && d.date && d.date>=recentStart && !recent[k]) delete db.submissions[k];
       });
       Object.assign(db.submissions,recent);
+      if(!snap.metadata.fromCache) scheduleOwnerFieldBackfill();
       if(!snap.metadata.fromCache){ dateQueryReady=true; markHomeworkReady(); }
       else scheduleRender();
     },e=>{ roleListenerError('submissions-recent')(e); markHomeworkError('submissions-recent',e); }));
@@ -1921,6 +1922,21 @@ function weekDates(weekStart){
 }
 
 /* ---------------- FIRESTORE WRITE HELPERS ---------------- */
+// 학생 숙제 저장이 권한 문제로 막혔을 때: 로그인(세션)이 풀린 건지, 기존 기록의 주인 표시 문제인지 구분해서 안내한다.
+async function explainStudentSubmitDenied(docId){
+  let sessionOk=false;
+  try{
+    const uid=firebase.auth().currentUser?.uid;
+    const sd=uid?await fsdb.collection('studentSessions').doc(uid).get():null;
+    if(sd && sd.exists && sd.data().pin){ await fsdb.collection('students').doc(session.studentId).get({source:'server'}); sessionOk=true; }
+  }catch(e){ sessionOk=false; }
+  if(!sessionOk){
+    alert('로그인이 풀려서 숙제를 저장하지 못했어요.\n사진은 그대로 남아 있어요.\n\n로그아웃한 뒤 학생 코드와 비밀번호로 다시 로그인하고, 같은 칸에서 다시 제출해 주세요.\n(비밀번호가 기억나지 않으면 선생님께 알려주세요)');
+    return;
+  }
+  console.error('[숙제 저장 권한 문제]', docId);
+  alert('이 날짜 숙제 기록에 문제가 있어서 저장하지 못했어요.\n사진은 그대로 남아 있어요.\n\n선생님께 “'+String(docId||'').slice(-10)+' 숙제 저장 오류”라고 알려주세요. 선생님이 확인하면 다시 올릴 수 있어요.');
+}
 async function fsSet(col, id, data, merge=true){
   try{ await fsdb.collection(col).doc(id).set(data, {merge}); if(col==='classRecords') queueStudentRecordSync(id); return true; }
   catch(e){
@@ -1936,7 +1952,8 @@ async function fsSet(col, id, data, merge=true){
           : /unavailable|deadline.exceeded|network/i.test(code+' '+msg)
             ? '서버 연결이 원활하지 않습니다. 사진을 유지한 채 잠시 후 다시 시도해주세요.'
             : '서버 저장 오류가 발생했습니다. 사진은 삭제하지 말고 선생님께 알려주세요.';
-      alert('숙제 제출이 완료되지 않았어요.\\n'+detail+'\\n오류 코드: '+(code||'unknown')+'\\n상세 오류: '+(msg||String(e||'알 수 없음')).slice(0,300));
+      if(/permission.denied|unauthenticated/i.test(code) && session?.mode==='student'){ explainStudentSubmitDenied(id); }
+      else alert('숙제 제출이 완료되지 않았어요.\n'+detail+'\n오류 코드: '+(code||'unknown')+'\n상세 오류: '+(msg||String(e||'알 수 없음')).slice(0,300));
     }else{
       alert('저장에 실패했어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.');
     }
@@ -5161,22 +5178,25 @@ async function resetStudentPin(code,name){
 // 학생별 기록은 보안 규칙이 studentId 필드로 주인을 확인한다. 예전 기록 중 studentId가 빠진 것이 있으면
 // 원장 화면이 열릴 때 문서 ID에서 학생을 찾아 한 번 채워 둔다(최근 기록만, 이미 있으면 건드리지 않음).
 let ownerBackfillDone=false, ownerBackfillTimer=null;
+const ownerFixedIds=new Set();
 function scheduleOwnerFieldBackfill(){
-  if(ownerBackfillDone) return;
   clearTimeout(ownerBackfillTimer);
   ownerBackfillTimer=setTimeout(()=>{ backfillOwnerFields().catch(e=>console.warn('[주인 표시 채우기]',e?.code||e)); },8000);
 }
 async function backfillOwnerFields(){
-  if(ownerBackfillDone || !session || session.mode!=='director') return;
-  ownerBackfillDone=true;
+  if(!session || session.mode!=='director') return;
   const known=new Set((db.students||[]).map(x=>x.id));
+  if(!known.size) return;
   const jobs=[];
-  const add=(col,id,stu)=>{ if(stu && known.has(stu)) jobs.push([col,id,stu]); };
-  Object.entries(db.submissions||{}).forEach(([id,d])=>{ if(d && !d.studentId) add('submissions',id,baseStudentId(id.slice(0,-11))); });
+  const add=(col,id,stu)=>{ if(stu && known.has(stu) && !ownerFixedIds.has(col+'/'+id)) jobs.push([col,id,stu]); };
+  // 숙제 기록: 주인(studentId)이 비었거나 문서 ID의 학생과 다르면(예: 반 슬롯 ID가 들어간 경우) 학생이 다시 제출할 때 막힌다.
+  Object.entries(db.submissions||{}).forEach(([id,d])=>{ if(!d) return; const base=baseStudentId(id.slice(0,-11)); if(d.studentId!==base) add('submissions',id,base); });
   Object.entries(db.stadDaily||{}).forEach(([id,d])=>{ if(d && !d.studentId) add('stadDaily',id,id.slice(0,-11)); });
   Object.entries(db.stadApplications||{}).forEach(([id,d])=>{ if(d && !d.studentId) add('stadApplications',id,id.slice(0,-8)); });
   for(const [col,id,stu] of jobs){
-    try{ await fsdb.collection(col).doc(id).set({studentId:stu},{merge:true}); }catch(e){ console.warn('[주인 표시 채우기]',col,id,e?.code||e); }
+    ownerFixedIds.add(col+'/'+id);
+    try{ await fsdb.collection(col).doc(id).set({studentId:stu},{merge:true}); if(col==='submissions'&&db.submissions[id]) db.submissions[id].studentId=stu; }
+    catch(e){ console.warn('[주인 표시 채우기]',col,id,e?.code||e); }
   }
   if(jobs.length) console.info('[주인 표시 채우기] '+jobs.length+'건');
 }
@@ -5570,7 +5590,7 @@ async function applyHomeworkReviewPatch(stuId,date,patch,btn){
   // 기존 문서에 studentId/date 필드가 없으면 판정 저장 때 함께 기록한다(문서 ID에서 유도한 값).
   // → 이후 원장 화면의 최근 숙제 실시간 조회에서 누락되지 않는다. 기존 사진·필드는 건드리지 않는다.
   patch={...patch};
-  if(!before.studentId) patch.studentId=stuId;
+  if(before.studentId!==baseStudentId(stuId)) patch.studentId=baseStudentId(stuId);
   if(!before.date) patch.date=date;
   // 운영 화면은 서버 왕복을 기다리지 않는다.
   // 먼저 로컬 상태를 반영하고, 저장 실패시에만 원상복구한다.
