@@ -1921,9 +1921,51 @@ function weekDates(weekStart){
   const arr=[]; for(let i=0;i<7;i++){ const d=new Date(weekStart+'T00:00:00'); d.setDate(d.getDate()+i); arr.push(toLocalISODate(d)); } return arr;
 }
 
+/* ---------------- 새 버전 알림 ----------------
+   휴대폰은 앱 탭을 며칠씩 열어 둔 채로 쓰기 때문에, 고친 버전이 올라가도 예전 화면이 계속 돌 수 있다.
+   예전 화면은 지금 보안 규칙과 맞지 않아 저장이 막힐 수 있으므로, 새 버전이 올라오면 새로 고침을 안내한다.
+   (배포할 때마다 APP_BUILD 값을 바꾼다) */
+const APP_BUILD='2026-11-01a';
+let newVersionReady=false, versionCheckAt=0;
+async function checkAppVersion(force){
+  if(location.protocol==='file:') return false;
+  if(newVersionReady) return true;
+  if(!force && Date.now()-versionCheckAt<5*60*1000) return false;
+  versionCheckAt=Date.now();
+  try{
+    const r=await fetch(location.pathname+'?v='+Date.now(),{cache:'no-store'});
+    if(!r.ok) return false;
+    const m=(await r.text()).match(/const APP_BUILD='([^']+)'/);
+    if(m && m[1]!==APP_BUILD){ newVersionReady=true; showUpdateBanner(); }
+  }catch(e){}
+  return newVersionReady;
+}
+function showUpdateBanner(){
+  if(document.getElementById('updateBanner')) return;
+  const d=document.createElement('div');
+  d.id='updateBanner';
+  d.setAttribute('role','button');
+  d.style.cssText='position:fixed;left:12px;right:12px;bottom:14px;z-index:9999;background:#1F2A44;color:#F7F4EC;border-radius:14px;padding:14px 16px;font-size:15px;font-weight:700;box-shadow:0 6px 24px rgba(0,0,0,.25);cursor:pointer;text-align:center;line-height:1.5;';
+  d.innerHTML='🔄 앱이 새 버전으로 바뀌었어요. 여기를 눌러 새로 고침해 주세요.<br><span style="font-weight:400;font-size:13px;opacity:.85;">작성 중인 숙제 사진은 그대로 남아요</span>';
+  d.onclick=reloadForUpdate;
+  document.body.appendChild(d);
+}
+function reloadForUpdate(){
+  if(homeworkUploadState.active){ alert('사진 업로드가 끝난 뒤 눌러주세요.'); return; }
+  try{ saveActiveHomeworkDraft(); }catch(e){}
+  location.reload();
+}
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') checkAppVersion(); });
+setInterval(()=>checkAppVersion(),30*60*1000);
+setTimeout(()=>checkAppVersion(true),15000);
+
 /* ---------------- FIRESTORE WRITE HELPERS ---------------- */
 // 학생 숙제 저장이 권한 문제로 막혔을 때: 로그인(세션)이 풀린 건지, 기존 기록의 주인 표시 문제인지 구분해서 안내한다.
 async function explainStudentSubmitDenied(docId){
+  if(await checkAppVersion(true)){
+    alert('앱이 새 버전으로 바뀌어서 저장하지 못했어요.\n사진은 그대로 남아 있어요.\n\n확인을 누르면 새로 고침돼요. 다시 로그인한 뒤 같은 칸에서 제출해 주세요.');
+    reloadForUpdate(); return;
+  }
   let sessionOk=false;
   try{
     const uid=firebase.auth().currentUser?.uid;
