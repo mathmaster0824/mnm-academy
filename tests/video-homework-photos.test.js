@@ -50,7 +50,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
   // 2) 여러 장 올리기 → 저장
   await upload(0, 3);
   let v = await vids();
-  check('영상1에 3장 저장, 영상2는 그대로', (v[0].photos || []).length === 3 && !v[1].photos && v[0].done === false && v[1].done === true, JSON.stringify(v).slice(0, 200));
+  check('영상1에 3장 저장, 영상2는 그대로', (v[0].photos || []).length === 3 && !v[1].photos && v[0].done === true && v[1].done === true, JSON.stringify(v).slice(0, 200));
   check('학생이면 학생 사본(studentRecords)에도 사진이 저장됨', ((await copy())[`${KEY}_${SID}`]?.rec?.videoAssignments?.[0]?.photos || []).length === 3);
   check('썸네일 3개 표시', (await page.locator('.vphoto img').count()) === 3);
 
@@ -59,13 +59,19 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
   v = await vids();
   check('추가로 2장 올리면 총 5장(덮어쓰지 않음)', v[0].photos.length === 5 && v[0].photos.map((p) => p.storageKey).join() === 'k1,k2,k3,k4,k5');
 
-  // 4) 영상 체크와 사진은 서로 독립
+  // 4) 사진 올리면 자동 완료 / 사진 없으면 학생은 완료 불가
+  check('3장 올린 영상1은 자동 완료', v[0].done === true);
+  await setup('student');
+  check('사진 없는 영상1은 미완료, 학생 체크박스는 잠김', (await vids())[0].done === false && (await page.locator('#mainArea input[type=checkbox][disabled]').count()) === 2);
   await page.evaluate(([K, S]) => toggleVideoDoneByKey(K, S, 0), [KEY, SID]);
-  v = await vids();
-  check('완료 체크를 해도 사진이 남아있다', v[0].done === true && v[0].photos.length === 5);
-  await page.evaluate(([K, S]) => toggleVideoDoneByKey(K, S, 1), [KEY, SID]);
-  v = await vids();
-  check('사진 없는 영상 체크도 정상(사진 필드를 새로 만들지 않음)', v[1].done === false && !('photos' in v[1]));
+  check('학생이 직접 체크 시도하면 거절(저장 안 됨)', (await vids())[0].done === false && dialogs.some((d) => d.includes('자동으로 완료')));
+  await upload(0, 1);
+  check('사진 1장 올리면 자동 완료 + 사본에도 done=true', (await vids())[0].done === true && (await copy())[`${KEY}_${SID}`].rec.videoAssignments[0].done === true);
+  await page.locator('.vphoto-x').first().click(); await page.waitForTimeout(200);
+  check('마지막 사진을 지우면 다시 미완료', (await vids())[0].done === false && ((await vids())[0].photos || []).length === 0);
+  await setup('director');
+  await page.evaluate(([K, S]) => toggleVideoDoneByKey(K, S, 0), [KEY, SID]);
+  check('원장은 사진 없이도 직접 완료 처리 가능(예외 처리용)', (await vids())[0].done === true);
 
   // 5) 최대 10장 제한
   await setup('student');

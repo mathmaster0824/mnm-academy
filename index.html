@@ -5411,6 +5411,7 @@ async function saveVideoAssignments(key,stuId,newArr){
   return ok;
 }
 async function toggleVideoDoneByKey(key,stuId,idx){
+  if(session && session.mode==='student'){ alert('영상을 보고 필기 사진을 올리면 자동으로 완료돼요.'); render(); return; }
   const cur = db.classRecords[key][stuId];
   const newArr = [...cur.videoAssignments]; newArr[idx] = {...newArr[idx], done: !newArr[idx].done};
   await saveVideoAssignments(key,stuId,newArr);
@@ -5449,7 +5450,7 @@ async function uploadVideoPhotos(input,key,stuId,idx){
     if(at<0){ alert('그 사이 영상 과제가 바뀌었어요. 새로고침 후 다시 올려주세요.'); return; }
     const photos=[...(arr[at].photos||[]),...added];
     if(embeddedPhotoLimitExceeded(photos,850)){ alert('사진 용량이 너무 커요. 사진 개수를 줄이거나 다시 찍어서 올려주세요.'); return; }
-    arr[at]={...arr[at],photos};
+    arr[at]={...arr[at],photos,done:true};
     const ok=await saveVideoAssignments(key,stuId,arr);
     if(!ok) alert('사진을 저장하지 못했어요. 다시 시도해주세요.');
   }catch(e){ console.warn('[영상 사진]',e); alert('사진을 저장하지 못했어요. 다시 시도해주세요.'); }
@@ -5460,7 +5461,8 @@ async function removeVideoPhoto(key,stuId,idx,pi){
   const arr=[...(((db.classRecords[key]||{})[stuId]||{}).videoAssignments||[])];
   const item=arr[idx]; if(!item||!(item.photos||[])[pi]) return;
   const removed=item.photos[pi];
-  arr[idx]={...item,photos:item.photos.filter((_,i)=>i!==pi)};
+  const left=item.photos.filter((_,i)=>i!==pi);
+  arr[idx]={...item,photos:left,...(left.length===0&&session&&session.mode==='student'?{done:false}:{})};
   const ok=await saveVideoAssignments(key,stuId,arr);
   if(ok){ try{ await deleteStoredPhoto(removed); }catch(e){ console.warn('[영상 사진 삭제]',e); } }
   else alert('사진을 지우지 못했어요. 다시 시도해주세요.');
@@ -10686,8 +10688,8 @@ function renderStudentHomeworkPage(){
     <div class="card">
       <h3 style="margin-top:0;">개념동영상학습</h3>
       ${videoAssignFlat.length ? videoAssignFlat.map(v=>`<div class="row" style="padding:7px 0;border-bottom:1px solid var(--line);">
-        <input type="checkbox" ${v.done?'checked':''} onchange="toggleVideoDoneByKey('${v.key}','${stuId}',${v.idx})">
-        <a class="link" href="${v.url}" target="_blank">${v.title}</a><span style="color:#9c9880;font-size:11px;">(${fmtDate(v.date)})</span>
+        <input type="checkbox" ${v.done?'checked':''} disabled title="필기 사진을 올리면 자동으로 완료돼요">
+        <a class="link" href="${v.url}" target="_blank">${v.title}</a><span style="color:#9c9880;font-size:11px;">(${fmtDate(v.date)})</span>${v.done?'':'<span style="color:#D65A4A;font-size:11px;margin-left:6px;">필기 사진을 올리면 완료</span>'}
       </div>${videoPhotoBlock(v,v.key,stuId,v.idx,true)}`).join('') : `<div class="empty">부여된 영상 과제가 없어요.</div>`}
     </div>
 
