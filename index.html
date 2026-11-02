@@ -3387,6 +3387,10 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames, focusRecommended=f
     const mark = ui && ui.state==='saving' ? '… 저장 중' : ui && ui.state==='error' ? '✖ 저장 실패' : (homeworkReviewMark(daySub,d,s.id)+(direct?' 직접':'')+(ui && ui.state==='saved' ? ' ✓' : ''));
     const title = `${homeworkReviewLabel(daySub,d,s.id)}${ui&&ui.msg?' · '+ui.msg:''}`;
     const clickable = canVerify && !isLegacyHomeworkDate(d) && d<=todayISO() && st!=='unknown';
+    if(canVerify && st==='unknown' && !isLegacyHomeworkDate(d) && d<=todayISO()){
+      const busy=hwDateLoading.has(d);
+      return `<button type="button" class="badge gray hw-load" data-hwload="${d}" ${busy?'disabled':''} title="오래된 날짜라 기록을 아직 안 불러왔어요. 눌러서 불러오면 인증/미인증을 바꿀 수 있어요" onclick="loadHomeworkDatesForRow('${d}')" style="margin:2px 3px 0 0;font-size:9px;padding:2px 6px;border:1px dashed #aaa;cursor:pointer;">${DAY_LABEL[dowKey]} ${busy?'불러오는 중…':'⟳ 불러오기'}</button>`;
+    }
     if(!clickable) return `<span class="badge ${cls2}" title="${title}" style="margin:2px 3px 0 0;font-size:9px;padding:2px 6px;">${DAY_LABEL[dowKey]} ${mark}</span>`;
     return `<button type="button" class="badge ${cls2} hw-verify" data-hwverify="${d}" data-state="${st}" ${ui&&ui.state==='saving'?'disabled':''} title="${title} (눌러서 인증/미인증 전환)" onclick="toggleHomeworkVerify('${cls.id}','${s.id}','${d}')" style="margin:2px 3px 0 0;font-size:9px;padding:2px 6px;border:1px solid rgba(0,0,0,.12);cursor:pointer;font-family:inherit;">${DAY_LABEL[dowKey]} ${mark}</button>`;
   }).join('');
@@ -5191,6 +5195,30 @@ async function loadStudentHistoryDate(stuId,date){
   }finally{
     currentSubState.studentHistoryLoading=false; render();
   }
+}
+// 반 출석부: 최근 7일보다 오래된 날짜의 숙제 기록은 처음에 안 불러온다(회색 …). 눌러서 그 날짜의 기록을 서버에서 읽어 오면 수동 확인이 가능해진다.
+const hwDateLoading=new Set();
+async function loadHomeworkDatesForRow(date){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date||'') || hwDateLoading.has(date) || homeworkKnownDates.has(date)) return;
+  hwDateLoading.add(date); render();
+  const gen=homeworkLoadGen;
+  try{
+    const found={};
+    const byField=await fsdb.collection('submissions').where('date','==',date).get({source:'server'});
+    byField.docs.forEach(d=>{found[d.id]=d.data();});
+    const ids=(db.students||[]).filter(x=>x && x.id).map(x=>x.id+'_'+date);
+    const fp=firebase.firestore.FieldPath.documentId();
+    for(let i=0;i<ids.length;i+=10){
+      const snap=await fsdb.collection('submissions').where(fp,'in',ids.slice(i,i+10)).get({source:'server'});
+      snap.docs.forEach(d=>{found[d.id]=d.data();});
+    }
+    if(gen!==homeworkLoadGen) return;
+    Object.assign(db.submissions,found);
+    homeworkKnownDates.add(date);
+  }catch(e){
+    console.error('[반 숙제 날짜 조회]',e);
+    alert('해당 날짜 숙제 기록을 불러오지 못했어요. 다시 눌러주세요.');
+  }finally{ hwDateLoading.delete(date); render(); }
 }
 async function loadHomeworkReviewDate(date){
   if(!/^\d{4}-\d{2}-\d{2}$/.test(date||'')){ alert('날짜를 선택해주세요.'); return; }
