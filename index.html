@@ -4124,6 +4124,8 @@ function stadAppKey(stuId, month){ return `${stuId}_${month}`; }
 function stadDailyKey(stuId, date){ return `${stuId}_${date}`; }
 // 20일~말일 신청기간에 신청하면 "다음 달" 참여로 등록되므로, 신청 저장 시엔 이 함수로 대상 달을 구한다.
 function stadTargetMonth(dateISO){
+  // 원장이 수동으로 '신청 열기'를 눌러 받는 신청은 이번 달 참여로 등록한다(중간 합류). 자동 기간(20일~말일)은 다음 달.
+  if(stadApplyMode()==='open') return (dateISO||STAD_TODAY()).slice(0,7);
   const d = new Date((dateISO||STAD_TODAY())+'T00:00:00');
   d.setMonth(d.getMonth()+1);
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
@@ -4144,7 +4146,12 @@ function stadCurrentApplyWindow(){
   if(s.applyMode==='manual' && s.applyOpen && s.applyClose) return {open:s.applyOpen, close:s.applyClose};
   return stadRecurringApplyWindow(STAD_TODAY());
 }
+// 원장 수동 스위치: 'open'(계속 받기) / 'closed'(받지 않기) / 그 외(자동: 매월 20일~말일)
+function stadApplyMode(){ const m=(db.stadSettings||{}).applyMode; return m==='open'||m==='closed'?m:'auto'; }
 function isStadApplyOpen(){
+  const mode=stadApplyMode();
+  if(mode==='open') return true;
+  if(mode==='closed') return false;
   const {open, close} = stadCurrentApplyWindow();
   const today = STAD_TODAY();
   return today >= open && today <= close;
@@ -4338,6 +4345,14 @@ async function toggleStadSettlementApproval(stuId, date){
   // 2026-10-07 이후 사용하지 않음: 학생 정산 제출 즉시 자동 인정.
   console.warn('STAD 정산 승인 기능은 더 이상 사용하지 않습니다.', stuId, date);
 }
+async function setStadApplyMode(mode){
+  if(!['open','closed','auto'].includes(mode)) return;
+  const label={open:'신청을 열어요. 학생들이 바로 STAD를 신청할 수 있게 돼요.',closed:'신청을 닫아요. 학생 화면에서 신청 버튼이 사라져요.',auto:'자동(매월 20일~말일)으로 되돌려요.'}[mode];
+  if(!confirm(label+'\n계속할까요?')) return;
+  const ok = await fsSet('stadSettings','main',{applyMode:mode}, true);
+  if(ok){ db.stadSettings={...(db.stadSettings||{}),applyMode:mode}; render(); }
+  else alert('저장하지 못했어요. 다시 시도해주세요.');
+}
 async function saveStadSettings(){
   const infoText = document.getElementById('stadInfoText').value;
   const zoomLink = document.getElementById('stadZoomLink').value.trim();
@@ -4403,6 +4418,15 @@ function renderStadAdmin(){
     <div class="muted" style="font-size:11px;margin:4px 0 8px;">이 안내문구가 학생 STAD 페이지에 그대로 보여요.</div>
     <button class="btn sm gold" onclick="saveStadSettings()">저장</button>
     <div class="muted" style="font-size:11px;margin-top:8px;">${isStadApplyOpen()?`✅ 지금 신청 기간이에요 (${fmtDate(win.open)} ~ ${fmtDate(win.close)})`:`⏸️ 지금은 신청 기간이 아니에요 · 다음 신청 기간: ${fmtDate(win.open)} ~ ${fmtDate(win.close)}`}</div>
+    <div id="stadApplySwitch" style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);">
+      <div style="font-size:12.5px;font-weight:700;margin-bottom:6px;">신청 받기 스위치 <span style="font-weight:400;color:#8a8674;">· 지금: ${stadApplyMode()==='open'?'🟢 수동으로 열어둠':stadApplyMode()==='closed'?'🔴 수동으로 닫아둠':'⚙️ 자동(매월 20일~말일)'}</span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn sm gold" data-stad-mode="open" onclick="setStadApplyMode('open')" ${stadApplyMode()==='open'?'disabled':''}>🟢 신청 열기</button>
+        <button class="btn sm outline" data-stad-mode="closed" onclick="setStadApplyMode('closed')" ${stadApplyMode()==='closed'?'disabled':''}>🔴 신청 닫기</button>
+        ${stadApplyMode()!=='auto'?`<button class="btn sm outline" data-stad-mode="auto" onclick="setStadApplyMode('auto')">⚙️ 자동으로 되돌리기</button>`:''}
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:6px;">지금 신청하면 <b>${stadTargetMonth().replace('-','년 ')}월</b> 참여로 등록돼요.</div>
+    </div>
   </div>
 
   ${misTagged.length ? `<div class="card" style="border-color:var(--red);">
