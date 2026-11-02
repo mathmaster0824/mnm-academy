@@ -4180,19 +4180,42 @@ function countWeekdaysBetween(startISO, endISO){
   while(d<=end){ const wd=d.getDay(); if(wd!==0 && wd!==6) count++; d.setDate(d.getDate()+1); }
   return count;
 }
+const stadDailyHist = {};            // 월 집계용으로 서버에서 따로 읽어 온 일일 기록(실시간 구독과 분리)
+const stadHistState = {};            // {'2026-10': {status:'loading'|'ready'|'error'}}
+function stadPrevMonth(m){ const d=new Date(Number(m.slice(0,4)), Number(m.slice(5,7))-2, 1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+function stadNextMonth(m){ const d=new Date(Number(m.slice(0,4)), Number(m.slice(5,7)), 1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+function stadAdminMonth(){ return (currentSubState && currentSubState.stadAdminMonth) || STAD_MONTH(); }
+function stadMonthNeedsLoad(month){ return (month+'-01') < recentRecordStartISO(); }
+async function loadStadMonthDaily(month){
+  if(!stadMonthNeedsLoad(month)) return;
+  const st=stadHistState[month]; if(st) return; // 불러오는 중·완료·실패 모두 자동 재시도하지 않는다(실패는 '다시 불러오기' 버튼으로만 재시도)
+  stadHistState[month]={status:'loading'}; render();
+  const gen=homeworkLoadGen;
+  try{
+    const last=`${month}-31`;
+    const snap=await fsdb.collection('stadDaily').where('date','>=',month+'-01').where('date','<=',last).get({source:'server'});
+    snap.docs.forEach(d=>{ stadDailyHist[d.id]=d.data(); });
+    stadHistState[month]={status:'ready'};
+  }catch(e){ console.error('[STAD 월 기록 조회]',e); stadHistState[month]={status:'error'}; }
+  render();
+}
+function setStadAdminMonth(m){ currentSubState.stadAdminMonth=m; if(stadHistState[m]&&stadHistState[m].status==='error') delete stadHistState[m]; render(); }
 function stadMonthStats(stuId, month){
   month = month || STAD_MONTH();
   const app = stadApplicationFor(stuId, month);
   const monthStart = month+'-01';
   const today = STAD_TODAY();
-  const rangeEnd = today.slice(0,7)===month ? today : monthStart; // 지난달 조회는 통계 목적 밖(현재는 이번달만 사용)
+  const monthEnd = `${month}-${String(new Date(Number(month.slice(0,4)), Number(month.slice(5,7)), 0).getDate()).padStart(2,'0')}`;
+  const rangeEnd = today.slice(0,7)===month ? today : (today>monthEnd ? monthEnd : monthStart); // 지난달은 그 달 말일까지, 아직 안 온 달은 0일
   const approvedFrom = (app && app.approvedAt) ? app.approvedAt.slice(0,10) : monthStart;
   const effectiveStart = approvedFrom > monthStart ? approvedFrom : monthStart;
   const possibleDays = rangeEnd>=effectiveStart ? countWeekdaysBetween(effectiveStart, rangeEnd) : 0;
   let morning=0, evening=0;
-  Object.keys(db.stadDaily).forEach(k=>{
+  // 실시간으로 듣는 기록은 최근 7일뿐이라, 그보다 오래된 날은 stadDailyHist(월 집계용으로 따로 불러온 기록)로 채운다. 같은 날이면 실시간 값이 우선.
+  const merged = {...stadDailyHist, ...db.stadDaily};
+  Object.keys(merged).forEach(k=>{
     if(!k.startsWith(stuId+'_')) return;
-    const d = db.stadDaily[k];
+    const d = merged[k];
     if(!d || !d.date || !d.date.startsWith(month)) return;
     if(d.attended) morning++;
     // 저녁 정산은 학생이 제출한 순간 바로 인정한다. 원장 승인 단계는 사용하지 않는다.
@@ -4412,6 +4435,13 @@ function renderStadAdmin(){
     .map(a=>({...a, s: studentById(a.studentId)})).filter(x=>x.s)
     .sort((a,b)=>(a.s.name||'').localeCompare(b.s.name||''));
 
+  const selMonth = stadAdminMonth();
+  const selApproved = allApps.filter(a=>a.status==='approved' && a.month===selMonth).map(a=>({...a, s: studentById(a.studentId)})).filter(x=>x.s)
+    .sort((a,b)=>(a.s.name||'').localeCompare(b.s.name||''));
+  if(stadMonthNeedsLoad(selMonth)) setTimeout(()=>loadStadMonthDaily(selMonth),0);
+  const selHist = stadHistState[selMonth]||{};
+  const selHistBusy = stadMonthNeedsLoad(selMonth) && selHist.status!=='ready' && selHist.status!=='error';
+  const selHistError = stadMonthNeedsLoad(selMonth) && selHist.status==='error';
   const today = STAD_TODAY();
   const settlementStatusRows = approved
     .map(x=>({...x, daily: stadDailyFor(x.studentId, today)}));
@@ -4492,16 +4522,24 @@ function renderStadAdmin(){
     }).join('') : `<div class="empty">이번 달 승인된 참여자가 없어요.</div>`}
   </div>
 
-  <div class="card">
-    <h3 style="margin-top:0;">⑤ ${month} 이번 달 집계 (엽전 지급용)</h3>
+  <div class="card" id="stadMonthCard">
+    <h3 style="margin-top:0;">⑤ ${selMonth} ${selMonth===month?'이번 달':'지난 기록'} 집계 (엽전 지급용)</h3>
+    <div class="row" style="gap:6px;margin-bottom:8px;flex-wrap:wrap;">
+      <button class="btn sm outline" data-stadmonth="prev" onclick="setStadAdminMonth('${stadPrevMonth(selMonth)}')">◀ ${stadPrevMonth(selMonth)}</button>
+      <b style="font-size:13px;">${selMonth}</b>
+      <button class="btn sm outline" data-stadmonth="next" onclick="setStadAdminMonth('${stadNextMonth(selMonth)}')" ${selMonth>=month?'disabled':''}>${stadNextMonth(selMonth)} ▶</button>
+      ${selMonth!==month?`<button class="btn sm gold" data-stadmonth="now" onclick="setStadAdminMonth('${month}')">이번 달로</button>`:''}
+    </div>
     <div class="muted" style="font-size:11px;margin-bottom:8px;">엽전은 원장님이 실물로 지급하시면 돼요 — 아래 합계만 보고 나눠주시면 됩니다.</div>
-    ${approved.length ? `<div style="overflow-x:auto;"><table style="width:100%;">
+    ${selHistBusy?`<div class="empty" style="padding:12px 0;">${selMonth} 기록을 불러오는 중이에요…</div>`
+      : selHistError?`<div class="empty" style="padding:12px 0;color:var(--red);">기록을 불러오지 못했어요. 합계가 맞지 않을 수 있어요. <button class="btn sm outline" onclick="setStadAdminMonth('${selMonth}')">다시 불러오기</button></div>`
+      : selApproved.length ? `<div style="overflow-x:auto;"><table style="width:100%;">
       <tr><th>학생</th><th>아침출석</th><th>저녁정산</th><th>합계(엽전)</th><th>출석률</th></tr>
-      ${approved.map(x=>{
-        const st = stadMonthStats(x.studentId, month);
+      ${selApproved.map(x=>{
+        const st = stadMonthStats(x.studentId, selMonth);
         return `<tr><td><b>${x.s.name}</b></td><td style="text-align:center;">${st.morning}</td><td style="text-align:center;">${st.evening}</td><td style="text-align:center;"><b>${st.total}</b></td><td style="text-align:center;">${st.rate}%</td></tr>`;
       }).join('')}
-    </table></div>` : `<div class="empty">참여자가 없어요.</div>`}
+    </table></div>` : `<div class="empty">${selMonth} 참여자가 없어요.</div>`}
   </div>
 
   ${approved.length ? `<div class="card">
