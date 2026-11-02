@@ -3576,10 +3576,18 @@ function renderVideoAssignPicker(clsId, date, stuId){
       ${unitOptions.map(u=>`<option value="${u}" ${draft.unit===u?'selected':''}>${u}</option>`).join('')}
     </select>
     ${matches.length ? `<div style="max-height:110px;overflow-y:auto;background:#fff;border-radius:6px;padding:4px 6px;margin-bottom:4px;">
-      ${matches.map(v=>`<label style="display:block;font-size:10.5px;padding:2px 0;"><input type="checkbox" ${draft.checked[v.id]?'checked':''} onchange="currentSubState._vidAssignDraft['${rowKey}'].checked['${v.id}']=this.checked;render();"> ${escapeHtml(v.title)}</label>`).join('')}
+      ${matches.map(v=>`<label style="display:block;font-size:10.5px;padding:2px 0;"><input type="checkbox" ${draft.checked[v.id]?'checked':''} onchange="toggleVidPick('${rowKey}','${v.id}',this)"> ${escapeHtml(v.title)}</label>`).join('')}
     </div>
-    <button class="btn sm gold" style="width:100%;" onclick="addVideoAssign('${clsId}','${date}','${stuId}')">선택한 영상 ${checkedCount?`${checkedCount}개 `:''}과제로 추가</button>` : `<div style="font-size:10.5px;color:#aaa;">조건에 맞는 영상이 없어요.</div>`}
+    <button class="btn sm gold vid-add-btn" style="width:100%;" onclick="addVideoAssign('${clsId}','${date}','${stuId}')">선택한 영상 ${checkedCount?`${checkedCount}개 `:''}과제로 추가</button>` : `<div style="font-size:10.5px;color:#aaa;">조건에 맞는 영상이 없어요.</div>`}
   </div>`;
+}
+// 영상 체크는 화면 전체를 다시 그리지 않고(그러면 목록 스크롤이 맨 위로 돌아간다) 선택값과 버튼 글자만 바꾼다.
+function toggleVidPick(rowKey,vidId,el){
+  const draft=(currentSubState._vidAssignDraft||{})[rowKey]; if(!draft) return;
+  draft.checked=draft.checked||{}; draft.checked[vidId]=el.checked;
+  const n=Object.values(draft.checked).filter(Boolean).length;
+  const btn=el.closest('div[style*="background:#f7f5ee"]')?.querySelector('.vid-add-btn');
+  if(btn) btn.textContent=`선택한 영상 ${n?`${n}개 `:''}과제로 추가`;
 }
 async function addVideoAssign(clsId,date,stuId){
   const rowKey = `${clsId}_${date}_${stuId}`;
