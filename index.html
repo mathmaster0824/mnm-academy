@@ -782,7 +782,7 @@ function attachRoleListeners(){
     subscribeWeekendAdminWeek(currentSubState.weekendWeek || weekendReviewWeekStart(academicTodayISO()));
   }else if(stuId){
     subs.push(fsdb.collection('weekendSubmissions').where('studentId','==',stuId).onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>{ const x=d.data(); if(String(x.weekStart||'')>=currentWeek) m[d.id]=x; }); db.weekendSubmissions=m; scheduleRender();
+      const m={}, since=addDaysISO(currentWeek,-7); snap.docs.forEach(d=>{ const x=d.data(); if(String(x.weekStart||'')>=since) m[d.id]=x; }); db.weekendSubmissions=m; scheduleRender();
     },roleListenerError('weekendSubmissions')));
   }
 
@@ -1925,7 +1925,7 @@ function weekDates(weekStart){
    휴대폰은 앱 탭을 며칠씩 열어 둔 채로 쓰기 때문에, 고친 버전이 올라가도 예전 화면이 계속 돌 수 있다.
    예전 화면은 지금 보안 규칙과 맞지 않아 저장이 막힐 수 있으므로, 새 버전이 올라오면 새로 고침을 안내한다.
    (배포할 때마다 APP_BUILD 값을 바꾼다) */
-const APP_BUILD='2026-11-01a';
+const APP_BUILD='2026-11-02a';
 let newVersionReady=false, versionCheckAt=0;
 async function checkAppVersion(force){
   if(location.protocol==='file:') return false;
@@ -4016,9 +4016,13 @@ function renderWeekendStudyAdmin(){
   `;
 }
 
+// 학생 주말학습 인증은 토·일(일요일 밤을 넘겨 월요일 새벽 6시 전까지 포함)에만, 그 주말 칸에만 올릴 수 있다.
+function weekendUploadOpen(){ const d=new Date(academicTodayISO()+'T00:00:00').getDay(); return d===6||d===0; }
+function weekendUploadAllowed(wk){ return session?.mode!=='student' || (weekendUploadOpen() && wk===weekendWeekStart(academicTodayISO())); }
 async function uploadWeekendPhoto(input,stuId,wk,slot){
   const files = Array.from(input.files || []);
   if(!files.length) return;
+  if(!weekendUploadAllowed(wk)){ input.value=''; alert('주말학습 인증은 토요일·일요일에만 올릴 수 있어요.\n(일요일 밤에는 월요일 새벽 6시 전까지 괜찮아요)'); render(); return; }
   input.disabled=true;
   try{
     const key=weekendSubmissionKey(stuId,wk,slot);
@@ -4042,6 +4046,7 @@ async function uploadWeekendPhoto(input,stuId,wk,slot){
   input.disabled=false;
 }
 async function removeWeekendPhoto(stuId, wk, slot, idx){
+  if(!weekendUploadAllowed(wk)){ alert('인증 시간이 끝난 주말 사진은 지울 수 없어요. 선생님께 말씀해 주세요.'); return; }
   const key = weekendSubmissionKey(stuId, wk, slot);
   const existing = db.weekendSubmissions[key];
   if(!existing) return;
@@ -4058,13 +4063,22 @@ function renderStudentWeekendPage(){
   const s=studentById(stuId);
   if(!weekendAvailableForStudent(stuId)) return `<div class="empty">현재 주말학습이 운영 중이 아닙니다.</div>`;
   const cls=weekendClassForStudent(stuId);
-  const wk=weekendWeekStart(academicTodayISO());
+  const today=academicTodayISO();
+  const wk=weekendWeekStart(today);
+  const open=weekendUploadOpen();
   const count=weekendCountForStudent(stuId,wk);
+  const lastWk=weekendReviewWeekStart(today), lastCount=weekendCountForStudent(stuId,lastWk);
+  const sat=fmtDate(addDaysISO(wk,5)), sun=fmtDate(addDaysISO(wk,6));
   return `
     <div class="card">
       <h2 style="margin:0 0 4px;">🌙 주말학습 인증</h2>
       <div style="font-size:13px;color:#8a8674;">${s.name} · ${escapeHtml(cls&&cls.name||'주말학습반')}</div>
-      <div style="margin-top:10px;"><span class="badge ${count===4?'green':'yellow'}">이번 주 ${count}/4 인증</span></div>
+      <div style="margin-top:10px;">${open
+        ? `<span class="badge ${count===4?'green':'yellow'}">이번 주말 ${count}/4 인증</span>`
+        : `<span class="badge ${lastCount===4?'green':'gray'}">지난 주말 ${lastCount}/4 인증</span>`}</div>
+      <div style="margin-top:10px;padding:10px 12px;border-radius:10px;font-size:13px;line-height:1.6;${open?'background:#f0faf2;color:#2c7a3d;':'background:#f6f4ec;color:#5a5648;'}">${open
+        ? `지금 인증할 수 있어요. 일요일 밤에는 <b>월요일 새벽 6시 전</b>까지 올려 주세요.`
+        : `주말학습 인증은 <b>토요일·일요일</b>에만 올릴 수 있어요. 지난 주말 인증은 끝났어요.<br>이번 주말(${sat}~${sun})에 다시 올려 주세요.`}</div>
     </div>
     <div class="card">
       <div style="font-size:12px;color:#8a8674;margin-bottom:12px;">각 시간대마다 학습한 내용을 사진으로 인증해주세요 (여러 장 가능해요). 평일 숙제 경고와는 연결되지 않습니다.</div>
@@ -4076,12 +4090,12 @@ function renderStudentWeekendPage(){
           return `<div style="border:1px solid var(--line);border-radius:12px;padding:14px;">
             <div class="row between"><b>${x.label}</b>${photos.length?`<span class="badge green">○ 인증완료 (${photos.length}장)</span>`:'<span class="badge gray">미인증</span>'}</div>
             ${photos.length?`
-              <div class="thumbs" style="margin-top:10px;">${photos.map((p,i)=>`<div class="thumb-wrap"><img src="${photoSrc(p,true)}" onclick="openLightboxSet('weekend','${key}','photos',${i})"><button class="thumb-x" onclick="removeWeekendPhoto('${stuId}','${wk}','${x.id}',${i})">✕</button></div>`).join('')}</div>
+              <div class="thumbs" style="margin-top:10px;">${photos.map((p,i)=>`<div class="thumb-wrap"><img src="${photoSrc(p,true)}" onclick="openLightboxSet('weekend','${key}','photos',${i})">${open?`<button class="thumb-x" onclick="removeWeekendPhoto('${stuId}','${wk}','${x.id}',${i})">✕</button>`:''}</div>`).join('')}</div>
               <div style="font-size:11px;color:#8a8674;margin-top:6px;">${new Date(sub.submittedAt).toLocaleString('ko-KR')}</div>
-              <label class="btn sm outline" style="display:inline-block;margin-top:8px;">사진 추가하기<input type="file" accept="image/*" multiple style="display:none;" onchange="uploadWeekendPhoto(this,'${stuId}','${wk}','${x.id}')"></label>
-            `:`
+              ${open?`<label class="btn sm outline" style="display:inline-block;margin-top:8px;">사진 추가하기<input type="file" accept="image/*" multiple style="display:none;" onchange="uploadWeekendPhoto(this,'${stuId}','${wk}','${x.id}')"></label>`:''}
+            `:open?`
               <label class="btn gold" style="display:inline-block;width:100%;text-align:center;margin-top:12px;">사진 인증하기<input type="file" accept="image/*" multiple style="display:none;" onchange="uploadWeekendPhoto(this,'${stuId}','${wk}','${x.id}')"></label>
-            `}
+            `:`<div style="margin-top:12px;padding:10px;border-radius:10px;background:#f6f4ec;color:#8a8674;font-size:12px;text-align:center;">토요일부터 올릴 수 있어요</div>`}
           </div>`;
         }).join('')}
       </div>
