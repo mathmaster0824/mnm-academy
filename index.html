@@ -847,11 +847,12 @@ function attachRoleListeners(){
     },roleListenerError('focusHistory')));
   }else db.focusHistory={};
 
+  studentPinsLoaded=false;
   // 학생 비밀번호: 원장 화면은 "설정됨/미설정"만 보여주고 초기화(삭제)만 한다. 학생은 이 컬렉션을 읽지 못한다.
   db.studentPins={};
   if(isDirector){
     subs.push(fsdb.collection('studentPins').onSnapshot(snap=>{
-      const m={}; snap.docs.forEach(d=>{ m[d.id]=true; }); db.studentPins=m; scheduleRender();
+      const m={}; snap.docs.forEach(d=>{ m[d.id]=true; }); db.studentPins=m; studentPinsLoaded=true; scheduleRender();
     },roleListenerError('studentPins')));
   }
 
@@ -1925,7 +1926,7 @@ function weekDates(weekStart){
    휴대폰은 앱 탭을 며칠씩 열어 둔 채로 쓰기 때문에, 고친 버전이 올라가도 예전 화면이 계속 돌 수 있다.
    예전 화면은 지금 보안 규칙과 맞지 않아 저장이 막힐 수 있으므로, 새 버전이 올라오면 새로 고침을 안내한다.
    (배포할 때마다 APP_BUILD 값을 바꾼다) */
-const APP_BUILD='2026-11-02a';
+const APP_BUILD='2026-11-02b';
 let newVersionReady=false, versionCheckAt=0;
 async function checkAppVersion(force){
   if(location.protocol==='file:') return false;
@@ -2601,13 +2602,14 @@ function renderDashboard(){
     : todayHwNotDone.length ? `<div style="font-size:13px;color:#5a5648;margin-bottom:8px;">${hwIsYesterday?'':'오늘 '}숙제 제출이 확인되지 않습니다.</div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;">${todayHwNotDone.map(x=>{
         const again = x.items.some(i=>i.state==='rejected'||i.state==='finalRejected');
-        return `<span title="${x.items.map(i=>i.cls.name).join(', ')}" style="display:inline-flex;align-items:center;gap:2px;padding:2px 4px 2px 10px;border-radius:999px;border:1px solid #f3c5c0;background:#fff3f1;color:#c94236;font-size:13px;font-weight:700;"><span style="cursor:pointer;text-decoration:underline;padding:3px 0;" onclick="goto('students');currentSubState.studentDetail='${x.student.id}';render();">${x.student.name}${again?' <span style="font-size:11px;">(다시)</span>':''}</span><button type="button" aria-label="명단에서 빼기" title="명단에서 빼기" style="border:0;background:transparent;color:#c94236;opacity:.7;cursor:pointer;font-size:13px;padding:4px 7px;line-height:1;" onclick="setDashHwHidden('${hwDay}','${x.student.id}',true)">✕</button></span>`;
+        return `<span title="${x.items.map(i=>i.cls.name).join(', ')}" style="display:inline-flex;align-items:center;gap:2px;padding:2px 4px 2px 10px;border-radius:999px;border:1px solid #f3c5c0;background:#fff3f1;color:#c94236;font-size:13px;font-weight:700;"><span style="cursor:pointer;text-decoration:underline;padding:3px 0;" onclick="goto('students');currentSubState.studentDetail='${x.student.id}';render();">${x.student.name}${again?' <span style="font-size:11px;">(다시)</span>':''}${(studentsWithoutNewLogin()||[]).some(s=>s.id===x.student.id)?' <span title="아직 새 앱으로 로그인 안 함" style="font-size:11px;">📱</span>':''}</span><button type="button" aria-label="명단에서 빼기" title="명단에서 빼기" style="border:0;background:transparent;color:#c94236;opacity:.7;cursor:pointer;font-size:13px;padding:4px 7px;line-height:1;" onclick="setDashHwHidden('${hwDay}','${x.student.id}',true)">✕</button></span>`;
       }).join('')}</div>`
     : `<div class="empty" style="padding:12px 0;">${hwIsYesterday?'어제':'오늘'} 숙제가 있는 ${todayHwPlanned}명 모두 확인됐어요 🎉</div>`}
     ${!todayHwLoading && todayHwNotDone.length ? `<div style="margin-top:6px;font-size:11px;color:#8a8674;">이름을 누르면 학생 페이지(숙제 인정 처리)로, ✕를 누르면 공지 명단에서만 빠져요.</div>` : ''}
     ${!todayHwLoading && todayHwHidden.length ? `<div style="margin-top:8px;font-size:12px;color:#8a8674;">명단에서 뺀 학생: ${todayHwHidden.map(x=>`${x.student.name} <a href="#" onclick="event.preventDefault();setDashHwHidden('${hwDay}','${x.student.id}',false)" style="color:var(--navy2);font-weight:800;">되돌리기</a>`).join(' · ')}</div>` : ''}
     ${!todayHwLoading && todayHwPending.length ? `<div style="margin-top:10px;font-size:12px;color:#9a6b16;">사진은 올라왔고 검토 대기 ${todayHwPending.length}명: ${todayHwPending.map(x=>x.student.name).join(', ')} <a href="#" onclick="event.preventDefault();goto('hwreview')" style="color:var(--navy2);font-weight:800;">검토하러 가기</a> <span style="color:#8a8674;">(공지 명단에는 넣지 않았어요)</span></div>` : ''}
   </div>
+  ${renderNewLoginCard()}
   ${stadApprovedToday.length ? (()=>{
     const hour = new Date().getHours();
     const absent = stadApprovedToday.filter(x=>{ const d=stadDailyFor(x.studentId,stadToday); return !(d&&d.attended); });
@@ -5218,6 +5220,25 @@ async function loadHomeworkReviewDate(date){
   }
 }
 
+let studentPinsLoaded=false;
+// 비밀번호가 없는 재원생 = 10/30 보안 변경 뒤 새 앱으로 한 번도 로그인하지 않은 학생 (예전 화면을 열어 두었을 수 있다)
+function studentsWithoutNewLogin(){
+  if(!studentPinsLoaded) return null;
+  return sortedStudents(db.students.filter(s=>s.status!=='withdrawn' && String(s.code??'').trim() && !(db.studentPins||{})[String(s.code).trim()]));
+}
+function renderNewLoginCard(){
+  const list=studentsWithoutNewLogin();
+  if(!list || !list.length) return '';
+  const notice=`[수학훈련소 안내]\n아래 친구들은 아직 새 앱으로 로그인하지 않았어요.\n수학훈련소 창을 완전히 닫았다가 다시 열고, 학생 코드를 넣은 뒤 비밀번호 4자리를 정해 주세요.\n(예전 화면에서는 숙제가 저장되지 않아요)\n\n${list.map(s=>s.name).join('\n')}`;
+  return `<div class="card" style="border-color:var(--gold);">
+    <div class="row between" style="margin-bottom:8px;gap:8px;flex-wrap:wrap;">
+      <h3 style="margin:0;">📱 아직 새 앱으로 로그인 안 한 학생 <span style="color:#9a6b16;">${list.length}명</span></h3>
+      <button class="btn sm outline" onclick="copyText(this)" data-text="${encodeURIComponent(notice)}">공지 문구 복사</button>
+    </div>
+    <div style="font-size:12px;color:#8a8674;margin-bottom:8px;">비밀번호를 아직 만들지 않은 학생이에요. 예전 화면을 열어 두었다면 숙제를 올려도 저장되지 않아요. 한 번 로그인하면 명단에서 사라져요.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;">${list.map(s=>`<span style="cursor:pointer;display:inline-flex;padding:5px 10px;border-radius:999px;border:1px solid #ead89a;background:#fff9e8;color:#9a6b16;font-size:13px;font-weight:700;" onclick="goto('students');currentSubState.studentDetail='${s.id}';render();">${s.name}</span>`).join('')}</div>
+  </div>`;
+}
 function renderStudentPinStatus(s){
   const code=String(s.code??'').trim();
   if(!code) return '';
