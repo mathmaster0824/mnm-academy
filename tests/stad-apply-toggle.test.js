@@ -35,7 +35,10 @@ const check = (n, ok, d) => { results.push(ok); console.log(`STAD-APPLY ${ok ? '
   check('수동 열기, 11/2: 신청 버튼 표시', (await applyBtn()) === 1);
   await page.evaluate(() => applyForStad('stu_A')); await page.waitForTimeout(150);
   const a = await apps();
-  check('수동 열기: 학생 신청이 대기(pending)로 저장', Object.values(a).length === 1 && Object.values(a)[0].status === 'pending' && Object.values(a)[0].month === '2026-12', JSON.stringify(a));
+  check('수동 열기: 학생 신청이 이번 달(11월) 참여 대기(pending)로 저장', Object.values(a).length === 1 && Object.values(a)[0].status === 'pending' && Object.values(a)[0].month === '2026-11', JSON.stringify(a));
+  await setup('2026-11-25', '', 'student');
+  await page.evaluate(() => applyForStad('stu_A')); await page.waitForTimeout(150);
+  check('자동 기간(11/25) 신청은 기존대로 다음 달(12월) 참여', Object.values(await apps())[0]?.month === '2026-12');
   await setup('2026-11-25', 'closed', 'student');
   check('수동 닫기, 11/25(자동이면 열릴 날): 신청 버튼 없음', (await applyBtn()) === 0);
   dialogs.length = 0;

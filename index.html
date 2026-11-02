@@ -4115,6 +4115,8 @@ function stadAppKey(stuId, month){ return `${stuId}_${month}`; }
 function stadDailyKey(stuId, date){ return `${stuId}_${date}`; }
 // 20일~말일 신청기간에 신청하면 "다음 달" 참여로 등록되므로, 신청 저장 시엔 이 함수로 대상 달을 구한다.
 function stadTargetMonth(dateISO){
+  // 원장이 수동으로 '신청 열기'를 눌러 받는 신청은 이번 달 참여로 등록한다(중간 합류). 자동 기간(20일~말일)은 다음 달.
+  if(stadApplyMode()==='open') return (dateISO||STAD_TODAY()).slice(0,7);
   const d = new Date((dateISO||STAD_TODAY())+'T00:00:00');
   d.setMonth(d.getMonth()+1);
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
