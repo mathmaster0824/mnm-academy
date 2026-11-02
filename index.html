@@ -101,6 +101,14 @@
   .empty .big{font-size:40px;margin-bottom:10px;}
   a.link{color:var(--navy);font-weight:600;text-decoration:underline;}
   .thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;}
+  .vphoto-box{margin:2px 0 8px 26px;}
+  .vphoto-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;}
+  .vphoto{position:relative;display:inline-block;}
+  .vphoto img{width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer;display:block;}
+  .vphoto-x{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;border:0;background:#D65A4A;color:#fff;font-size:13px;line-height:20px;padding:0;cursor:pointer;}
+  .vphoto-act{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+  .vphoto-add{cursor:pointer;}
+  .vphoto-n{font-size:11px;color:#8a8674;}
   .thumbs img{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer;}
   .thumb-wrap{position:relative;}
   .thumb-x{position:absolute;top:-6px;right:-6px;background:var(--red);color:#fff;border:2px solid #fff;border-radius:50%;width:20px;height:20px;font-size:11px;line-height:1;padding:0;display:flex;align-items:center;justify-content:center;}
@@ -1378,6 +1386,7 @@ function getPhotoArray(kind, a, b){
   }
   if(kind==='editq'){ return currentSubState._editQDraft ? currentSubState._editQDraft.photos : []; }
   if(kind==='q'){ const q = db.questions.find(x=>x.id===a); return q ? (q[b]||[]) : []; }
+  if(kind==='vid'){ const [k,sid]=String(a).split('|'); const v=((db.classRecords[k]||{})[sid]||{}).videoAssignments?.[Number(b)]; return v&&Array.isArray(v.photos)?v.photos:[]; }
   if(kind==='weekend'){ const w=db.weekendSubmissions[a]; return w ? (w.photos || (w.photo?[w.photo]:[])) : []; }
   return [];
 }
@@ -3453,7 +3462,7 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames, focusRecommended=f
       <div class="class-record-box">
         <h4>동영상 과제 <span style="font-weight:400;color:#8a8674;">${doneCount}/${videoTotal} 완료</span></h4>
         ${renderVideoAssignPicker(cls.id, date, s.id)}
-        ${(r.videoAssignments||[]).map((v,i)=>`<div style="font-size:11px;margin-top:4px;"><label><input type="checkbox" ${v.done?'checked':''} onchange="toggleVideoDone('${cls.id}','${date}','${s.id}',${i})"> ${v.title}</label></div>`).join('')}
+        ${(r.videoAssignments||[]).map((v,i)=>`<div style="font-size:11px;margin-top:4px;"><label><input type="checkbox" ${v.done?'checked':''} onchange="toggleVideoDone('${cls.id}','${date}','${s.id}',${i})"> ${v.title}</label>${(v.photos||[]).length?` <span style="color:#4a7fd6;">📷${v.photos.length}</span>`:''}${videoPhotoBlock(v,cls.id+'_'+date,s.id,i,false)}</div>`).join('')}
       </div>
 
       <div class="class-record-box">
@@ -5365,7 +5374,7 @@ function renderStudentDetail(stuId, directorView){
     ${videoAssignFlat.length? videoAssignFlat.map(v=>`<div class="row" style="padding:5px 0;border-bottom:1px solid var(--line);">
       <input type="checkbox" ${v.done?'checked':''} onchange="toggleVideoDoneByKey('${v.key}','${stuId}',${v.idx})">
       <a class="link" href="${v.url}" target="_blank">${v.title}</a><span style="color:#9c9880;font-size:11px;">(${fmtDate(v.date)})</span>
-    </div>`).join('') : `<div class="empty">부여된 영상 과제가 없어요.</div>`}
+    </div>${videoPhotoBlock(v,v.key,stuId,v.idx,false)}`).join('') : `<div class="empty">부여된 영상 과제가 없어요.</div>`}
   </div>
 
     ${renderWeekPlanGrids(stuId,'이번 주 숙제 계획')}
@@ -5388,18 +5397,74 @@ async function updateKmmScore(stuId, date, val){
   if(val===''){ await fsDelete('kmm', stuId+'_'+date); return; }
   await fsSet('kmm', stuId+'_'+date, {studentId:stuId, date, score:Number(val)});
 }
+// 영상 과제 배열 저장: 출석부(classRecords)와, 학생 본인이면 학생 사본(studentRecords)에도 함께 저장한다.
+async function saveVideoAssignments(key,stuId,newArr){
+  const ok = await fsSet('classRecords', key, {[stuId]: {videoAssignments:newArr}});
+  if(ok){
+    db.classRecords[key][stuId].videoAssignments = newArr;
+    // 학생은 출석부를 읽지 못하고 자기 사본을 읽으므로, 사본도 같이 바꾼다(원장은 저장 때 자동으로 맞춰진다).
+    if(session && session.mode==='student'){
+      try{ await fsdb.collection(SR_COL).doc(srDocId(key,stuId)).set({rec:{videoAssignments:newArr}},{merge:true}); }
+      catch(e){ console.warn('[영상 과제 사본]',e?.code||e); }
+    }
+  }
+  return ok;
+}
 async function toggleVideoDoneByKey(key,stuId,idx){
   const cur = db.classRecords[key][stuId];
   const newArr = [...cur.videoAssignments]; newArr[idx] = {...newArr[idx], done: !newArr[idx].done};
-  const ok = await fsSet('classRecords', key, {[stuId]: {videoAssignments:newArr}});
-  if(ok){
-    cur.videoAssignments = newArr;
-    // 학생은 출석부를 읽지 못하고 자기 사본을 읽으므로, 사본의 영상 체크도 같이 바꾼다(원장은 저장 때 자동으로 맞춰진다).
-    if(session && session.mode==='student'){
-      try{ await fsdb.collection(SR_COL).doc(srDocId(key,stuId)).set({rec:{videoAssignments:newArr}},{merge:true}); }
-      catch(e){ console.warn('[영상 체크 사본]',e?.code||e); }
+  await saveVideoAssignments(key,stuId,newArr);
+}
+
+// ===== 영상 숙제 필기/인증 사진 (선택 사항, 여러 장) =====
+const VIDEO_PHOTO_MAX=10;
+function videoPhotoBlock(v,key,stuId,idx,canEdit){
+  const photos=Array.isArray(v.photos)?v.photos:[];
+  const ref=`${key}|${stuId}`;
+  const thumbs=photos.map((p,pi)=>`<span class="vphoto"><img src="${photoSrc(p,true)}" alt="필기 사진 ${pi+1}" onclick="openLightboxSet('vid','${ref}',${idx},${pi})">${canEdit?`<button type="button" class="vphoto-x" title="사진 지우기" onclick="removeVideoPhoto('${key}','${stuId}',${idx},${pi})">×</button>`:''}</span>`).join('');
+  const add=canEdit&&photos.length<VIDEO_PHOTO_MAX?`<label class="btn sm outline vphoto-add">📷 필기·인증 사진 ${photos.length?'더 ':''}올리기<input type="file" accept="image/*" multiple style="display:none" onchange="uploadVideoPhotos(this,'${key}','${stuId}',${idx})"></label>`:'';
+  const dl=photos.length>1?`<button type="button" class="btn sm outline" onclick="downloadAllPhotos(((db.classRecords['${key}']||{})['${stuId}']||{}).videoAssignments[${idx}].photos,'${(studentById(stuId)||{}).name||'student'}_${key.slice(-10)}_영상필기',this)">📥 모두 받기</button>`:'';
+  if(!thumbs&&!add) return '';
+  return `<div class="vphoto-box">${thumbs?`<div class="vphoto-row">${thumbs}</div>`:''}<div class="vphoto-act">${add}${dl}${photos.length?`<span class="vphoto-n">${photos.length}장</span>`:''}</div></div>`;
+}
+async function uploadVideoPhotos(input,key,stuId,idx){
+  const files=Array.from(input.files||[]);
+  if(!files.length) return;
+  const startItem=(((db.classRecords[key]||{})[stuId]||{}).videoAssignments||[])[idx];
+  if(!startItem){ input.value=''; alert('영상 과제를 찾지 못했어요. 새로고침 후 다시 해주세요.'); return; }
+  const marker={title:startItem.title,url:startItem.url};
+  input.disabled=true;
+  try{
+    const have=(startItem.photos||[]).length;
+    if(have+files.length>VIDEO_PHOTO_MAX){ alert(`사진은 영상 하나에 최대 ${VIDEO_PHOTO_MAX}장까지 올릴 수 있어요.`); return; }
+    const added=[];
+    for(const file of files){
+      const n=have+added.length;
+      const params=n>=6?{maxW:340,quality:0.3}:n>=3?{maxW:420,quality:0.35}:{maxW:480,quality:0.4};
+      added.push(await storePhotoFile(file,params));
     }
-  }
+    // 업로드하는 동안 목록이 바뀌었을 수 있으니, 저장 직전에 최신 배열에서 같은 영상을 다시 찾아 붙인다.
+    const arr=[...(((db.classRecords[key]||{})[stuId]||{}).videoAssignments||[])];
+    let at=(arr[idx]&&arr[idx].title===marker.title&&arr[idx].url===marker.url)?idx:arr.findIndex(x=>x.title===marker.title&&x.url===marker.url);
+    if(at<0){ alert('그 사이 영상 과제가 바뀌었어요. 새로고침 후 다시 올려주세요.'); return; }
+    const photos=[...(arr[at].photos||[]),...added];
+    if(embeddedPhotoLimitExceeded(photos,850)){ alert('사진 용량이 너무 커요. 사진 개수를 줄이거나 다시 찍어서 올려주세요.'); return; }
+    arr[at]={...arr[at],photos};
+    const ok=await saveVideoAssignments(key,stuId,arr);
+    if(!ok) alert('사진을 저장하지 못했어요. 다시 시도해주세요.');
+  }catch(e){ console.warn('[영상 사진]',e); alert('사진을 저장하지 못했어요. 다시 시도해주세요.'); }
+  finally{ input.value=''; input.disabled=false; render(); }
+}
+async function removeVideoPhoto(key,stuId,idx,pi){
+  if(!confirm('이 사진을 지울까요?')) return;
+  const arr=[...(((db.classRecords[key]||{})[stuId]||{}).videoAssignments||[])];
+  const item=arr[idx]; if(!item||!(item.photos||[])[pi]) return;
+  const removed=item.photos[pi];
+  arr[idx]={...item,photos:item.photos.filter((_,i)=>i!==pi)};
+  const ok=await saveVideoAssignments(key,stuId,arr);
+  if(ok){ try{ await deleteStoredPhoto(removed); }catch(e){ console.warn('[영상 사진 삭제]',e); } }
+  else alert('사진을 지우지 못했어요. 다시 시도해주세요.');
+  render();
 }
 
 function renderDonut(agg){
@@ -10623,7 +10688,7 @@ function renderStudentHomeworkPage(){
       ${videoAssignFlat.length ? videoAssignFlat.map(v=>`<div class="row" style="padding:7px 0;border-bottom:1px solid var(--line);">
         <input type="checkbox" ${v.done?'checked':''} onchange="toggleVideoDoneByKey('${v.key}','${stuId}',${v.idx})">
         <a class="link" href="${v.url}" target="_blank">${v.title}</a><span style="color:#9c9880;font-size:11px;">(${fmtDate(v.date)})</span>
-      </div>`).join('') : `<div class="empty">부여된 영상 과제가 없어요.</div>`}
+      </div>${videoPhotoBlock(v,v.key,stuId,v.idx,true)}`).join('') : `<div class="empty">부여된 영상 과제가 없어요.</div>`}
     </div>
 
     ${renderStudentAnswerSheets(stuId)}
