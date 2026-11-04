@@ -2593,8 +2593,7 @@ function renderDashboard(){
   <div class="grid-stats" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
     <div class="stat-card" style="cursor:pointer;" onclick="goto('classes')"><div class="num">${todaysClasses.length}</div><div class="lbl">오늘 수업 반</div></div>
     <div class="stat-card" style="cursor:pointer;" onclick="goto('hwreview')"><div class="num">${pendingHw}</div><div class="lbl">숙제 검토 대기</div></div>
-    <div class="stat-card" style="cursor:pointer;" onclick="currentSubState.qnaFilter='pending';goto('qna')"><div class="num">${pendingQ}</div><div class="lbl">답변 대기 질문</div></div>
-    ${autoUnseenQ?`<div class="stat-card" data-dash-auto="1" style="cursor:pointer;" onclick="currentSubState.qnaFilter='auto';goto('qna')"><div class="num">${autoUnseenQ}</div><div class="lbl">🤖 자동답변 확인 전</div></div>`:''}
+    <div class="stat-card" style="cursor:pointer;" onclick="currentSubState.qnaFilter='pending';goto('qna')"><div class="num" data-dash-qtodo="1">${pendingQ+autoUnseenQ}</div><div class="lbl">답변·확인 대기 질문</div></div>
     ${stadSettlementPending.length ? `<div class="stat-card" style="cursor:pointer;" onclick="goto('stadAdmin')"><div class="num">${stadSettlementPending.length}</div><div class="lbl">STAD 정산 대기</div></div>` : ''}
   </div>
   <div class="card" style="${todayHwNotDone.length&&!todayHwLoading?'border-color:var(--red);':''}">
@@ -6842,16 +6841,17 @@ async function markAllAutoAnswersSeen(){
 function renderQnaDirector(){
   const filter = currentSubState.qnaFilter || 'pending';
   const autoUnseenCount = db.questions.filter(questionAutoUnseen).length;
-  const list = db.questions.filter(q=> filter==='all' ? true : filter==='auto' ? questionAutoUnseen(q) : q.status==='대기').sort((a,b)=>b.date.localeCompare(a.date));
+  const todoCount = db.questions.filter(q=>q.status==='대기'||questionAutoUnseen(q)).length;
+  // 기본 목록 "답변·확인 대기" = 답변이 필요한 질문 + 자동으로 답변된 뒤 아직 확인 안 한 질문
+  const list = db.questions.filter(q=> filter==='all' ? true : (q.status==='대기'||questionAutoUnseen(q))).sort((a,b)=>b.date.localeCompare(a.date));
   return `
   <h1 class="page-title">질문 게시판</h1>
   <p class="page-sub">모든 학생의 질문을 한 화면에서 확인하고 답변해주세요.</p>
   <div class="tabs2">
-    <button class="${filter==='pending'?'active':''}" onclick="currentSubState.qnaFilter='pending';render();">답변대기</button>
-    <button class="${filter==='auto'?'active':''}" data-qna-tab="auto" onclick="currentSubState.qnaFilter='auto';render();">🤖 자동답변 확인${autoUnseenCount?` (${autoUnseenCount})`:''}</button>
+    <button class="${filter!=='all'?'active':''}" data-qna-tab="todo" onclick="currentSubState.qnaFilter='pending';render();">답변·확인 대기${todoCount?` (${todoCount})`:''}</button>
     <button class="${filter==='all'?'active':''}" onclick="currentSubState.qnaFilter='all';render();">전체</button>
   </div>
-  ${filter==='auto'?`<div style="font-size:12px;color:#6b6858;margin:8px 0;line-height:1.6;">학습보관함에서 문제 출처가 정확히 일치해 <b>자동으로 답변된 질문</b>이에요. 어떤 학생이 어떤 문제를 질문했는지 확인하신 뒤 "확인했어요"를 누르면 이 목록에서 빠져요.${autoUnseenCount?` <button class="btn sm outline" data-qna-allseen onclick="markAllAutoAnswersSeen()">모두 확인했어요</button>`:''}</div>`:''}
+  ${filter!=='all' && autoUnseenCount?`<div style="font-size:12px;color:#6b6858;margin:8px 0;line-height:1.6;">🤖 표시가 있는 질문은 학습보관함에서 문제 출처가 정확히 일치해 <b>자동으로 답변된 질문</b>이에요. 내용을 보시고 <b>"확인했어요"</b>를 누르거나 직접 답변을 올리면 이 목록에서 빠져요. <button class="btn sm outline" data-qna-allseen onclick="markAllAutoAnswersSeen()">자동답변 ${autoUnseenCount}건 모두 확인했어요</button></div>`:''}
   ${list.length? list.map(q=>{
     const s=studentById(q.studentId);
     const autoA=questionIsAutoAnswered(q);
@@ -6890,7 +6890,7 @@ async function answerQuestion(qId){
   const answerPhotos = [...(q.answerPhotos||[])];
   await handleMultiPhotoInput(photosInput, (durl)=>answerPhotos.push(durl), 1000, 0.7);
   if(embeddedPhotoLimitExceeded({...q, answerText, answerPhotos}, 950)){ alert('답변 사진 용량이 너무 커요. 사진 개수를 줄여서 다시 시도해주세요.'); return; }
-  const ok=await fsUpdate('questions', qId, {answerText, answerPhotos, status:'답변완료'});
+  const ok=await fsUpdate('questions', qId, {answerText, answerPhotos, status:'답변완료', autoAnswerSeen:true, autoAnswerSeenAt:new Date().toISOString()});
   if(ok) syncAnsweredQuestionToProblemRepo(qId,answerText,answerPhotos).catch(e=>console.error(e));
 }
 
