@@ -1934,7 +1934,7 @@ function weekDates(weekStart){
    휴대폰은 앱 탭을 며칠씩 열어 둔 채로 쓰기 때문에, 고친 버전이 올라가도 예전 화면이 계속 돌 수 있다.
    예전 화면은 지금 보안 규칙과 맞지 않아 저장이 막힐 수 있으므로, 새 버전이 올라오면 새로 고침을 안내한다.
    (배포할 때마다 APP_BUILD 값을 바꾼다) */
-const APP_BUILD='2026-11-03b';
+const APP_BUILD='2026-11-04a';
 let newVersionReady=false, versionCheckAt=0;
 async function checkAppVersion(force){
   if(location.protocol==='file:') return false;
@@ -2494,9 +2494,9 @@ function ensureDashWeekPlans(wk){
 function renderDashboard(){
   const dow = new Date().getDay();
   const todaysClasses = db.classes.filter(c=> (c.dayGroup==='mon-wed'&&(dow===1||dow===3)) || (c.dayGroup==='tue-thu'&&(dow===2||dow===4)) );
-  let pendingHw=0, pendingQ=0;
+  let pendingHw=0, pendingQ=0, autoUnseenQ=0;
   Object.values(db.submissions).forEach(s=>{ if(submissionIsPending(s)) pendingHw++; });
-  db.questions.forEach(q=>{ if(q.status==='대기') pendingQ++; });
+  db.questions.forEach(q=>{ if(q.status==='대기') pendingQ++; if(questionAutoUnseen(q)) autoUnseenQ++; });
   const stadMonth = STAD_MONTH();
   const stadToday = STAD_TODAY();
   const stadApprovedToday = Object.values(db.stadApplications||{}).filter(a=>a.status==='approved' && a.month===stadMonth)
@@ -2593,7 +2593,7 @@ function renderDashboard(){
   <div class="grid-stats" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
     <div class="stat-card" style="cursor:pointer;" onclick="goto('classes')"><div class="num">${todaysClasses.length}</div><div class="lbl">오늘 수업 반</div></div>
     <div class="stat-card" style="cursor:pointer;" onclick="goto('hwreview')"><div class="num">${pendingHw}</div><div class="lbl">숙제 검토 대기</div></div>
-    <div class="stat-card" style="cursor:pointer;" onclick="currentSubState.qnaFilter='pending';goto('qna')"><div class="num">${pendingQ}</div><div class="lbl">답변 대기 질문</div></div>
+    <div class="stat-card" style="cursor:pointer;" onclick="currentSubState.qnaFilter='pending';goto('qna')"><div class="num" data-dash-qtodo="1">${pendingQ+autoUnseenQ}</div><div class="lbl">답변·확인 대기 질문</div></div>
     ${stadSettlementPending.length ? `<div class="stat-card" style="cursor:pointer;" onclick="goto('stadAdmin')"><div class="num">${stadSettlementPending.length}</div><div class="lbl">STAD 정산 대기</div></div>` : ''}
   </div>
   <div class="card" style="${todayHwNotDone.length&&!todayHwLoading?'border-color:var(--red);':''}">
@@ -6821,26 +6821,49 @@ async function saveEditQuestion(qId){
 }
 
 /* ---------------- QNA DIRECTOR ---------------- */
+// 학습보관함에서 출처가 정확히 일치해 학생에게 자동으로 답변된 질문(원장이 직접 답한 게 아님). 새 필드 없이 자동 답변 문구로 구분한다.
+const AUTO_ANSWER_TEXT_PREFIX='학습보관함에서 출처가 정확히 일치하는 풀이를 연결했어요';
+function questionIsAutoAnswered(q){ return !!q && q.status==='답변완료' && String(q.answerText||'').startsWith(AUTO_ANSWER_TEXT_PREFIX); }
+function questionAutoUnseen(q){ return questionIsAutoAnswered(q) && !q.autoAnswerSeen; }
+async function markAutoAnswerSeen(qId){
+  const q=db.questions.find(x=>x.id===qId); if(!q) return;
+  const ok=await fsUpdate('questions',qId,{autoAnswerSeen:true,autoAnswerSeenAt:new Date().toISOString()});
+  if(ok){ q.autoAnswerSeen=true; render(); }
+}
+async function markAllAutoAnswersSeen(){
+  const list=db.questions.filter(questionAutoUnseen);
+  if(!list.length) return;
+  if(!confirm(`자동 답변된 질문 ${list.length}건을 모두 "확인했어요"로 표시할까요?\n(질문·답변 내용은 바뀌지 않아요)`)) return;
+  const iso=new Date().toISOString();
+  for(const q of list){ const ok=await fsUpdate('questions',q.id,{autoAnswerSeen:true,autoAnswerSeenAt:iso}); if(ok) q.autoAnswerSeen=true; }
+  render();
+}
 function renderQnaDirector(){
   const filter = currentSubState.qnaFilter || 'pending';
-  const list = db.questions.filter(q=> filter==='all' ? true : q.status==='대기').sort((a,b)=>b.date.localeCompare(a.date));
+  const autoUnseenCount = db.questions.filter(questionAutoUnseen).length;
+  const todoCount = db.questions.filter(q=>q.status==='대기'||questionAutoUnseen(q)).length;
+  // 기본 목록 "답변·확인 대기" = 답변이 필요한 질문 + 자동으로 답변된 뒤 아직 확인 안 한 질문
+  const list = db.questions.filter(q=> filter==='all' ? true : (q.status==='대기'||questionAutoUnseen(q))).sort((a,b)=>b.date.localeCompare(a.date));
   return `
   <h1 class="page-title">질문 게시판</h1>
   <p class="page-sub">모든 학생의 질문을 한 화면에서 확인하고 답변해주세요.</p>
   <div class="tabs2">
-    <button class="${filter==='pending'?'active':''}" onclick="currentSubState.qnaFilter='pending';render();">답변대기</button>
+    <button class="${filter!=='all'?'active':''}" data-qna-tab="todo" onclick="currentSubState.qnaFilter='pending';render();">답변·확인 대기${todoCount?` (${todoCount})`:''}</button>
     <button class="${filter==='all'?'active':''}" onclick="currentSubState.qnaFilter='all';render();">전체</button>
   </div>
+  ${filter!=='all' && autoUnseenCount?`<div style="font-size:12px;color:#6b6858;margin:8px 0;line-height:1.6;">🤖 표시가 있는 질문은 학습보관함에서 문제 출처가 정확히 일치해 <b>자동으로 답변된 질문</b>이에요. 내용을 보시고 <b>"확인했어요"</b>를 누르거나 직접 답변을 올리면 이 목록에서 빠져요. <button class="btn sm outline" data-qna-allseen onclick="markAllAutoAnswersSeen()">자동답변 ${autoUnseenCount}건 모두 확인했어요</button></div>`:''}
   ${list.length? list.map(q=>{
     const s=studentById(q.studentId);
+    const autoA=questionIsAutoAnswered(q);
     return `<div class="card">
-      <div class="row between"><b>${s?s.name:'(삭제된 학생)'}</b><span class="badge ${q.status==='답변완료'?'green':'yellow'}">${q.status}</span></div>
+      <div class="row between"><b>${s?s.name:'(삭제된 학생)'}</b><span>${autoA?`<span class="badge ${q.autoAnswerSeen?'gray':'yellow'}" data-qna-auto="${q.id}">🤖 자동답변${q.autoAnswerSeen?' · 확인함':''}</span> `:''}<span class="badge ${q.status==='답변완료'?'green':'yellow'}">${q.status}</span></span></div>
       <div style="font-size:12px;color:#9c9880;margin:2px 0 4px;">${fmtDate(q.date)}</div>
       ${questionSourceLabel(q)?`<div style="font-size:12px;background:#f6f4ec;border:1px solid var(--line);border-radius:8px;padding:7px 9px;margin-bottom:8px;"><b>문제 출처</b> · ${escapeHtml(questionSourceLabel(q))}</div>`:''}
       ${q.solutionLibraryLookupFailed?`<div style="font-size:11px;color:#9a5b00;margin-bottom:7px;">학습보관함 자동 조회를 못 했어요. 보관함에서 직접 찾아 확인해주세요.</div>`:''}
       <div>${q.text}</div>
       <div class="thumbs">${(q.photos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','photos',${i})">`).join('')}</div>
       ${(q.photos||[]).length>1 ? `<button class="btn sm outline" style="margin-top:6px;" onclick="downloadAllPhotos(db.questions.find(x=>x.id==='${q.id}').photos, '${s?s.name:'question'}_${q.date}', this)">📥 사진 모두 받기</button>` : ''}
+      ${questionAutoUnseen(q)?`<div style="margin-top:8px;"><button class="btn sm gold" data-qna-seen="${q.id}" onclick="markAutoAnswerSeen('${q.id}')">✓ 확인했어요</button></div>`:''}
       <div style="margin-top:10px;">
         <textarea rows="2" placeholder="답변 메모" id="ans_${q.id}">${q.answerText||''}</textarea>
         <input type="file" accept="image/*" multiple id="ansPhoto_${q.id}" style="margin-top:6px;">
@@ -6867,7 +6890,7 @@ async function answerQuestion(qId){
   const answerPhotos = [...(q.answerPhotos||[])];
   await handleMultiPhotoInput(photosInput, (durl)=>answerPhotos.push(durl), 1000, 0.7);
   if(embeddedPhotoLimitExceeded({...q, answerText, answerPhotos}, 950)){ alert('답변 사진 용량이 너무 커요. 사진 개수를 줄여서 다시 시도해주세요.'); return; }
-  const ok=await fsUpdate('questions', qId, {answerText, answerPhotos, status:'답변완료'});
+  const ok=await fsUpdate('questions', qId, {answerText, answerPhotos, status:'답변완료', autoAnswerSeen:true, autoAnswerSeenAt:new Date().toISOString()});
   if(ok) syncAnsweredQuestionToProblemRepo(qId,answerText,answerPhotos).catch(e=>console.error(e));
 }
 
