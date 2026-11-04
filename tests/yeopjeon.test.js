@@ -28,14 +28,14 @@ const results = []; const check = (n, ok, d) => { results.push(ok); console.log(
   const stuM = () => page.evaluate(() => window.__store.students.stu_M);
   const logs = async () => ((await stuM()).yeopjeonLog || []);
   // ---- 자동 적립은 STAD만 ----
-  check('숙제가 인정돼 있어도 엽전 자동 적립 없음(수업 숙제 0), STAD만: 아침 2 + 저녁 1 = 3 (시작 전 11/2 제외)', (await cell('stu_M', 1)).trim() === '0' && (await cell('stu_M', 2)).trim() === '3' && (await cellN('[data-yj-total="stu_M"]')) === 3 && (await cellN('[data-yj-total="stu_S"]')) === 0);
+  check('숙제가 인정돼 있어도 엽전 자동 적립 없음, STAD도 정산 전에는 0(대기 3: 아침 2 + 저녁 1, 시작 전 11/2 제외)', (await cell('stu_M', 1)).trim() === '0' && (await page.locator('[data-yj-stad-pending="stu_M"]').innerText()).includes('정산 대기 3') && (await cellN('[data-yj-total="stu_M"]')) === 0 && (await cellN('[data-yj-total="stu_S"]')) === 0);
   // ---- 반 페이지 "엽전 +1" 버튼 ----
   await page.evaluate(() => { window.__page = 'row'; window.render(); });
   const btn = page.locator('[data-yj-class="stu_M"]');
   check('반 페이지: 숙제 현황 아래에 "🪙 엽전 +1" 버튼(아직 안 줌)', (await btn.count()) === 1 && (await btn.innerText()).includes('엽전 +1') && (await btn.getAttribute('data-given')) === '0');
   await btn.click(); await page.waitForTimeout(300);
   let lg = await logs();
-  check('누르면 그 반·그 수업일로 1개 기록(kind:class), 버튼이 "지급됨"으로, 배지 합계 4', lg.length === 1 && lg[0].kind === 'class' && lg[0].clsId === 'cls_x' && lg[0].date === '2026-11-09' && lg[0].delta === 1 && (await btn.innerText()).includes('지급됨') && (await page.locator('[data-yj="stu_M"]').innerText()).includes('4'));
+  check('누르면 그 반·그 수업일로 1개 기록(kind:class), 버튼이 "지급됨"으로, 배지 합계 4', lg.length === 1 && lg[0].kind === 'class' && lg[0].clsId === 'cls_x' && lg[0].date === '2026-11-09' && lg[0].delta === 1 && (await btn.innerText()).includes('지급됨') && (await page.locator('[data-yj="stu_M"]').innerText()).includes('1'));
   await btn.click(); await page.waitForTimeout(300);
   check('지급됨 버튼을 다시 누르면(확인 후) 취소 — 같은 수업에 두 번 쌓이지 않음', (await logs()).length === 0 && (await btn.innerText()).includes('엽전 +1') && dialogs.some((d) => d.includes('취소할까요')));
   await btn.click(); await page.waitForTimeout(300);
@@ -44,18 +44,25 @@ const results = []; const check = (n, ok, d) => { results.push(ok); console.log(
   await page.evaluate(() => { session = { mode: 'student', studentId: 'stu_M' }; window.render(); });
   check('원장 전용: 학생 화면에는 버튼이 없음', (await page.locator('[data-yj-class]').count()) === 0);
   await page.evaluate(() => { session = { mode: 'director' }; window.__page = 'admin'; window.render(); });
-  check('엽전 탭: 수업 숙제 2 + STAD 3 = 5', (await cell('stu_M', 1)).trim() === '2' && (await cellN('[data-yj-total="stu_M"]')) === 5 && (await cellN('[data-yj-total="stu_S"]')) === 0);
+  check('엽전 탭: 수업 숙제 2, STAD는 아직 대기라 합계 2', (await cell('stu_M', 1)).trim() === '2' && (await cellN('[data-yj-total="stu_M"]')) === 2);
+  // ---- STAD 정산하기 (달 선택 → 확인 → 정산하기) ----
+  check('정산 카드: 달 선택(2026-11), 학생별 횟수 확인 목록, 버튼 "2026-11 정산하기 (3개)"', (await page.locator('#yjStadMonth').inputValue()) === '2026-11' && (await page.locator('[data-yj-stad-list]').innerText()).includes('가짜복수 출석 2 · 정산 1 → +3') && (await page.locator('[data-yj-stad-all]').innerText()).includes('2026-11 정산하기 (3개)'));
+  dialogs.length = 0;
+  await page.locator('[data-yj-stad-all]').click(); await page.waitForTimeout(400);
+  let sl = (await logs()).filter((x) => x.kind === 'stad');
+  check('정산하기: 확인창 후 그 달 몫 3개가 한 번에(학생 1건) 기록, 합계 5, 대기 표시 사라짐, 다른 학생 기록 없음', dialogs.some((d) => d.includes('2026-11') && d.includes('3개')) && sl.length === 1 && sl[0].month === '2026-11' && sl[0].delta === 3 && (await cellN('[data-yj-total="stu_M"]')) === 5 && (await page.locator('[data-yj-stad-pending]').count()) === 0 && ((await page.evaluate(() => window.__store.students.stu_S.yeopjeonLog)) || []).length === 0);
+  check('정산 후 버튼은 비활성, 다시 정산해도 중복 지급 없음', (await page.locator('[data-yj-stad-all]').isDisabled()) && (await page.evaluate(async () => { await settleStadYeopjeon('2026-11'); return window.__store.students.stu_M.yeopjeonLog.filter((x) => x.kind === 'stad').length; })) === 1);
   // ---- 수기 기록 ----
   await page.locator('#yjN_stu_M').fill('2'); await page.locator('#yjR_stu_M').fill('보너스');
   await page.locator('[data-yj-add="stu_M"]').click(); await page.waitForTimeout(300);
   let st = await stuM();
-  check('＋ 지급 2개: students 문서에 수기 기록만 추가(다른 필드 그대로), 합계 7, 수기 +2', st.yeopjeonLog.length === 3 && st.yeopjeonLog[2].delta === 2 && st.yeopjeonLog[2].reason === '보너스' && st.name === '가짜복수' && (await cellN('[data-yj-total="stu_M"]')) === 7 && (await cell('stu_M', 3)).trim() === '+2');
+  check('＋ 지급 2개: students 문서에 수기 기록만 추가(다른 필드 그대로), 합계 7, 수기 +2', st.yeopjeonLog.length === 4 && st.yeopjeonLog[3].delta === 2 && st.yeopjeonLog[3].reason === '보너스' && st.name === '가짜복수' && (await cellN('[data-yj-total="stu_M"]')) === 7 && (await cell('stu_M', 3)).trim() === '+2');
   await page.locator('#yjN_stu_M').fill('3'); await page.locator('[data-yj-sub="stu_M"]').click(); await page.waitForTimeout(300);
   check('－ 차감 3개: 합계 4', (await cellN('[data-yj-total="stu_M"]')) === 4);
   await page.locator('#yjN_stu_M').fill('0'); await page.locator('[data-yj-add="stu_M"]').click(); await page.waitForTimeout(150);
-  check('0개 입력은 저장하지 않음', (await logs()).length === 4);
+  check('0개 입력은 저장하지 않음', (await logs()).length === 5);
   await page.locator('[data-yj-log]').first().locator('button').click(); await page.waitForTimeout(300);
-  check('내역 삭제(확인 후): 3건 남고 합계 7로 되돌아감', (await logs()).length === 3 && (await cellN('[data-yj-total="stu_M"]')) === 7);
+  check('내역 삭제(확인 후): 4건 남고 합계 7로 되돌아감', (await logs()).length === 4 && (await cellN('[data-yj-total="stu_M"]')) === 7);
   // ---- 학생 화면 ----
   await page.evaluate(() => {
     session = { mode: 'student', studentId: 'stu_M' }; yjPool.stad = {};
@@ -68,7 +75,7 @@ const results = []; const check = (n, ok, d) => { results.push(ok); console.log(
   await page.evaluate(() => { session = { mode: 'director' }; db.students = [JSON.parse(JSON.stringify(window.__store.students.stu_M)), JSON.parse(JSON.stringify(window.__store.students.stu_S))]; db.students.forEach((x) => { x.status = 'active'; }); yjPool.state = 'ready'; yjPool.stad = JSON.parse(JSON.stringify(window.__store.stadDaily)); db.stadDaily = {}; window.__page = 'admin'; window.render(); });
   check('원장 화면에 교환 안내(5종)와 학생별 선물 선택', (await page.locator('[data-yj-guide] [data-yj-reward]').count()) === 5 && (await page.locator('#yjItem_stu_M option').count()) === 6);
   // ---- 교환(학생이 낸 실물 + 온라인) : 기록 초기화 → 온라인 3(STAD) ----
-  await page.evaluate(() => { window.__store.students.stu_M.yeopjeonLog = []; db.students.find((x) => x.id === 'stu_M').yeopjeonLog = []; window.render(); });
+  await page.evaluate(() => { window.__store.students.stu_M.yeopjeonLog = [{ id: 'base', date: '2026-11-09', at: '2026-11-09T00:00:00Z', delta: 3, reason: '시작' }]; db.students.find((x) => x.id === 'stu_M').yeopjeonLog = JSON.parse(JSON.stringify(window.__store.students.stu_M.yeopjeonLog)); window.render(); });
   check('초기화 후 온라인 3, 실물 칸/🪙 실물 지급 버튼 없음', (await cellN('[data-yj-total="stu_M"]')) === 3 && (await page.locator('[data-yj-offline],[data-yj-offadd]').count()) === 0);
   dialogs.length = 0;
   await page.locator('#yjItem_stu_M').selectOption('cvs5'); await page.locator('#yjOff_stu_M').fill('30'); await page.locator('[data-yj-exchange="stu_M"]').click(); await page.waitForTimeout(300);
