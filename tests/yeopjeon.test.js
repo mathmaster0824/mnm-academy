@@ -1,4 +1,4 @@
-/* 엽전: 숙제 인정 1건당 1개 + STAD 자동 적립 + 원장 수기 기록, 학생 화면. Playwright + 메모리 Firestore 가짜(가짜 학생·기록). 운영 접속 없음. */
+/* 엽전: 수업 숙제 엽전(반 페이지 버튼) + STAD 자동 적립 + 원장 수기 기록/교환, 학생 화면. Playwright + 메모리 Firestore 가짜(가짜 학생·기록). 운영 접속 없음. */
 const { chromium } = require('playwright'); const path = require('path'); const STUB = require('./helpers/firestore-stub.js');
 const results = []; const check = (n, ok, d) => { results.push(ok); console.log(`YEOPJEON ${ok ? '✔' : '✖'} ${n}${ok ? '' : '  ← ' + (d || '')}`); };
 (async () => {
@@ -12,104 +12,89 @@ const results = []; const check = (n, ok, d) => { results.push(ok); console.log(
     session = { mode: 'director' }; window.todayISO = () => '2026-11-09'; window.academicTodayISO = () => '2026-11-09';
     db.students = [{ id: 'stu_M', name: '가짜복수', code: '1', classId: 'cls_x', status: 'active', grade: '중1' }, { id: 'stu_S', name: '가짜단일', code: '2', classId: 'cls_x', status: 'active', grade: '중1' }];
     db.classes = [{ id: 'cls_x', name: '월수반', dayGroup: 'mon-wed', studentIds: ['stu_M', 'stu_S'] }, { id: 'cls_y', name: '화목반', dayGroup: 'tue-thu', studentIds: ['stu_M'] }];
+    // 숙제가 인정돼 있어도 엽전은 자동으로 쌓이지 않는다(원장님이 반 페이지에서 직접 누른다)
     const S = (id, cls, date, status) => ({ studentId: id, classId: cls, date, status });
-    const subs = {
-      // 같은 날(11/5) 두 반 숙제 모두 인정 → 2개, 11/6 월수반만 인정 → 1개, 11/7 미인증 → 0, 11/3(시작 전) 인정 → 0, 11/8 검토대기 → 0
-      'stu_M_2026-11-05': S('stu_M', 'cls_x', '2026-11-05', '확인'), 'stu_M_cls_y_2026-11-05': S('stu_M', 'cls_y', '2026-11-05', '확인'),
-      'stu_M_2026-11-06': S('stu_M', 'cls_x', '2026-11-06', '확인'), 'stu_M_2026-11-07': S('stu_M', 'cls_x', '2026-11-07', '미인증'),
-      'stu_M_2026-11-03': S('stu_M', 'cls_x', '2026-11-03', '확인'), 'stu_M_2026-11-08': S('stu_M', 'cls_x', '2026-11-08', '대기'),
-      'stu_S_2026-11-05': S('stu_S', 'cls_x', '2026-11-05', '확인'),
-    };
+    const subs = { 'stu_M_2026-11-05': S('stu_M', 'cls_x', '2026-11-05', '확인'), 'stu_M_2026-11-06': S('stu_M', 'cls_x', '2026-11-06', '확인'), 'stu_S_2026-11-05': S('stu_S', 'cls_x', '2026-11-05', '확인') };
     const stad = { 'stu_M_2026-11-05': { studentId: 'stu_M', date: '2026-11-05', attended: true, settlementSubmittedAt: 'x' }, 'stu_M_2026-11-06': { studentId: 'stu_M', date: '2026-11-06', attended: true }, 'stu_M_2026-11-02': { studentId: 'stu_M', date: '2026-11-02', attended: true } };
     window.__store.submissions = JSON.parse(JSON.stringify(subs)); window.__store.stadDaily = JSON.parse(JSON.stringify(stad));
     window.__store.students = Object.fromEntries(db.students.map((s) => [s.id, JSON.parse(JSON.stringify(s))]));
-    db.submissions = {}; db.stadDaily = {};     // 원장 화면은 최근 기록만 구독 → 나머지는 서버에서 따로 읽는다
+    db.submissions = JSON.parse(JSON.stringify(subs)); db.stadDaily = {};
     window.render = () => { document.getElementById('mainArea').innerHTML = window.__page === 'my' ? renderMyYeopjeon('stu_M') : window.__page === 'row' ? renderClassRow(db.classes[0], db.students[0], '2026-11-09', {}, '', '', false) : renderYeopjeonAdmin(); };
     window.__page = 'admin'; window.render();
   });
   await page.waitForFunction(() => yjPool.state === 'ready'); await page.waitForTimeout(100);
   const cell = (id, i) => page.locator(`tr[data-yj-row="${id}"] td`).nth(i).innerText();
-  check('복수 반 학생: 같은 날 두 반 숙제 인정은 2개(반마다 1개) + 11/6 1개 = 숙제 3개', (await cell('stu_M', 1)).trim() === '3', await cell('stu_M', 1));
-  check('미인증·검토대기·시작일(11/4) 이전 인정은 세지 않음', (await cell('stu_M', 1)).trim() === '3');
-  check('STAD: 아침 2(11/5·11/6) + 저녁 1(11/5) = 3, 시작 전(11/2)은 제외', (await cell('stu_M', 2)).trim() === '3', await cell('stu_M', 2));
-  check('합계 = 숙제 3 + STAD 3 = 6 (영상 숙제는 포함 안 함), 단일 반 학생은 1', (await page.locator('[data-yj-total="stu_M"]').innerText()) === '6' && (await page.locator('[data-yj-total="stu_S"]').innerText()) === '1');
-  // 수기 기록
-  await page.locator('#yjN_stu_M').fill('2'); await page.locator('#yjR_stu_M').fill('실물 보너스');
-  await page.locator('[data-yj-add="stu_M"]').click(); await page.waitForTimeout(300);
-  let st = await page.evaluate(() => window.__store.students.stu_M);
-  check('＋ 지급 2개: students 문서에 수기 기록만 추가 저장(다른 필드 그대로)', (st.yeopjeonLog || []).length === 1 && st.yeopjeonLog[0].delta === 2 && st.yeopjeonLog[0].reason === '실물 보너스' && st.name === '가짜복수');
-  check('합계가 8로 바뀌고 수기 +2 표시, 내역 목록에 나타남', (await page.locator('[data-yj-total="stu_M"]').innerText()) === '8' && (await page.locator('[data-yj-log]').count()) === 1);
-  await page.locator('#yjN_stu_M').fill('3'); await page.locator('[data-yj-sub="stu_M"]').click(); await page.waitForTimeout(300);
-  check('－ 사용 3개: 합계 5', (await page.locator('[data-yj-total="stu_M"]').innerText()) === '5');
-  await page.locator('#yjN_stu_M').fill('0'); await page.locator('[data-yj-add="stu_M"]').click(); await page.waitForTimeout(150);
-  check('0개 입력은 저장하지 않음', ((await page.evaluate(() => window.__store.students.stu_M.yeopjeonLog)) || []).length === 2);
-  await page.locator('[data-yj-log]').first().locator('button').click(); await page.waitForTimeout(300);
-  check('수기 기록 삭제(확인 후): 1건 남고 합계 되돌아감', ((await page.evaluate(() => window.__store.students.stu_M.yeopjeonLog)) || []).length === 1);
-  // 인정 취소 → 엽전 감소 (원장이 미인증으로 바꾸면)
-  await page.evaluate(() => { yjPool.subs['stu_M_2026-11-06'].status = '미인증'; window.render(); });
-  check('숙제 인정이 취소(미인증)되면 그 엽전도 빠짐', (await cell('stu_M', 1)).trim() === '2');
-  // 반 카드 배지
-  await page.evaluate(() => { window.__page = 'row'; window.render(); });
-  check('반 출석부 학생 카드에 🪙 합계 배지', (await page.locator('[data-yj="stu_M"]').count()) === 1 && (await page.locator('[data-yj="stu_M"]').innerText()).includes('🪙'));
-  // 학생 화면(본인 데이터만)
-  await page.evaluate(() => {
-    session = { mode: 'student', studentId: 'stu_M' }; yjPool.subs = {}; yjPool.stad = {}; yjPool.state = 'idle';
-    db.submissions = JSON.parse(JSON.stringify(window.__store.submissions)); db.submissions['stu_M_2026-11-06'].status = '확인';
-    db.stadDaily = JSON.parse(JSON.stringify(window.__store.stadDaily)); db.students = [window.__store.students.stu_M];
-    window.__page = 'my'; window.render();
-  });
-  const mine = await page.locator('[data-my-yj]').innerText();
-  check('학생 화면 "내 엽전": 합계(숙제 3 + STAD 3 + 선생님 기록 +2 = 8)와 구성이 보임', (await page.locator('[data-my-yj-total]').innerText()) === '8개' && mine.includes('숙제 인정 3개') && mine.includes('STAD 3개') && mine.includes('+2'), mine);
-  // ---- 교환 안내 / 경고삭제권 월 1회 ----
-  check('학생 카드에 교환 안내 5종(가격 포함)과 경고삭제권 월 1회 문구, 진행 상태', (await page.locator('[data-yj-reward]').count()) === 5 && mine !== undefined && (await page.locator('[data-my-yj]').innerText()).includes('한 달에 1번만') && (await page.locator('[data-my-yj]').innerText()).includes('30개') && (await page.locator('[data-my-yj]').innerText()).includes('150개'));
-  const st8 = await page.locator('[data-yj-reward="cvs5"]').innerText();
-  check('합계 8개: 편의점 5,000원(30)은 "온라인 22개 부족"', st8.includes('온라인 22개 부족'), st8);
-  await page.evaluate(() => { session = { mode: 'director' }; db.students = [JSON.parse(JSON.stringify(window.__store.students.stu_M)), JSON.parse(JSON.stringify(window.__store.students.stu_S))]; db.students.forEach((x) => { x.status = 'active'; }); yjPool.state = 'ready'; yjPool.subs = JSON.parse(JSON.stringify(window.__store.submissions)); yjPool.stad = JSON.parse(JSON.stringify(window.__store.stadDaily)); db.submissions = {}; db.stadDaily = {}; window.__page = 'admin'; window.render(); });
-  check('원장 화면에 교환 안내 카드(5종)와 학생별 상품 선택', (await page.locator('[data-yj-guide] [data-yj-reward]').count()) === 5 && (await page.locator('#yjItem_stu_M option').count()) === 6);
   const cellN = async (sel) => Number(await page.locator(sel).innerText());
   const stuM = () => page.evaluate(() => window.__store.students.stu_M);
-  // 기록 초기화(온라인 6)
+  const logs = async () => ((await stuM()).yeopjeonLog || []);
+  // ---- 자동 적립은 STAD만 ----
+  check('숙제가 인정돼 있어도 엽전 자동 적립 없음(수업 숙제 0), STAD만: 아침 2 + 저녁 1 = 3 (시작 전 11/2 제외)', (await cell('stu_M', 1)).trim() === '0' && (await cell('stu_M', 2)).trim() === '3' && (await cellN('[data-yj-total="stu_M"]')) === 3 && (await cellN('[data-yj-total="stu_S"]')) === 0);
+  // ---- 반 페이지 "엽전 +1" 버튼 ----
+  await page.evaluate(() => { window.__page = 'row'; window.render(); });
+  const btn = page.locator('[data-yj-class="stu_M"]');
+  check('반 페이지: 숙제 현황 아래에 "🪙 엽전 +1" 버튼(아직 안 줌)', (await btn.count()) === 1 && (await btn.innerText()).includes('엽전 +1') && (await btn.getAttribute('data-given')) === '0');
+  await btn.click(); await page.waitForTimeout(300);
+  let lg = await logs();
+  check('누르면 그 반·그 수업일로 1개 기록(kind:class), 버튼이 "지급됨"으로, 배지 합계 4', lg.length === 1 && lg[0].kind === 'class' && lg[0].clsId === 'cls_x' && lg[0].date === '2026-11-09' && lg[0].delta === 1 && (await btn.innerText()).includes('지급됨') && (await page.locator('[data-yj="stu_M"]').innerText()).includes('4'));
+  await btn.click(); await page.waitForTimeout(300);
+  check('지급됨 버튼을 다시 누르면(확인 후) 취소 — 같은 수업에 두 번 쌓이지 않음', (await logs()).length === 0 && (await btn.innerText()).includes('엽전 +1') && dialogs.some((d) => d.includes('취소할까요')));
+  await btn.click(); await page.waitForTimeout(300);
+  await page.evaluate(async () => { await toggleClassYeopjeon('cls_y', 'stu_M', '2026-11-09'); });
+  check('다른 반(화목반) 수업은 따로 1개 더 — 반마다 1개', (await logs()).filter((x) => x.kind === 'class').length === 2);
+  await page.evaluate(() => { session = { mode: 'student', studentId: 'stu_M' }; window.render(); });
+  check('원장 전용: 학생 화면에는 버튼이 없음', (await page.locator('[data-yj-class]').count()) === 0);
+  await page.evaluate(() => { session = { mode: 'director' }; window.__page = 'admin'; window.render(); });
+  check('엽전 탭: 수업 숙제 2 + STAD 3 = 5', (await cell('stu_M', 1)).trim() === '2' && (await cellN('[data-yj-total="stu_M"]')) === 5 && (await cellN('[data-yj-total="stu_S"]')) === 0);
+  // ---- 수기 기록 ----
+  await page.locator('#yjN_stu_M').fill('2'); await page.locator('#yjR_stu_M').fill('보너스');
+  await page.locator('[data-yj-add="stu_M"]').click(); await page.waitForTimeout(300);
+  let st = await stuM();
+  check('＋ 지급 2개: students 문서에 수기 기록만 추가(다른 필드 그대로), 합계 7, 수기 +2', st.yeopjeonLog.length === 3 && st.yeopjeonLog[2].delta === 2 && st.yeopjeonLog[2].reason === '보너스' && st.name === '가짜복수' && (await cellN('[data-yj-total="stu_M"]')) === 7 && (await cell('stu_M', 3)).trim() === '+2');
+  await page.locator('#yjN_stu_M').fill('3'); await page.locator('[data-yj-sub="stu_M"]').click(); await page.waitForTimeout(300);
+  check('－ 차감 3개: 합계 4', (await cellN('[data-yj-total="stu_M"]')) === 4);
+  await page.locator('#yjN_stu_M').fill('0'); await page.locator('[data-yj-add="stu_M"]').click(); await page.waitForTimeout(150);
+  check('0개 입력은 저장하지 않음', (await logs()).length === 4);
+  await page.locator('[data-yj-log]').first().locator('button').click(); await page.waitForTimeout(300);
+  check('내역 삭제(확인 후): 3건 남고 합계 7로 되돌아감', (await logs()).length === 3 && (await cellN('[data-yj-total="stu_M"]')) === 7);
+  // ---- 학생 화면 ----
+  await page.evaluate(() => {
+    session = { mode: 'student', studentId: 'stu_M' }; yjPool.stad = {};
+    db.students = [window.__store.students.stu_M]; db.stadDaily = JSON.parse(JSON.stringify(window.__store.stadDaily)); window.__page = 'my'; window.render();
+  });
+  const mine = await page.locator('[data-my-yj]').innerText();
+  check('학생 화면: 합계 7개(수업 숙제 2 + STAD 3 + 선생님 기록 +2)', (await page.locator('[data-my-yj-total]').innerText()) === '7개' && mine.includes('수업 숙제 2개') && mine.includes('STAD 3개') && mine.includes('+2'), mine);
+  check('교환 안내 5종(가격)과 경고삭제권 월 1회 문구', (await page.locator('[data-yj-reward]').count()) === 5 && mine.includes('한 달에 1번만') && mine.includes('30개') && mine.includes('150개'));
+  check('편의점 5,000원(30)은 "온라인 23개 부족 (실물과 합쳐서 가능)"', (await page.locator('[data-yj-reward="cvs5"]').innerText()).includes('온라인 23개 부족') && mine.includes('수업 때 숙제를 다 해 오면'), mine);
+  await page.evaluate(() => { session = { mode: 'director' }; db.students = [JSON.parse(JSON.stringify(window.__store.students.stu_M)), JSON.parse(JSON.stringify(window.__store.students.stu_S))]; db.students.forEach((x) => { x.status = 'active'; }); yjPool.state = 'ready'; yjPool.stad = JSON.parse(JSON.stringify(window.__store.stadDaily)); db.stadDaily = {}; window.__page = 'admin'; window.render(); });
+  check('원장 화면에 교환 안내(5종)와 학생별 선물 선택', (await page.locator('[data-yj-guide] [data-yj-reward]').count()) === 5 && (await page.locator('#yjItem_stu_M option').count()) === 6);
+  // ---- 교환(학생이 낸 실물 + 온라인) : 기록 초기화 → 온라인 3(STAD) ----
   await page.evaluate(() => { window.__store.students.stu_M.yeopjeonLog = []; db.students.find((x) => x.id === 'stu_M').yeopjeonLog = []; window.render(); });
-  check('초기화 후 온라인 엽전 6, 실물 칸/🪙 실물 지급 버튼 없음', (await cellN('[data-yj-total="stu_M"]')) === 6 && (await page.locator('[data-yj-offline],[data-yj-offadd]').count()) === 0);
-  // 교환: 편의점 5,000원(30) 전부 학생이 실물로 냄 → 온라인 변화 없음, 확인창 없음
+  check('초기화 후 온라인 3, 실물 칸/🪙 실물 지급 버튼 없음', (await cellN('[data-yj-total="stu_M"]')) === 3 && (await page.locator('[data-yj-offline],[data-yj-offadd]').count()) === 0);
   dialogs.length = 0;
   await page.locator('#yjItem_stu_M').selectOption('cvs5'); await page.locator('#yjOff_stu_M').fill('30'); await page.locator('[data-yj-exchange="stu_M"]').click(); await page.waitForTimeout(300);
-  let m = await stuM(); let last = m.yeopjeonLog[m.yeopjeonLog.length - 1];
-  check('교환(실물 30 + 온라인 0): 온라인 그대로, offlineUsed 30 기록, 실물 보유 확인창 없음', last.item === 'cvs5' && last.offlineUsed === 30 && Math.abs(last.delta) === 0 && last.reason.includes('온라인 0 + 실물 30') && (await cellN('[data-yj-total="stu_M"]')) === 6 && !dialogs.some((d) => d.includes('실물')));
-  // 교환: 편의점 5,000원, 실물 10 → 온라인 20 차감 필요 but 온라인 6 → 확인창
+  let last = (await logs()).slice(-1)[0];
+  check('교환(실물 30 + 온라인 0): 온라인 그대로, offlineUsed 30, 실물 보유 확인창 없음', last.item === 'cvs5' && last.offlineUsed === 30 && Math.abs(last.delta) === 0 && last.reason.includes('온라인 0 + 실물 30') && (await cellN('[data-yj-total="stu_M"]')) === 3 && !dialogs.some((d) => d.includes('실물')));
   await page.locator('#yjItem_stu_M').selectOption('cvs10'); await page.locator('#yjOff_stu_M').fill('10');
-  const nBefore = (await stuM()).yeopjeonLog.length;
+  const nBefore = (await logs()).length;
   await page.evaluate(() => { window.__conf = window.confirm; window.confirm = () => false; });
   await page.locator('[data-yj-exchange="stu_M"]').click(); await page.waitForTimeout(250);
-  check('온라인이 모자라면 확인창이 뜨고 거절하면 기록 안 함', (await stuM()).yeopjeonLog.length === nBefore);
+  check('온라인이 모자라면 확인창이 뜨고 거절하면 기록 안 함', (await logs()).length === nBefore);
   await page.evaluate(() => { window.confirm = window.__conf; });
-  // 온라인이 충분한 교환: 편의점 5,000원, 실물 27 → 온라인 3 차감
-  await page.locator('#yjItem_stu_M').selectOption('cvs5'); await page.locator('#yjOff_stu_M').fill('27'); await page.locator('[data-yj-exchange="stu_M"]').click(); await page.waitForTimeout(300);
-  m = await stuM(); last = m.yeopjeonLog[m.yeopjeonLog.length - 1];
-  check('실물 27 + 온라인 3: delta -3, 온라인 6→3', last.delta === -3 && last.offlineUsed === 27 && (await cellN('[data-yj-total="stu_M"]')) === 3);
-  // 온라인 → 실물로 바꿔주기 2개
-  await page.locator('#yjN_stu_M').fill('2'); await page.locator('[data-yj-tooff="stu_M"]').click(); await page.waitForTimeout(300);
-  check('↔ 실물로 바꿔줌 2: 온라인 3→1', (await cellN('[data-yj-total="stu_M"]')) === 1);
-  // 학생 화면: 온라인만 표시, 안내 문구, 부족 문구
-  await page.evaluate(() => { window.__keep = { st: db.students }; session = { mode: 'student', studentId: 'stu_M' }; db.students = [window.__store.students.stu_M]; db.submissions = JSON.parse(JSON.stringify(window.__store.submissions)); db.stadDaily = JSON.parse(JSON.stringify(window.__store.stadDaily)); yjPool.subs = {}; yjPool.stad = {}; window.__page = 'my'; window.render(); });
-  const myTxt = await page.locator('[data-my-yj]').innerText();
-  check('학생 카드: 온라인 합계만 표시, "위 숫자는 온라인 엽전" 안내, 실물 칸 없음, 부족 시 실물과 합쳐 가능 문구', (await page.locator('[data-my-yj-total]').innerText()) === '1개' && (await page.locator('[data-my-yj-offline],[data-my-yj-online]').count()) === 0 && myTxt.includes('위 숫자는 온라인 엽전') && (await page.locator('[data-yj-reward="cvs5"]').innerText()).includes('실물 엽전과 합쳐서 가능'), myTxt);
-  await page.evaluate(() => { session = { mode: 'director' }; db.students = window.__keep.st; db.submissions = {}; db.stadDaily = {}; yjPool.state = 'ready'; yjPool.subs = JSON.parse(JSON.stringify(window.__store.submissions)); yjPool.stad = JSON.parse(JSON.stringify(window.__store.stadDaily)); window.__page = 'admin'; window.render(); });
-  // 선물 미선택·가격보다 많은 실물 입력
+  await page.locator('#yjN_stu_M').fill('1'); await page.locator('[data-yj-tooff="stu_M"]').click(); await page.waitForTimeout(300);
+  check('↔ 실물로 바꿔줌 1: 온라인 3→2', (await cellN('[data-yj-total="stu_M"]')) === 2);
+  await page.locator('#yjItem_stu_M').selectOption('cvs5'); await page.locator('#yjOff_stu_M').fill('28'); await page.locator('[data-yj-exchange="stu_M"]').click(); await page.waitForTimeout(300);
+  last = (await logs()).slice(-1)[0];
+  check('실물 28 + 온라인 2: delta -2, 온라인 2→0', last.delta === -2 && last.offlineUsed === 28 && (await cellN('[data-yj-total="stu_M"]')) === 0);
   dialogs.length = 0;
   await page.locator('#yjItem_stu_M').selectOption(''); await page.locator('[data-yj-exchange="stu_M"]').click(); await page.waitForTimeout(150);
   await page.locator('#yjItem_stu_M').selectOption('cvs5'); await page.locator('#yjOff_stu_M').fill('99'); await page.locator('[data-yj-exchange="stu_M"]').click(); await page.waitForTimeout(150);
   check('선물 미선택/실물이 가격보다 많으면 안내 후 기록 안 함', dialogs.some((d) => d.includes('먼저 골라')) && dialogs.some((d) => d.includes('보다 많이 낼 수 없어요')));
-  // 경고삭제권 50 = 실물 15 + 온라인 35(부족) → 확인창 수락, 이후 같은 달 두 번째 거절
   await page.locator('#yjItem_stu_M').selectOption('warnDel'); await page.locator('#yjOff_stu_M').fill('15'); await page.locator('[data-yj-exchange="stu_M"]').click(); await page.waitForTimeout(300);
-  m = await stuM();
-  check('경고삭제권 교환 기록(부족 확인창 수락): 실물 15 + 온라인 35', m.yeopjeonLog.filter((x) => x.item === 'warnDel').length === 1 && m.yeopjeonLog.find((x) => x.item === 'warnDel').offlineUsed === 15 && m.yeopjeonLog.find((x) => x.item === 'warnDel').delta === -35);
+  check('경고삭제권 교환(부족 확인창 수락): 실물 15 + 온라인 35', (await logs()).filter((x) => x.item === 'warnDel').length === 1 && (await logs()).find((x) => x.item === 'warnDel').offlineUsed === 15 && (await logs()).find((x) => x.item === 'warnDel').delta === -35);
   dialogs.length = 0;
   await page.locator('#yjItem_stu_M').selectOption('warnDel'); await page.locator('#yjOff_stu_M').fill('0'); await page.locator('[data-yj-exchange="stu_M"]').click(); await page.waitForTimeout(300);
-  check('같은 달 두 번째 경고삭제권은 거절(알림) + 기록 안 늘어남', (await stuM()).yeopjeonLog.filter((x) => x.item === 'warnDel').length === 1 && dialogs.some((d) => d.includes('한 달에 1번만')));
-  check('다른 학생(단일 반)은 같은 달에도 경고삭제권 교환 가능', await page.evaluate(async () => { document.getElementById('yjItem_stu_S').value = 'warnDel'; await addYeopjeonLog('stu_S', 'exchange'); return (window.__store.students.stu_S.yeopjeonLog || []).some((x) => x.item === 'warnDel'); }));
-  check('내역 삭제 시 확인창 후 제거', await page.evaluate(async () => { const before = window.__store.students.stu_M.yeopjeonLog.length; const id = window.__store.students.stu_M.yeopjeonLog[before - 1].id; await removeYeopjeonLog('stu_M', id); return window.__store.students.stu_M.yeopjeonLog.length === before - 1; }));
-  // 달이 바뀌면 다시 구입 가능
+  check('같은 달 두 번째 경고삭제권은 거절(알림) + 기록 안 늘어남', (await logs()).filter((x) => x.item === 'warnDel').length === 1 && dialogs.some((d) => d.includes('한 달에 1번만')));
+  check('다른 학생은 같은 달에도 경고삭제권 교환 가능', await page.evaluate(async () => { document.getElementById('yjItem_stu_S').value = 'warnDel'; await addYeopjeonLog('stu_S', 'exchange'); return (window.__store.students.stu_S.yeopjeonLog || []).some((x) => x.item === 'warnDel'); }));
   check('다음 달이 되면 경고삭제권을 다시 구입 가능', await page.evaluate(() => { window.todayISO = () => '2026-12-02'; return yjRewardBoughtThisMonth('stu_M', 'warnDel') === 0; }));
   check('페이지 오류 없음', errs.length === 0, errs.join('|'));
   await browser.close(); const f = results.filter((x) => !x).length;
