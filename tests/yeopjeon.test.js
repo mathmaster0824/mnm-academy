@@ -3,7 +3,7 @@ const { chromium } = require('playwright'); const path = require('path'); const 
 const results = []; const check = (n, ok, d) => { results.push(ok); console.log(`YEOPJEON ${ok ? '✔' : '✖'} ${n}${ok ? '' : '  ← ' + (d || '')}`); };
 (async () => {
   const browser = await chromium.launch({ args: ['--no-sandbox'] }); const page = await browser.newPage();
-  const errs = []; page.on('pageerror', (e) => errs.push(e.message)); page.on('dialog', (d) => d.accept());
+  const errs = []; const dialogs = []; page.on('pageerror', (e) => errs.push(e.message)); page.on('dialog', (d) => { dialogs.push(d.message()); d.accept(); });
   await page.route(/gstatic\.com\/firebasejs/, (r) => r.fulfill({ contentType: 'application/javascript', body: STUB }));
   await page.route(/^https?:\/\/(?!file)/, (r) => { if (/gstatic\.com\/firebasejs/.test(r.request().url())) return r.fallback(); r.abort(); });
   await page.goto('file://' + path.join(__dirname, '..', 'index.html')); await page.waitForTimeout(800);
@@ -60,6 +60,28 @@ const results = []; const check = (n, ok, d) => { results.push(ok); console.log(
   });
   const mine = await page.locator('[data-my-yj]').innerText();
   check('학생 화면 "내 엽전": 합계(숙제 3 + STAD 3 + 선생님 기록 +2 = 8)와 구성이 보임', (await page.locator('[data-my-yj-total]').innerText()) === '8개' && mine.includes('숙제 인정 3개') && mine.includes('STAD 3개') && mine.includes('+2'), mine);
+  // ---- 교환 안내 / 경고삭제권 월 1회 ----
+  check('학생 카드에 교환 안내 5종(가격 포함)과 경고삭제권 월 1회 문구, 진행 상태', (await page.locator('[data-yj-reward]').count()) === 5 && mine !== undefined && (await page.locator('[data-my-yj]').innerText()).includes('한 달에 1번만') && (await page.locator('[data-my-yj]').innerText()).includes('30개') && (await page.locator('[data-my-yj]').innerText()).includes('150개'));
+  const st8 = await page.locator('[data-yj-reward="cvs5"]').innerText();
+  check('합계 8개: 편의점 5,000원(30)까지 "22개 더 필요"', st8.includes('22개 더 필요'), st8);
+  await page.evaluate(() => { session = { mode: 'director' }; db.students = [JSON.parse(JSON.stringify(window.__store.students.stu_M)), JSON.parse(JSON.stringify(window.__store.students.stu_S))]; db.students.forEach((x) => { x.status = 'active'; }); yjPool.state = 'ready'; yjPool.subs = JSON.parse(JSON.stringify(window.__store.submissions)); yjPool.stad = JSON.parse(JSON.stringify(window.__store.stadDaily)); db.submissions = {}; db.stadDaily = {}; window.__page = 'admin'; window.render(); });
+  check('원장 화면에 교환 안내 카드(5종)와 학생별 상품 선택', (await page.locator('[data-yj-guide] [data-yj-reward]').count()) === 5 && (await page.locator('#yjItem_stu_M option').count()) === 6);
+  const total0 = Number(await page.locator('[data-yj-total="stu_M"]').innerText());
+  await page.locator('#yjItem_stu_M').selectOption('cvs5'); await page.locator('[data-yj-sub="stu_M"]').click(); await page.waitForTimeout(300);
+  let stM = await page.evaluate(() => window.__store.students.stu_M);
+  const last = stM.yeopjeonLog[stM.yeopjeonLog.length - 1];
+  check('상품 선택 후 －: 편의점 5,000원 30개 차감 기록(개수·사유 자동, 부족분 확인창 통과)', last.delta === -30 && last.item === 'cvs5' && last.reason.includes('편의점') && Number(await page.locator('[data-yj-total="stu_M"]').innerText()) === total0 - 30, JSON.stringify(last));
+  await page.locator('#yjItem_stu_M').selectOption('warnDel'); await page.locator('[data-yj-sub="stu_M"]').click(); await page.waitForTimeout(300);
+  stM = await page.evaluate(() => window.__store.students.stu_M);
+  check('경고삭제권 첫 구입은 기록됨(50개)', stM.yeopjeonLog.filter((x) => x.item === 'warnDel').length === 1 && stM.yeopjeonLog.find((x) => x.item === 'warnDel').delta === -50);
+  dialogs.length = 0;
+  await page.locator('#yjItem_stu_M').selectOption('warnDel'); await page.locator('[data-yj-sub="stu_M"]').click(); await page.waitForTimeout(300);
+  stM = await page.evaluate(() => window.__store.students.stu_M);
+  check('같은 달 두 번째 경고삭제권은 거절(알림) + 기록 안 늘어남', stM.yeopjeonLog.filter((x) => x.item === 'warnDel').length === 1 && dialogs.some((d) => d.includes('한 달에 1번만')), JSON.stringify(dialogs));
+  check('다른 학생(단일 반)은 같은 달에도 경고삭제권 구입 가능', await page.evaluate(async () => { document.getElementById('yjItem_stu_S').value = 'warnDel'; const o = window.confirm; window.confirm = () => true; await addYeopjeonLog('stu_S', -1); window.confirm = o; return (window.__store.students.stu_S.yeopjeonLog || []).some((x) => x.item === 'warnDel'); }));
+  check('엽전이 모자라도 확인창에서 허용하면 기록, 거절하면 기록 안 함', await page.evaluate(async () => { const before = (window.__store.students.stu_S.yeopjeonLog || []).length; document.getElementById('yjItem_stu_S').value = 'pizza'; const o = window.confirm; window.confirm = () => false; await addYeopjeonLog('stu_S', -1); window.confirm = o; return (window.__store.students.stu_S.yeopjeonLog || []).length === before; }));
+  // 달이 바뀌면 다시 구입 가능
+  check('다음 달이 되면 경고삭제권을 다시 구입 가능', await page.evaluate(() => { window.todayISO = () => '2026-12-02'; return yjRewardBoughtThisMonth('stu_M', 'warnDel') === 0; }));
   check('페이지 오류 없음', errs.length === 0, errs.join('|'));
   await browser.close(); const f = results.filter((x) => !x).length;
   console.log(f ? `YEOPJEON FAIL ${f}/${results.length}` : `YEOPJEON OK ${results.length}/${results.length}`); process.exit(f ? 1 : 0);

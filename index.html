@@ -1935,7 +1935,7 @@ function weekDates(weekStart){
    휴대폰은 앱 탭을 며칠씩 열어 둔 채로 쓰기 때문에, 고친 버전이 올라가도 예전 화면이 계속 돌 수 있다.
    예전 화면은 지금 보안 규칙과 맞지 않아 저장이 막힐 수 있으므로, 새 버전이 올라오면 새로 고침을 안내한다.
    (배포할 때마다 APP_BUILD 값을 바꾼다) */
-const APP_BUILD='2026-11-04b';
+const APP_BUILD='2026-11-04c';
 let newVersionReady=false, versionCheckAt=0;
 async function checkAppVersion(force){
   if(location.protocol==='file:') return false;
@@ -5576,6 +5576,18 @@ async function removeVideoPhoto(key,stuId,idx,pi){
  * 인정이 취소(미인증)되면 그 엽전도 빠진다. 별도 저장 없이 기록에서 계산하므로 이중 적립이 없다.
  * 원장님이 실물로 따로 주거나 쓴 엽전은 students/{학생}.yeopjeonLog 에 +/- 로 수기 기록한다(원장만 쓰기, 학생 본인은 읽기). */
 const YEOPJEON_START='2026-11-04';
+// 엽전으로 바꿀 수 있는 보상 안내. monthlyLimit: 한 달에 살 수 있는 최대 횟수.
+const YEOPJEON_REWARDS=[
+  {id:'cvs5',  name:'편의점 기프티콘 5,000원',  cost:30},
+  {id:'cvs10', name:'편의점 기프티콘 10,000원', cost:55},
+  {id:'chicken', name:'치킨', cost:100},
+  {id:'pizza', name:'피자', cost:150},
+  {id:'warnDel', name:'경고삭제권', cost:50, monthlyLimit:1, note:'한 달에 1번만 살 수 있어요'},
+];
+function yjRewardBoughtThisMonth(stuId,itemId){
+  const m=todayISO().slice(0,7);
+  return ((studentById(stuId)||{}).yeopjeonLog||[]).filter(x=>x.item===itemId && String(x.date||'').slice(0,7)===m).length;
+}
 const yjPool={subs:{},stad:{},state:'idle'};   // 원장용: YEOPJEON_START 이후 기록을 서버에서 읽어 둔 곳
 function yjDocDate(key,d){ return (d&&d.date)||submissionDocKeyDate(key); }
 function yeopjeonFor(stuId){
@@ -5620,12 +5632,19 @@ function yeopjeonBadge(stuId){
   return `<span class="badge gray" data-yj="${stuId}" title="숙제 ${y.hw} · STAD ${y.stad} · 수기 ${y.manual>0?'+':''}${y.manual} (최근 7일 +${y.recent})" style="font-size:10px;">🪙 ${y.total}${y.recent?` <span style="color:#2c7a3d;">(+${y.recent})</span>`:''}</span>`;
 }
 async function addYeopjeonLog(stuId,sign){
-  const nEl=document.getElementById('yjN_'+stuId), rEl=document.getElementById('yjR_'+stuId);
-  const n=Math.floor(Number(nEl&&nEl.value));
-  if(!(n>0)){ alert('엽전 개수를 1 이상으로 입력해 주세요.'); return; }
+  const nEl=document.getElementById('yjN_'+stuId), rEl=document.getElementById('yjR_'+stuId), iEl=document.getElementById('yjItem_'+stuId);
   const s=studentById(stuId); if(!s) return;
-  const reason=String((rEl&&rEl.value)||'').trim();
-  const log=[...(s.yeopjeonLog||[]),{id:'yj'+Date.now().toString(36),date:todayISO(),delta:sign*n,reason,at:new Date().toISOString()}];
+  // 보상 교환: 상품을 골라 "－ 사용"을 누르면 개수·사유가 자동으로 들어가고, 한 달 구입 제한과 잔액을 확인한다.
+  const item=sign<0&&iEl&&iEl.value ? YEOPJEON_REWARDS.find(r=>r.id===iEl.value) : null;
+  let n=Math.floor(Number(nEl&&nEl.value)), reason=String((rEl&&rEl.value)||'').trim();
+  if(item){
+    n=item.cost; reason=item.name+(reason?' · '+reason:'');
+    if(item.monthlyLimit && yjRewardBoughtThisMonth(stuId,item.id)>=item.monthlyLimit){ alert(`${item.name}은(는) 한 달에 ${item.monthlyLimit}번만 살 수 있어요. 이번 달에는 이미 교환했어요.`); return; }
+    const have=yeopjeonFor(stuId).total;
+    if(have<n && !confirm(`${s.name} 학생의 엽전이 ${have}개라 ${item.name}(${n}개)에 ${n-have}개 모자라요. 그래도 기록할까요?`)) return;
+  }
+  if(!(n>0)){ alert('엽전 개수를 1 이상으로 입력해 주세요.'); return; }
+  const log=[...(s.yeopjeonLog||[]),{id:'yj'+Date.now().toString(36),date:todayISO(),delta:sign*n,reason,...(item?{item:item.id}:{}),at:new Date().toISOString()}];
   const ok=await fsUpdate('students',stuId,{yeopjeonLog:log});
   if(ok){ s.yeopjeonLog=log; render(); }
 }
@@ -5647,10 +5666,11 @@ function renderYeopjeonAdmin(){
   return `
   <h1 class="page-title">🪙 엽전</h1>
   <p class="page-sub">${fmtDate(YEOPJEON_START)}부터 숙제가 <b>인정</b>될 때마다 1개, STAD 아침 출석·저녁 정산 1개씩이 자동으로 쌓여요. 실물로 따로 주거나 쓴 엽전은 오른쪽에서 직접 기록해 주세요.</p>
+  <div class="card" data-yj-guide="1"><h3 style="margin-top:0;">🎁 엽전 교환 안내</h3>${yeopjeonRewardList()}</div>
   ${yjPool.state==='error'?`<div class="card" style="border-color:var(--red);color:var(--red);font-size:12px;">기록을 불러오지 못했어요. 합계가 맞지 않을 수 있어요. <button class="btn sm outline" onclick="loadYeopjeonPool(true)">다시 불러오기</button></div>`:''}
   ${busy?`<div class="empty" style="padding:10px 0;">기록을 불러오는 중이에요…</div>`:''}
   <div class="card"><div style="overflow-x:auto;"><table style="width:100%;" id="yjTable">
-    <tr><th>학생</th><th>숙제</th><th>STAD</th><th>수기</th><th>합계</th><th style="min-width:260px;">수기 기록(실물 지급·사용)</th></tr>
+    <tr><th>학생</th><th>숙제</th><th>STAD</th><th>수기</th><th>합계</th><th style="min-width:330px;">수기 기록(실물 지급·교환·사용)</th></tr>
     ${rows.map(({s,y})=>`<tr data-yj-row="${s.id}">
       <td><b>${escapeHtml(s.name||'')}</b></td>
       <td style="text-align:center;">${y.hw}</td><td style="text-align:center;">${y.stad}</td>
@@ -5658,6 +5678,7 @@ function renderYeopjeonAdmin(){
       <td style="text-align:center;"><b data-yj-total="${s.id}">${y.total}</b>${y.recent?`<div style="font-size:10px;color:#2c7a3d;">최근 7일 +${y.recent}</div>`:''}</td>
       <td><div class="row" style="gap:4px;flex-wrap:wrap;">
         <input type="number" id="yjN_${s.id}" value="1" min="1" style="width:56px;">
+        <select id="yjItem_${s.id}" style="font-size:11px;" title="상품을 고르고 '－ 사용'을 누르면 개수·사유가 자동으로 들어가요"><option value="">직접 입력</option>${YEOPJEON_REWARDS.map(r=>`<option value="${r.id}">${r.name} (${r.cost}개)</option>`).join('')}</select>
         <input type="text" id="yjR_${s.id}" placeholder="사유(선택)" style="width:120px;">
         <button class="btn sm gold" data-yj-add="${s.id}" onclick="addYeopjeonLog('${s.id}',1)">＋ 지급</button>
         <button class="btn sm outline" data-yj-sub="${s.id}" onclick="addYeopjeonLog('${s.id}',-1)">－ 사용</button>
@@ -5667,6 +5688,14 @@ function renderYeopjeonAdmin(){
     ${logs.length?logs.slice(0,60).map(({s,x})=>`<div class="row between" style="padding:5px 0;border-bottom:1px solid var(--line);font-size:12px;" data-yj-log="${x.id}"><div>${fmtDate(x.date)} · <b>${escapeHtml(s.name||'')}</b> <span style="color:${x.delta>0?'#2c7a3d':'#c44'};">${x.delta>0?'+':''}${x.delta}개</span> ${escapeHtml(x.reason||'')}</div><button class="btn sm outline" style="font-size:10px;padding:2px 6px;" onclick="removeYeopjeonLog('${s.id}','${x.id}')">삭제</button></div>`).join(''):`<div class="empty">아직 수기 기록이 없어요.</div>`}
   </div>`;
 }
+function yeopjeonRewardList(stuId){
+  const have=stuId?yeopjeonFor(stuId).total:null;
+  return `<table style="width:100%;font-size:12.5px;" data-yj-rewards="1">${YEOPJEON_REWARDS.map(r=>{
+    const bought=stuId&&r.monthlyLimit?yjRewardBoughtThisMonth(stuId,r.id)>=r.monthlyLimit:false;
+    const status=have===null?'':bought?'<span style="color:#9c9880;">이번 달 교환함</span>':have>=r.cost?'<b style="color:#2c7a3d;">교환 가능!</b>':`<span style="color:#8a8674;">${r.cost-have}개 더 필요</span>`;
+    return `<tr data-yj-reward="${r.id}"><td>${r.name}${r.note?`<div style="font-size:10.5px;color:#c44;">${r.note}</div>`:''}</td><td style="text-align:right;white-space:nowrap;"><b>🪙 ${r.cost}개</b></td>${have===null?'':`<td style="text-align:right;white-space:nowrap;">${status}</td>`}</tr>`;
+  }).join('')}</table>`;
+}
 function renderMyYeopjeon(stuId){
   const y=yeopjeonFor(stuId);
   const recentLog=(y.log||[]).slice().sort((a,b)=>String(b.at||'').localeCompare(String(a.at||''))).slice(0,5);
@@ -5675,6 +5704,9 @@ function renderMyYeopjeon(stuId){
     <div style="font-size:12px;color:#6b6858;margin-top:6px;line-height:1.7;">숙제 인정 ${y.hw}개 · STAD ${y.stad}개${y.manual?` · 선생님 기록 ${y.manual>0?'+':''}${y.manual}개`:''}${y.recent?` · 최근 7일 <b style="color:#2c7a3d;">+${y.recent}</b>`:''}</div>
     ${recentLog.length?`<div style="font-size:11px;color:#8a8674;margin-top:6px;">${recentLog.map(x=>`${fmtDate(x.date)} ${x.delta>0?'+':''}${x.delta}${x.reason?' ('+escapeHtml(x.reason)+')':''}`).join(' · ')}</div>`:''}
     <div style="font-size:11px;color:#9c9880;margin-top:6px;">${fmtDate(YEOPJEON_START)}부터 숙제를 내서 인정되면 자동으로 쌓여요.</div>
+    <div style="font-weight:700;font-size:13px;margin:12px 0 4px;">🎁 엽전으로 바꿀 수 있는 선물</div>
+    ${yeopjeonRewardList(stuId)}
+    <div style="font-size:11px;color:#9c9880;margin-top:6px;">교환은 선생님께 말씀해 주세요.</div>
   </div>`;
 }
 
