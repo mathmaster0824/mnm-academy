@@ -5046,24 +5046,37 @@ function askSolutionDuplicate(existing,newFiles,label){
     const wrap=document.createElement('div'); wrap.id='solDupModal';
     wrap.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;';
     const newUrls=(newFiles||[]).map(f=>{ try{ return URL.createObjectURL(f); }catch(e){ return ''; } }).filter(Boolean);
-    const thumb=(src,cap,border)=>`<div style="text-align:center;"><img src="${src}" onclick="openLightbox(this.src)" style="width:96px;height:96px;object-fit:cover;border-radius:8px;border:2px solid ${border};cursor:pointer;"><div style="font-size:11px;color:#6b6858;margin-top:2px;">${cap}</div></div>`;
+    const thumb=(src,cap,border,id)=>`<div style="text-align:center;"><img src="${src}" onclick="openLightbox(this.src)" style="width:96px;height:96px;object-fit:cover;border-radius:8px;border:2px solid ${border};cursor:pointer;"><div style="font-size:11px;color:#6b6858;margin-top:2px;">${id?`<label style="cursor:pointer;display:inline-flex;align-items:center;gap:3px;"><input type="checkbox" data-sol-dup-pick="${id}" ${existing.length===1?'checked':''}>${cap}</label>`:cap}</div></div>`;
     wrap.innerHTML=`<div style="background:#fff;border-radius:14px;max-width:460px;width:100%;max-height:90vh;overflow:auto;padding:18px;">
       <h3 style="margin:0 0 4px;">이미 이 문제의 해설이 ${existing.length}장 있어요</h3>
       <div style="font-size:13px;color:#6b6858;margin-bottom:10px;">${escapeHtml(label)}</div>
-      <div style="font-size:12px;font-weight:800;margin-bottom:4px;">기존 해설 (눌러서 크게 보기)</div>
-      <div data-sol-dup-existing style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">${existing.map((p,i)=>thumb(photoSrc(p.photo,true),'기존 '+(i+1),'#dfd5b9')).join('')}</div>
+      <div style="font-size:12px;font-weight:800;margin-bottom:4px;">기존 해설 <span style="font-weight:400;color:#8a8674;">(사진을 누르면 크게 보여요 · 바꿀 사진은 아래 칸에 체크)</span></div>
+      <div data-sol-dup-existing style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">${existing.map((p,i)=>thumb(photoSrc(p.photo,true),'바꿀 사진 '+(i+1),'#dfd5b9',p.id)).join('')}</div>
+      ${existing.length>1?`<div style="margin-bottom:10px;font-size:12px;"><a href="#" data-sol-dup-all style="color:var(--navy2);font-weight:800;">전부 선택</a> · <a href="#" data-sol-dup-none style="color:var(--navy2);font-weight:800;">선택 해제</a></div>`:'<div style="margin-bottom:10px;"></div>'}
       <div style="font-size:12px;font-weight:800;margin-bottom:4px;">이번에 올리는 사진</div>
       <div data-sol-dup-new style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">${newUrls.map((u,i)=>thumb(u,'새 '+(i+1),'#2c7a3d')).join('')||'<span style="font-size:12px;color:#8a8674;">(미리보기 없음)</span>'}</div>
       <div style="display:flex;flex-direction:column;gap:8px;">
         <button class="btn gold" data-sol-dup="add">➕ 추가로 등록 <span style="font-weight:400;font-size:11px;">(기존 ${existing.length}장 + 새 사진)</span></button>
-        <button class="btn danger" data-sol-dup="replace">🔄 기존 것을 새 사진으로 바꾸기 <span style="font-weight:400;font-size:11px;">(기존 ${existing.length}장 삭제)</span></button>
+        <button class="btn danger" data-sol-dup="replace" data-sol-dup-replace-btn disabled>🔄 선택한 사진을 새 사진으로 바꾸기 <span data-sol-dup-count style="font-weight:400;font-size:11px;"></span></button>
         <button class="btn outline" data-sol-dup="keep">✋ 그대로 두기 <span style="font-weight:400;font-size:11px;">(새로 등록하지 않아요)</span></button>
       </div></div>`;
+    const picks=()=>Array.from(wrap.querySelectorAll('[data-sol-dup-pick]'));
+    const refresh=()=>{
+      const n=picks().filter(x=>x.checked).length;
+      const rb=wrap.querySelector('[data-sol-dup-replace-btn]'); rb.disabled=!n;
+      wrap.querySelector('[data-sol-dup-count]').textContent=n?`(선택한 ${n}장 삭제, 나머지 ${existing.length-n}장은 유지)`:'(바꿀 사진을 먼저 체크하세요)';
+      rb.style.opacity=n?1:.5;
+    };
+    wrap.addEventListener('change',refresh);
     wrap.addEventListener('click',ev=>{
-      const b=ev.target.closest&&ev.target.closest('[data-sol-dup]'); if(!b) return;
-      wrap.remove(); newUrls.forEach(u=>{ try{ URL.revokeObjectURL(u); }catch(e){} }); resolve(b.getAttribute('data-sol-dup'));
+      if(ev.target.closest&&ev.target.closest('[data-sol-dup-all]')){ ev.preventDefault(); picks().forEach(x=>x.checked=true); refresh(); return; }
+      if(ev.target.closest&&ev.target.closest('[data-sol-dup-none]')){ ev.preventDefault(); picks().forEach(x=>x.checked=false); refresh(); return; }
+      const b=ev.target.closest&&ev.target.closest('[data-sol-dup]'); if(!b||b.disabled) return;
+      const choice=b.getAttribute('data-sol-dup');
+      const replaceIds=choice==='replace'?picks().filter(x=>x.checked).map(x=>x.getAttribute('data-sol-dup-pick')):[];
+      wrap.remove(); newUrls.forEach(u=>{ try{ URL.revokeObjectURL(u); }catch(e){} }); resolve({choice,replaceIds});
     });
-    document.body.appendChild(wrap);
+    document.body.appendChild(wrap); refresh();
   });
 }
 async function addSolutionPhoto(){
@@ -5080,9 +5093,10 @@ async function addSolutionPhoto(){
   if(!problemNo){ alert('문제번호를 입력해주세요.'); return; }
   const bookKey=sourceBookKey(courseId,book), sourceKey=textbookSourceKey(courseId,book,page,problemNo);
   const existingSame=(db.solutionPhotos||[]).filter(x=>x&&(x.sourceKey||textbookSourceKey(x.courseId,x.book,x.page,x.problemNo))===sourceKey);
-  let dupChoice='add';
+  let dupChoice='add', replaceIds=[];
   if(existingSame.length){
-    dupChoice=await askSolutionDuplicate(existingSame,Array.from(fileInput.files||[]),`${book} ${page}쪽 ${problemNo}번`);
+    const ans=await askSolutionDuplicate(existingSame,Array.from(fileInput.files||[]),`${book} ${page}쪽 ${problemNo}번`);
+    dupChoice=ans.choice; replaceIds=ans.replaceIds||[];
     if(dupChoice==='keep') return;   // 입력한 내용은 그대로 둔다
   }
   let savedNew=0, failedNew=0;
@@ -5100,9 +5114,9 @@ async function addSolutionPhoto(){
       syncSolutionPhotoToProblemRepo(solId,solData).catch(e=>console.error(e));
     }else failedNew++;
   }, 900, 0.6);
-  // 바꾸기: 새 사진이 저장된 뒤에만(실패 시 기존 해설을 지우지 않는다) 기존 해설 삭제
+  // 바꾸기: 새 사진이 저장된 뒤에만(실패 시 기존 해설을 지우지 않는다), 고른 기존 사진만 삭제(나머지는 유지)
   if(dupChoice==='replace' && savedNew>0 && !failedNew){
-    const delIds=[]; for(const o of existingSame){ if(await fsDelete('solutionPhotos',o.id)) delIds.push(o.id); }
+    const delIds=[]; for(const o of existingSame){ if(replaceIds.includes(o.id) && await fsDelete('solutionPhotos',o.id)) delIds.push(o.id); }
     db.solutionPhotos=(db.solutionPhotos||[]).filter(x=>!delIds.includes(x.id));
   }
   fileInput.value=''; document.getElementById('spBook').value=''; document.getElementById('spPage').value=''; document.getElementById('spProblem').value='';
