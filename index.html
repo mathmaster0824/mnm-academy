@@ -1935,7 +1935,7 @@ function weekDates(weekStart){
    휴대폰은 앱 탭을 며칠씩 열어 둔 채로 쓰기 때문에, 고친 버전이 올라가도 예전 화면이 계속 돌 수 있다.
    예전 화면은 지금 보안 규칙과 맞지 않아 저장이 막힐 수 있으므로, 새 버전이 올라오면 새로 고침을 안내한다.
    (배포할 때마다 APP_BUILD 값을 바꾼다) */
-const APP_BUILD='2026-11-04k';
+const APP_BUILD='2026-11-05a';
 let newVersionReady=false, versionCheckAt=0;
 async function checkAppVersion(force){
   if(location.protocol==='file:') return false;
@@ -7165,6 +7165,7 @@ function renderQnaDirector(){
         <input type="file" accept="image/*" multiple id="ansPhoto_${q.id}" style="margin-top:6px;">
         ${renderAutoSolutionMatches(q.id)}
         ${renderSolLibPickerForQuestion(q.id)}
+        ${questionCanSaveToLibrary(q)?`<label data-qna-savelib="${q.id}" style="display:flex;align-items:flex-start;gap:6px;margin-top:8px;font-size:12px;color:#5a5648;line-height:1.5;cursor:pointer;"><input type="checkbox" id="ansSaveLib_${q.id}" checked style="margin-top:3px;"><span>이 답변 사진을 <b>학습보관함에도 저장</b>해요 <span style="color:#8a8674;">(같은 문제를 또 물으면 자동으로 답변돼요 · 사진이 있을 때만)</span></span></label>`:''}
         <div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<div class="thumb-wrap"><img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})"><button class="thumb-x" onclick="removeAnswerPhoto('${q.id}',${i})">✕</button></div>`).join('')}</div>
         <button class="btn sm gold" style="margin-top:8px;" onclick="answerQuestion('${q.id}')">답변 등록</button>
       </div>
@@ -7179,6 +7180,39 @@ async function removeAnswerPhoto(qId, idx){
   const answerPhotos = (q.answerPhotos||[]).filter((_,i)=>i!==idx);
   await fsUpdate('questions', qId, {answerPhotos});
 }
+// 답변 사진을 학습보관함(solutionPhotos)에도 저장: 교재 출처가 완성된 질문만. 같은 사진이 이미 그 문제 출처에 있으면 건너뛴다.
+function solutionPhotoIdentity(photo){
+  if(!photo) return '';
+  if(typeof photo==='string') return photo;
+  return photoStorageKey(photo)||photo.url||photo.downloadUrl||'';
+}
+function questionCanSaveToLibrary(q){
+  return !!(q && q.sourceType==='TEXTBOOK' && q.sourceKey && q.sourceCourseId && q.sourceBook && q.sourcePage && q.sourceProblemNo);
+}
+async function saveAnswerPhotosToLibrary(q,answerPhotos){
+  if(!questionCanSaveToLibrary(q)) return 0;
+  const have=new Set(autoSolutionMatchesForQuestion(q).map(p=>solutionPhotoIdentity(p.photo)).filter(Boolean));
+  let saved=0;
+  for(const photo of (answerPhotos||[])){
+    const idt=solutionPhotoIdentity(photo);
+    if(!idt||have.has(idt)) continue;
+    const solId=uid('sol');
+    const solData={
+      photo:photoRefForFirestore(photo), courseId:q.sourceCourseId, book:q.sourceBook,
+      bookKey:q.sourceBookKey||sourceBookKey(q.sourceCourseId,q.sourceBook), unit:'',
+      page:q.sourcePage, pageKey:q.sourcePageKey||sourcePageNorm(q.sourcePage),
+      problemNo:q.sourceProblemNo, problemNoKey:q.sourceProblemNoKey||sourceProblemNorm(q.sourceProblemNo),
+      sourceKey:q.sourceKey, fromQuestionId:q.id, uploadedAt:new Date().toISOString()
+    };
+    const ok=await fsSet('solutionPhotos',solId,solData);
+    if(ok){
+      have.add(idt); saved++;
+      db.solutionPhotos=[...(db.solutionPhotos||[]).filter(x=>x.id!==solId),{id:solId,...solData}];
+      syncSolutionPhotoToProblemRepo(solId,solData).catch(e=>console.error(e));
+    }
+  }
+  return saved;
+}
 async function answerQuestion(qId){
   const q = db.questions.find(x=>x.id===qId);
   const answerText = document.getElementById('ans_'+qId).value;
@@ -7187,7 +7221,14 @@ async function answerQuestion(qId){
   await handleMultiPhotoInput(photosInput, (durl)=>answerPhotos.push(durl), 1000, 0.7);
   if(embeddedPhotoLimitExceeded({...q, answerText, answerPhotos}, 950)){ alert('답변 사진 용량이 너무 커요. 사진 개수를 줄여서 다시 시도해주세요.'); return; }
   const ok=await fsUpdate('questions', qId, {answerText, answerPhotos, status:'답변완료', autoAnswerSeen:true, autoAnswerSeenAt:new Date().toISOString()});
-  if(ok) syncAnsweredQuestionToProblemRepo(qId,answerText,answerPhotos).catch(e=>console.error(e));
+  if(ok){
+    syncAnsweredQuestionToProblemRepo(qId,answerText,answerPhotos).catch(e=>console.error(e));
+    const chk=document.getElementById('ansSaveLib_'+qId);
+    if(chk&&chk.checked&&answerPhotos.length){
+      const n=await saveAnswerPhotosToLibrary(q,answerPhotos);
+      if(n) alert(`답변 사진 ${n}장을 학습보관함에도 저장했어요.\n같은 문제를 또 물어보면 자동으로 답변돼요.`);
+    }
+  }
 }
 
 /* ---------------- FEEDBACK ---------------- */
