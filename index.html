@@ -1989,10 +1989,21 @@ async function explainStudentSubmitDenied(docId){
   console.error('[숙제 저장 권한 문제]', docId);
   alert('이 날짜 숙제 기록에 문제가 있어서 저장하지 못했어요.\n사진은 그대로 남아 있어요.\n\n선생님께 “'+String(docId||'').slice(-10)+' 숙제 저장 오류”라고 알려주세요. 선생님이 확인하면 다시 올릴 수 있어요.');
 }
+// Firestore 앱 내부 상태가 꼬이면("INTERNAL ASSERTION FAILED: Unexpected state") 그 뒤 저장이 계속 실패한다.
+// 사용자는 영어 오류 대신 안내만 보고, 임시 저장된 사진 목록을 지킨 채 새로고침해서 연결을 새로 맺는다.
+function isFirestoreInternalError(e){ return /INTERNAL ASSERTION FAILED|Unexpected state/i.test(String((e&&e.message)||e||'')); }
+function hardReload(){ location.reload(); }
+function recoverFromFirestoreInternalError(e){
+  console.error('[Firestore 내부 상태 오류 → 새로고침 복구]', e);
+  try{ saveActiveHomeworkDraft(); }catch(_){}
+  alert('연결이 잠깐 꼬여서 저장하지 못했어요.\n사진은 지워지지 않고 그대로 남아 있어요.\n\n확인을 누르면 앱이 새로고침돼요.\n새로고침한 뒤 같은 칸에서 한 번만 더 제출해 주세요.');
+  hardReload();
+}
 async function fsSet(col, id, data, merge=true){
   try{ await fsdb.collection(col).doc(id).set(data, {merge}); if(col==='classRecords') queueStudentRecordSync(id); return true; }
   catch(e){
     console.error('[Firestore 저장 실패]', {collection:col, code:e?.code||'', message:e?.message||'', payloadKB:firestorePayloadSizeKB(data)});
+    if(isFirestoreInternalError(e)){ recoverFromFirestoreInternalError(e); return false; }
     if(col==='submissions'){
       const code=String(e?.code||'');
       const msg=String(e?.message||'');
@@ -2014,15 +2025,15 @@ async function fsSet(col, id, data, merge=true){
 }
 async function fsAdd(col, data){
   try{ const ref = await fsdb.collection(col).add(data); return ref.id; }
-  catch(e){ alert('저장에 실패했어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.'); return null; }
+  catch(e){ if(isFirestoreInternalError(e)){ recoverFromFirestoreInternalError(e); return null; } alert('저장에 실패했어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.'); return null; }
 }
 async function fsDelete(col, id){
   try{ await fsdb.collection(col).doc(id).delete(); if(col==='classRecords') queueStudentRecordSync(id); return true; }
-  catch(e){ alert('삭제에 실패했어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.'); return false; }
+  catch(e){ if(isFirestoreInternalError(e)){ recoverFromFirestoreInternalError(e); return false; } alert('삭제에 실패했어요. 인터넷 연결을 확인한 뒤 다시 시도해주세요.'); return false; }
 }
 async function fsUpdate(col, id, data){
   try{ await fsdb.collection(col).doc(id).update(data); if(col==='classRecords') queueStudentRecordSync(id); return true; }
-  catch(e){ try{ await fsdb.collection(col).doc(id).set(data,{merge:true}); if(col==='classRecords') queueStudentRecordSync(id); return true; }catch(e2){ alert('저장에 실패했어요.'); return false; } }
+  catch(e){ try{ await fsdb.collection(col).doc(id).set(data,{merge:true}); if(col==='classRecords') queueStudentRecordSync(id); return true; }catch(e2){ if(isFirestoreInternalError(e2)||isFirestoreInternalError(e)){ recoverFromFirestoreInternalError(e2); return false; } alert('저장에 실패했어요.'); return false; } }
 }
 
 /* ---------------- 학생별 수업 기록 사본 (studentRecords) ----------------
