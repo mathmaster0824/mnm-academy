@@ -1935,7 +1935,7 @@ function weekDates(weekStart){
    휴대폰은 앱 탭을 며칠씩 열어 둔 채로 쓰기 때문에, 고친 버전이 올라가도 예전 화면이 계속 돌 수 있다.
    예전 화면은 지금 보안 규칙과 맞지 않아 저장이 막힐 수 있으므로, 새 버전이 올라오면 새로 고침을 안내한다.
    (배포할 때마다 APP_BUILD 값을 바꾼다) */
-const APP_BUILD='2026-11-05a';
+const APP_BUILD='2026-11-06b';
 let newVersionReady=false, versionCheckAt=0;
 async function checkAppVersion(force){
   if(location.protocol==='file:') return false;
@@ -3557,6 +3557,7 @@ function renderClassRow(cls, s, date, rec, hwText, bookNames, focusRecommended=f
         <h4>동영상 과제 <span style="font-weight:400;color:#8a8674;">${doneCount}/${videoTotal} 완료</span></h4>
         ${renderVideoAssignPicker(cls.id, date, s.id)}
         ${(r.videoAssignments||[]).map((v,i)=>`<div style="font-size:11px;margin-top:4px;"><label><input type="checkbox" ${v.done?'checked':''} onchange="toggleVideoDone('${cls.id}','${date}','${s.id}',${i})"> ${v.title}</label>${(v.photos||[]).length?` <span style="color:#4a7fd6;">📷${v.photos.length}</span>`:''}${videoPhotoBlock(v,cls.id+'_'+date,s.id,i,false)}</div>`).join('')}
+        ${renderPreviousVideoAssignments(s.id,date,!!(session&&session.mode==='director'))}
       </div>
 
       <div class="class-record-box">
@@ -5608,6 +5609,28 @@ async function toggleVideoDoneByKey(key,stuId,idx){
 
 // ===== 영상 숙제 필기/인증 사진 (선택 사항, 여러 장) =====
 const VIDEO_PHOTO_MAX=10;
+// 반 페이지에서 그날 말고도, 최근 7일 안에 내준 영상 숙제를 학생 카드에서 바로 확인할 수 있게 모아 준다(수요일에 내준 걸 금요일 보강 때 보기).
+function previousVideoAssignments(stuId,date,days=7){
+  const from=addDaysISO(date,-days), out=[];
+  Object.entries(db.classRecords||{}).forEach(([key,obj])=>{
+    const d=key.slice(-10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(d)||d>=date||d<from) return;
+    const rec=obj&&obj[stuId]; if(!rec) return;
+    (rec.videoAssignments||[]).forEach((v,i)=>out.push({date:d,key,idx:i,v}));
+  });
+  return out.sort((a,b)=>b.date.localeCompare(a.date)||a.idx-b.idx);
+}
+function renderPreviousVideoAssignments(stuId,date,canToggle){
+  const items=previousVideoAssignments(stuId,date);
+  if(!items.length) return '';
+  const done=items.filter(x=>x.v.done).length;
+  return `<div data-vid-prev="${stuId}" style="margin-top:8px;padding-top:6px;border-top:1px dashed var(--line);">
+    <div style="font-size:11px;font-weight:800;color:#6b6858;">최근 7일 안에 내준 영상 <span style="font-weight:400;">${done}/${items.length} 인증</span> <span style="font-weight:400;color:#8a8674;">· 사진이 없으면 안 한 걸로 봐요</span></div>
+    ${items.map(x=>`<div data-vid-prev-item="${x.key}|${x.idx}" style="font-size:11px;margin-top:5px;">
+      <label style="${x.v.done?'':'color:#c94236;'}">${canToggle?`<input type="checkbox" ${x.v.done?'checked':''} onchange="toggleVideoDoneByKey('${x.key}','${stuId}',${x.idx})"> `:(x.v.done?'✓ ':'✗ ')}<span style="color:#8a8674;">${fmtDate(x.date)}</span> ${escapeHtml(x.v.title||'')}${(x.v.photos||[]).length?` <span style="color:#4a7fd6;">📷${x.v.photos.length}</span>`:(x.v.done?'':' <span style="font-weight:700;">미인증</span>')}</label>
+      ${videoPhotoBlock(x.v,x.key,stuId,x.idx,false)}</div>`).join('')}
+  </div>`;
+}
 function videoPhotoBlock(v,key,stuId,idx,canEdit){
   const photos=Array.isArray(v.photos)?v.photos:[];
   const ref=`${key}|${stuId}`;
