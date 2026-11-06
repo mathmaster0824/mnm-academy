@@ -56,6 +56,27 @@ const check = (n, ok, d) => { results.push(!!ok); console.log(`SCHOOL-EXAM ${ok 
       currentSubState.examCalendarMonth = '2026-12';
       const b2 = document.createElement('div'); b2.innerHTML = renderSchoolExamCalendar();
       o.dec = b2.querySelectorAll('[data-exam-chip="e3"]').length;
+      // 달력 클릭 입력
+      currentSubState.examCalendarMonth='2026-11';
+      document.getElementById('x')?.remove();
+      const cal=document.createElement('div'); cal.innerHTML=renderSchoolExamCalendar();
+      o.dayClick=!!cal.querySelector('[data-exam-day="2026-11-15"][onclick*="openExamDialog"]');
+      o.chipClick=!!cal.querySelector('[data-exam-chip="e1"][onclick*="stopPropagation"]');
+      openExamDialog('2026-11-15');
+      o.dlgStart=document.getElementById('exdStart').value==='2026-11-15';
+      document.getElementById('exdName').value='기말'; document.getElementById('exdRange').value='1단원'; document.getElementById('exdEnd').value='2026-11-17';
+      document.getElementById('exdSchool').value='새학교고'; document.getElementById('exdGrade').value='1';
+      let a2=null; fsAdd=async(c,d)=>{a2={c,d};return 'n';}; render=()=>{};
+      await saveExamDialog('');
+      o.dlgAdd=a2&&a2.d.school==='새학교고'&&a2.d.date==='2026-11-15'&&a2.d.endDate==='2026-11-17'&&a2.d.range==='1단원';
+      o.dlgClosed=!document.getElementById('examDlg');
+      openExamDialog('2026-11-10','e1');
+      o.editPref=document.getElementById('exdName').value==='2학기 기말'&&document.getElementById('exdEnd').value==='2026-11-12'&&!!document.querySelector('#examDlg .btn.danger');
+      document.getElementById('exdName').value='수정됨';
+      let u2=null; fsUpdate=async(c,id,d)=>{u2={id,d};return true;};
+      await saveExamDialog('e1'); o.dlgEdit=u2&&u2.id==='e1'&&u2.d.examName==='수정됨';
+      openExamDialog('2026-11-15'); document.getElementById('exdName').value='';
+      let al=''; window.alert=m=>{al=m;}; await saveExamDialog(''); o.dlgNeedName=/시험명/.test(al);
       return o;
     });
     check('3일 시험이 3일 동안 달력에 표시', r.e1Chips === 3, r.e1Chips);
@@ -69,6 +90,11 @@ const check = (n, ok, d) => { results.push(!!ok); console.log(`SCHOOL-EXAM ${ok 
     check('시험 날짜 수정 저장', r.upd);
     check('학교별 성적표에 학생·점수 표시', r.scoreRow);
     check('월 경계를 넘는 시험이 다음 달에도 표시', r.dec === 2, r.dec);
+    check('날짜 칸·시험 표시가 눌림', r.dayClick && r.chipClick);
+    check('날짜 눌러 열면 그 날짜가 시작일', r.dlgStart);
+    check('입력창에서 시험 등록(학교·범위·기간)', r.dlgAdd && r.dlgClosed);
+    check('시험 눌러 열면 기존 값+삭제 버튼, 저장 시 수정', r.editPref && r.dlgEdit);
+    check('시험명 비면 막음', r.dlgNeedName);
     check('페이지 오류 없음', errs.length === 0, errs.join('|'));
   } finally { await browser.close(); }
   process.exit(results.every(Boolean) ? 0 : 1);
