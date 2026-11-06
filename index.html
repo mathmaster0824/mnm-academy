@@ -1970,7 +1970,7 @@ function weekDates(weekStart){
    휴대폰은 앱 탭을 며칠씩 열어 둔 채로 쓰기 때문에, 고친 버전이 올라가도 예전 화면이 계속 돌 수 있다.
    예전 화면은 지금 보안 규칙과 맞지 않아 저장이 막힐 수 있으므로, 새 버전이 올라오면 새로 고침을 안내한다.
    (배포할 때마다 APP_BUILD 값을 바꾼다) */
-const APP_BUILD='2026-11-06d';
+const APP_BUILD='2026-11-06e';
 let newVersionReady=false, versionCheckAt=0;
 async function checkAppVersion(force){
   if(location.protocol==='file:') return false;
@@ -6718,6 +6718,7 @@ function renderMemoGoalCard(stuId, directorView){
     ${directorView ? `
       <label style="font-size:12px;color:#8a8674;">재학 학교</label>
       <input type="text" list="allSchoolsList" placeholder="예: 서울중학교" value="${s.school||''}" onchange="updateStudentField('${stuId}','school',this.value)">
+      ${schoolHistoryText(s)?`<div style="font-size:11px;color:#8a8674;margin-top:4px;">이전 학교: ${escapeHtml(schoolHistoryText(s))}</div>`:''}
       <datalist id="allSchoolsList">${[...new Set(db.students.map(x=>x.school).filter(Boolean))].map(sc=>`<option value="${sc}">`).join('')}</datalist>
       <label style="font-size:12px;color:#8a8674;display:block;margin-top:8px;">학습 목표 / 향후 방향 메모</label>
       <textarea rows="3" onchange="updateStudentField('${stuId}','goal',this.value)">${s.goal||''}</textarea>
@@ -7924,6 +7925,94 @@ function shiftExamCalendarMonth(delta){
   render();
 }
 
+// ---- 새 학년 진급 (예: 1월) ----
+// 초1~5·중1~2·고1~2는 +1, 초6→중1, 중3→고1, 고3→졸업. 학교가 바뀌면 이전 학교는 schoolHistory에 보관하고 학교 칸은 비운다.
+function schoolHistoryText(st){ return (Array.isArray(st&&st.schoolHistory)?st.schoolHistory:[]).map(h=>`${h.school}${h.grade?'('+h.grade+')':''}`).join(' → '); }
+function promotedGrade(g){
+  const m=String(g||'').trim().match(/^([초중고])([1-6])$/); if(!m) return null;
+  const lv=m[1], n=Number(m[2]);
+  if(lv==='초'){ if(n<1||n>6) return null; return n===6?'중1':'초'+(n+1); }
+  if(lv==='중'){ if(n>3) return null; return n===3?'고1':'중'+(n+1); }
+  if(n>3) return null; return n===3?'졸업':'고'+(n+1);
+}
+function defaultPromotionLabel(){ const d=new Date(); return String(d.getMonth()>=9?d.getFullYear()+1:d.getFullYear()); }
+function planPromotion(){
+  return sortedStudents((db.students||[]).filter(s=>s.status!=='withdrawn')).map(s=>{
+    const next=promotedGrade(s.grade);
+    const levelChange=!!next && (next==='졸업' || next[0]!==String(s.grade).trim()[0]);
+    return {id:s.id,name:s.name,from:s.grade||'',next,levelChange,school:String(s.school||'').trim()};
+  });
+}
+function renderGradePromotionCard(){
+  const promoted=(db.students||[]).filter(s=>s.promoPrev && s.promoPrev.label);
+  const lastLabel=promoted.map(s=>s.promoPrev.label).sort().pop();
+  return `<div class="card" data-grade-promo>
+    <div class="row between" style="gap:8px;flex-wrap:wrap;">
+      <div><h3 style="margin:0;">🎓 새 학년 진급</h3>
+      <div class="muted" style="font-size:11px;margin-top:4px;">모든 재원생의 학년을 한 번에 올려요. 학교가 바뀌는 학생(초6→중1, 중3→고1, 고3→졸업)은 이전 학교를 '학교 이력'에 남기고 학교 칸을 비워요. 누르기 전에 미리보기에서 학생별로 확인·제외할 수 있어요.${lastLabel?` (마지막 진급: ${escapeHtml(lastLabel)}학년도, ${promoted.length}명)`:''}</div></div>
+      <div class="row" style="gap:6px;">
+        <button class="btn sm gold" onclick="openPromotionDialog()">진급 미리보기</button>
+        ${promoted.length?`<button class="btn sm outline" onclick="undoPromotion()">진급 되돌리기</button>`:''}
+      </div>
+    </div></div>`;
+}
+function openPromotionDialog(){
+  const old=document.getElementById('promoDlg'); if(old) old.remove();
+  const plan=planPromotion();
+  const w=document.createElement('div'); w.id='promoDlg';
+  w.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;';
+  const rows=plan.map(r=>`<tr data-promo-row="${r.id}" style="${r.next?'':'color:#a99;'}">
+    <td><input type="checkbox" data-promo-pick="${r.id}" ${r.next?'checked':'disabled'}></td>
+    <td><b>${escapeHtml(r.name)}</b></td><td>${escapeHtml(r.from||'-')}</td>
+    <td>${r.next?`→ <b>${escapeHtml(r.next)}</b>`:'<span style="font-size:11px;">변경 안 함(학년 형식 아님)</span>'}</td>
+    <td style="font-size:11px;">${r.next&&r.levelChange?(r.school?`${escapeHtml(r.school)} → 이력 보관, 새 학교 입력 필요`:'새 학교 입력 필요'):''}</td></tr>`).join('');
+  const n=plan.filter(r=>r.next).length;
+  w.innerHTML=`<div style="background:#fff;border-radius:14px;max-width:560px;width:100%;max-height:90vh;overflow:auto;padding:18px;">
+    <h3 style="margin:0 0 6px;">🎓 새 학년 진급 미리보기</h3>
+    <div style="font-size:12px;color:#6b6858;margin-bottom:8px;">아직 저장되지 않았어요. 제외할 학생(재수·유급 등)은 체크를 풀어 주세요. 고3은 '졸업'으로 표시돼요.</div>
+    <label style="font-size:12px;">학년도 이름 <input type="text" id="promoLabel" value="${defaultPromotionLabel()}" style="width:70px;"> <span class="muted">(같은 이름으로 두 번 진급하는 것을 막아요)</span></label>
+    <div style="overflow-x:auto;margin-top:8px;"><table><tr><th></th><th>학생</th><th>현재</th><th>새 학년</th><th>학교</th></tr>${rows||'<tr><td colspan="5" class="muted">학생이 없어요.</td></tr>'}</table></div>
+    <div class="row" style="gap:6px;margin-top:12px;">
+      <button class="btn gold" style="flex:1;" onclick="applyPromotion()">선택한 학생 진급 (${n}명)</button>
+      <button class="btn outline" onclick="document.getElementById('promoDlg').remove()">닫기</button></div></div>`;
+  w.onclick=ev=>{ if(ev.target===w) w.remove(); };
+  document.body.appendChild(w);
+}
+async function applyPromotion(){
+  const label=(document.getElementById('promoLabel')?.value||'').trim();
+  if(!label){ alert('학년도 이름을 입력해주세요.'); return; }
+  if((db.students||[]).some(s=>s.promoPrev && s.promoPrev.label===label)){
+    alert(`${label}학년도 진급은 이미 했어요. 다시 하려면 먼저 '진급 되돌리기'를 해주세요.`); return;
+  }
+  const picked=new Set(Array.from(document.querySelectorAll('[data-promo-pick]:checked')).map(x=>x.getAttribute('data-promo-pick')));
+  const plan=planPromotion().filter(r=>r.next && picked.has(r.id));
+  if(!plan.length){ alert('진급할 학생이 선택되지 않았어요.'); return; }
+  const at=new Date().toISOString(); let fail=0;
+  for(const r of plan){
+    const st=studentById(r.id); if(!st) continue;
+    const upd={grade:r.next, promoPrev:{label,at,grade:r.from,school:st.school||'',schoolHistory:Array.isArray(st.schoolHistory)?st.schoolHistory:[]}};
+    if(r.levelChange){
+      if(r.school) upd.schoolHistory=[...(Array.isArray(st.schoolHistory)?st.schoolHistory:[]),{school:r.school,grade:r.from,until:todayISO()}];
+      upd.school='';
+    }
+    const ok=await fsUpdate('students',r.id,upd); if(ok===false) fail++;
+  }
+  document.getElementById('promoDlg')?.remove();
+  alert(fail?`${plan.length-fail}명 진급, ${fail}명은 저장하지 못했어요. 다시 시도해주세요.`:`${plan.length}명을 진급했어요. 학교가 비워진 학생은 '학생 학교 입력'에서 새 학교를 입력해주세요.`);
+  render();
+}
+function undoPromotion(){
+  const targets=(db.students||[]).filter(s=>s.promoPrev && s.promoPrev.label);
+  const label=targets.map(s=>s.promoPrev.label).sort().pop();
+  const list=targets.filter(s=>s.promoPrev.label===label);
+  openConfirm(`${label}학년도 진급을 되돌릴까요?`,`${list.length}명의 학년과 학교를 진급 전으로 되돌려요. 진급 뒤에 새로 입력한 학교는 사라져요.`,async()=>{
+    for(const s of list){
+      const p=s.promoPrev;
+      await fsUpdate('students',s.id,{grade:p.grade,school:p.school||'',schoolHistory:p.schoolHistory||[],promoPrev:null});
+    }
+    render();
+  });
+}
 // 중·고등부 학생의 학교를 한 화면에서 빠르게 입력한다. (학생 상세의 '재학 학교'와 같은 값)
 function renderStudentSchoolSetup(){
   const secondary=s=>/^[중고]/.test(String(s.grade||''));
@@ -7941,9 +8030,9 @@ function renderStudentSchoolSetup(){
       </div>
     </div>
     ${open?`<datalist id="examSchoolList">${schoolExamSchools().map(sc=>`<option value="${escapeHtml(sc)}">`).join('')}</datalist>
-    <div style="overflow-x:auto;margin-top:8px;"><table><tr><th>학생</th><th>학년</th><th>학교</th></tr>
+    <div style="overflow-x:auto;margin-top:8px;"><table><tr><th>학생</th><th>학년</th><th>학교</th><th>이전 학교</th></tr>
     ${list.map(st=>`<tr data-school-row="${st.id}"><td><b>${escapeHtml(st.name)}</b></td><td>${escapeHtml(st.grade||'')}</td>
-      <td><input type="text" list="examSchoolList" value="${escapeHtml(st.school||'')}" placeholder="학교 이름" style="min-width:130px;" onchange="updateStudentField('${st.id}','school',this.value.trim())"></td></tr>`).join('')||'<tr><td colspan="3" class="muted">표시할 학생이 없어요.</td></tr>'}
+      <td><input type="text" list="examSchoolList" value="${escapeHtml(st.school||'')}" placeholder="학교 이름" style="min-width:130px;" onchange="updateStudentField('${st.id}','school',this.value.trim())"></td><td style="font-size:11px;color:#8a8674;">${escapeHtml(schoolHistoryText(st))}</td></tr>`).join('')||'<tr><td colspan="4" class="muted">표시할 학생이 없어요.</td></tr>'}
     </table></div>`:''}
   </div>`;
 }
@@ -8007,6 +8096,8 @@ function renderSchoolExams(){
   ${renderSchoolExamCalendar()}
 
   ${renderStudentSchoolSetup()}
+
+  ${renderGradePromotionCard()}
 
   <div class="card">
     <h3 style="margin-top:0;">학교 · 학년 선택</h3>
