@@ -1970,7 +1970,7 @@ function weekDates(weekStart){
    휴대폰은 앱 탭을 며칠씩 열어 둔 채로 쓰기 때문에, 고친 버전이 올라가도 예전 화면이 계속 돌 수 있다.
    예전 화면은 지금 보안 규칙과 맞지 않아 저장이 막힐 수 있으므로, 새 버전이 올라오면 새로 고침을 안내한다.
    (배포할 때마다 APP_BUILD 값을 바꾼다) */
-const APP_BUILD='2026-11-06e';
+const APP_BUILD='2026-11-11a';
 let newVersionReady=false, versionCheckAt=0;
 async function checkAppVersion(force){
   if(location.protocol==='file:') return false;
@@ -4957,6 +4957,7 @@ function renderSolutionLib(){
   let list = filter==='all' ? [...db.solutionPhotos] : solutionPhotoSearch(db.solutionPhotos, {courseId:filter});
   if(filter!=='all' && unitFilter!=='all') list = list.filter(p=>p.unit===unitFilter);
   if(search.trim()) list = solutionPhotoSearch(list, {text:search});
+  if(currentSubState.solKeyOnly) list = list.filter(p=>p.keyProblem);
   list.sort((a,b)=>(b.uploadedAt||'').localeCompare(a.uploadedAt||''));
   const unitsInCourse = filter!=='all' ? courseUnitsList(filter) : [];
   const allBooks = [...new Set([...Array.from(allPresetBookNames()), ...Array.from(collectAllBookNames())])];
@@ -4971,12 +4972,14 @@ function renderSolutionLib(){
       <select id="spUnit"><option value="">단원 선택 (학년학기 먼저)</option></select>
       <input type="text" id="spPage" placeholder="페이지" style="width:80px;">
       <input type="text" id="spProblem" placeholder="문제번호" style="width:80px;">
+      <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="spKey"> ⭐ 주요문항</label>
       <button class="btn gold sm" onclick="addSolutionPhoto()">+ 등록</button>
     </div>
   </div>
   <div class="card">
     <div class="row">
       <input id="solutionLibSearch" type="text" placeholder="🔍 교재·페이지·문제번호로 검색" value="${search}" oninput="updateSolutionLibrarySearch(this.value)" style="flex:1;min-width:150px;">
+      <button class="btn sm ${currentSubState.solKeyOnly?'gold':'outline'}" data-key-only onclick="currentSubState.solKeyOnly=!currentSubState.solKeyOnly;render();">⭐ 주요문항만</button>
       ${filter!=='all' ? `<button class="btn sm outline" onclick="currentSubState.solCourse='all';currentSubState.solUnit='all';render();">필터 초기화</button>` : ''}
     </div>
   </div>
@@ -5047,7 +5050,8 @@ function renderSolutionLibraryMatchesHtml(list){
     ${list.map(p=>`<div style="text-align:center;">
       <img src="${photoSrc(p.photo,true)}" style="width:100%;border-radius:6px;cursor:pointer;" onclick="openLightbox(photoSrc(p.photo))">
       <div style="font-size:10px;color:#6f6958;margin-top:3px;">${courseById(p.courseId)?.name||'-'}${p.book?` · ${p.book}`:''}</div>
-      <div style="font-size:10px;color:#6f6958;">${p.unit?p.unit+' · ':''}${p.page?`${p.page}p `:''}${p.problemNo?`${p.problemNo}번`:''}</div>
+      <div style="font-size:10px;color:#6f6958;">${p.keyProblem?'<b data-key-badge style="color:#b8860b;">⭐ 주요 </b>':''}${p.unit?p.unit+' · ':''}${p.page?`${p.page}p `:''}${p.problemNo?`${p.problemNo}번`:''}</div>
+      <button class="btn sm ${p.keyProblem?'gold':'outline'}" data-key-toggle="${p.id}" style="font-size:9px;padding:1px 6px;margin-top:3px;" onclick="toggleSolutionKey('${p.id}')">${p.keyProblem?'⭐ 해제':'☆ 주요'}</button>
       <button class="btn sm outline" style="font-size:9px;padding:1px 6px;margin-top:3px;" onclick="editSolutionPhoto('${p.id}')">수정</button>
       <button class="btn sm outline" style="font-size:9px;padding:1px 6px;margin-top:3px;" onclick="deleteSolutionPhoto('${p.id}')">삭제</button>
     </div>`).join('')}
@@ -5059,6 +5063,7 @@ function updateSolutionLibrarySearch(text){
   let list=filter==='all'?[...(db.solutionPhotos||[])]:solutionPhotoSearch(db.solutionPhotos||[],{courseId:filter});
   if(filter!=='all'&&unitFilter!=='all') list=list.filter(p=>p.unit===unitFilter);
   if(String(text||'').trim()) list=solutionPhotoSearch(list,{text});
+  if(currentSubState.solKeyOnly) list=list.filter(p=>p.keyProblem);
   list.sort((a,b)=>(b.uploadedAt||'').localeCompare(a.uploadedAt||''));
   const host=document.getElementById('solutionLibResults');
   if(host) host.innerHTML=renderSolutionLibraryMatchesHtml(list);
@@ -5122,6 +5127,7 @@ async function addSolutionPhoto(){
   const unit = document.getElementById('spUnit').value;
   const page = document.getElementById('spPage').value.trim();
   const problemNo = document.getElementById('spProblem').value.trim();
+  const keyProblem = !!document.getElementById('spKey')?.checked;
   if(!fileInput.files[0]){ alert('사진을 선택해주세요.'); return; }
   if(!courseId){ alert('학년학기를 선택해주세요.'); return; }
   if(!book){ alert('교재를 선택해주세요.'); return; }
@@ -5141,6 +5147,7 @@ async function addSolutionPhoto(){
     const solData={
       photo:durl, courseId, book, bookKey, unit, page, pageKey:sourcePageNorm(page),
       problemNo, problemNoKey:sourceProblemNorm(problemNo), sourceKey,
+      ...(keyProblem?{keyProblem:true}:{}),
       uploadedAt:new Date().toISOString()
     };
     const ok=await fsSet('solutionPhotos',solId,solData);
@@ -5157,6 +5164,12 @@ async function addSolutionPhoto(){
   }
   fileInput.value=''; document.getElementById('spBook').value=''; document.getElementById('spPage').value=''; document.getElementById('spProblem').value='';
   render();
+}
+async function toggleSolutionKey(id){
+  const p=(db.solutionPhotos||[]).find(x=>x.id===id); if(!p) return;
+  const next=!p.keyProblem;
+  const ok=await fsUpdate('solutionPhotos',id,{keyProblem:next});
+  if(ok!==false){ p.keyProblem=next; render(); }
 }
 async function editSolutionPhoto(id){
   const p=(db.solutionPhotos||[]).find(x=>x.id===id);
@@ -5200,7 +5213,7 @@ function renderAutoSolutionMatches(qId){
   const matches=autoSolutionMatchesForQuestion(q);
   if(!matches.length) return '';
   return `<div style="margin-top:8px;padding:8px 10px;border:1px solid #dfd5b9;border-radius:9px;background:#fffaf0;">
-    <div style="font-size:11px;font-weight:800;margin-bottom:6px;">🔗 학습보관함 정확 일치 ${matches.length}건 <span style="font-weight:400;color:#8a8674;">· 원장 화면에만 표시</span></div>
+    <div style="font-size:11px;font-weight:800;margin-bottom:6px;">🔗 학습보관함 정확 일치 ${matches.length}건${exactSolutionsForQuestion(q).some(p=>p.keyProblem)?' <span data-key-badge style="color:#b8860b;">⭐ 주요문항</span>':''} <span style="font-weight:400;color:#8a8674;">· 원장 화면에만 표시</span></div>
     <div style="display:flex;gap:7px;overflow-x:auto;padding-bottom:2px;">${matches.map(p=>`<div style="min-width:72px;text-align:center;"><img src="${photoSrc(p.photo,true)}" style="width:72px;height:72px;object-fit:cover;border-radius:6px;cursor:pointer;" onclick="openLightbox(photoSrc(p.photo))"><button class="btn sm outline" style="font-size:9px;padding:2px 5px;margin-top:3px;" onclick="attachSolutionPhotoToAnswer('${qId}','${p.id}')">답변에 첨부</button></div>`).join('')}</div>
   </div>`;
 }
@@ -7288,7 +7301,8 @@ function renderQnaDirector(){
         <input type="file" accept="image/*" multiple id="ansPhoto_${q.id}" style="margin-top:6px;">
         ${renderAutoSolutionMatches(q.id)}
         ${renderSolLibPickerForQuestion(q.id)}
-        ${questionCanSaveToLibrary(q)?`<label data-qna-savelib="${q.id}" style="display:flex;align-items:flex-start;gap:6px;margin-top:8px;font-size:12px;color:#5a5648;line-height:1.5;cursor:pointer;"><input type="checkbox" id="ansSaveLib_${q.id}" checked style="margin-top:3px;"><span>이 답변 사진을 <b>학습보관함에도 저장</b>해요 <span style="color:#8a8674;">(같은 문제를 또 물으면 자동으로 답변돼요 · 사진이 있을 때만)</span></span></label>`:''}
+        ${questionCanSaveToLibrary(q)?`<label data-qna-savelib="${q.id}" style="display:flex;align-items:flex-start;gap:6px;margin-top:8px;font-size:12px;color:#5a5648;line-height:1.5;cursor:pointer;"><input type="checkbox" id="ansSaveLib_${q.id}" checked style="margin-top:3px;" onchange="syncAnswerLibraryOptions('${q.id}','save')"><span>이 답변 사진을 <b>학습보관함에도 저장</b>해요 <span style="color:#8a8674;">(같은 문제를 또 물으면 자동으로 답변돼요 · 사진이 있을 때만)</span></span></label>
+        <label data-qna-keylib="${q.id}" style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:#5a5648;cursor:pointer;"><input type="checkbox" id="ansKeyLib_${q.id}" ${questionIsKeyProblem(q)?'checked':''} onchange="syncAnswerLibraryOptions('${q.id}','key')"><span>⭐ <b>주요문항</b>으로 표시 <span style="color:#8a8674;">(학습보관함에 같이 기록돼요)</span></span></label>`:''}
         <div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<div class="thumb-wrap"><img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})"><button class="thumb-x" onclick="removeAnswerPhoto('${q.id}',${i})">✕</button></div>`).join('')}</div>
         <button class="btn sm gold" style="margin-top:8px;" onclick="answerQuestion('${q.id}')">답변 등록</button>
       </div>
@@ -7309,12 +7323,32 @@ function solutionPhotoIdentity(photo){
   if(typeof photo==='string') return photo;
   return photoStorageKey(photo)||photo.url||photo.downloadUrl||'';
 }
+// 질문과 출처(교재·페이지·문제번호 정규화 키)가 정확히 같은 보관함 항목 전부. 표시 개수 제한(8장) 없이 모두 돌려준다.
+function exactSolutionsForQuestion(q){
+  if(!q || q.sourceType!=='TEXTBOOK') return [];
+  const qKey=q.sourceKey||textbookSourceKey(q.sourceCourseId,q.sourceBook,q.sourcePage,q.sourceProblemNo);
+  if(!qKey) return [];
+  return (db.solutionPhotos||[]).filter(p=>{
+    const pKey=p.sourceKey||textbookSourceKey(p.courseId,p.book,p.page,p.problemNo);
+    return !!pKey && pKey===qKey;
+  });
+}
+function questionIsKeyProblem(q){
+  try{ return exactSolutionsForQuestion(q).some(p=>p.keyProblem); }catch(e){ return false; }
+}
+// 주요문항을 켜면 보관함 저장도 같이 켜고, 보관함 저장을 끄면 주요문항 체크를 끄고 잠근다.
+function syncAnswerLibraryOptions(qId,changed){
+  const save=document.getElementById('ansSaveLib_'+qId), key=document.getElementById('ansKeyLib_'+qId);
+  if(!save||!key) return;
+  if(changed==='key' && key.checked) save.checked=true;
+  if(!save.checked){ key.checked=false; key.disabled=true; } else key.disabled=false;
+}
 function questionCanSaveToLibrary(q){
   return !!(q && q.sourceType==='TEXTBOOK' && q.sourceKey && q.sourceCourseId && q.sourceBook && q.sourcePage && q.sourceProblemNo);
 }
-async function saveAnswerPhotosToLibrary(q,answerPhotos){
+async function saveAnswerPhotosToLibrary(q,answerPhotos,opts={}){
   if(!questionCanSaveToLibrary(q)) return 0;
-  const have=new Set(autoSolutionMatchesForQuestion(q).map(p=>solutionPhotoIdentity(p.photo)).filter(Boolean));
+  const have=new Set(exactSolutionsForQuestion(q).map(p=>solutionPhotoIdentity(p.photo)).filter(Boolean));
   let saved=0;
   for(const photo of (answerPhotos||[])){
     const idt=solutionPhotoIdentity(photo);
@@ -7325,7 +7359,8 @@ async function saveAnswerPhotosToLibrary(q,answerPhotos){
       bookKey:q.sourceBookKey||sourceBookKey(q.sourceCourseId,q.sourceBook), unit:'',
       page:q.sourcePage, pageKey:q.sourcePageKey||sourcePageNorm(q.sourcePage),
       problemNo:q.sourceProblemNo, problemNoKey:q.sourceProblemNoKey||sourceProblemNorm(q.sourceProblemNo),
-      sourceKey:q.sourceKey, fromQuestionId:q.id, uploadedAt:new Date().toISOString()
+      sourceKey:q.sourceKey, fromQuestionId:q.id, uploadedAt:new Date().toISOString(),
+      ...(opts.keyProblem?{keyProblem:true}:{})
     };
     const ok=await fsSet('solutionPhotos',solId,solData);
     if(ok){
@@ -7347,9 +7382,25 @@ async function answerQuestion(qId){
   if(ok){
     syncAnsweredQuestionToProblemRepo(qId,answerText,answerPhotos).catch(e=>console.error(e));
     const chk=document.getElementById('ansSaveLib_'+qId);
-    if(chk&&chk.checked&&answerPhotos.length){
-      const n=await saveAnswerPhotosToLibrary(q,answerPhotos);
-      if(n) alert(`답변 사진 ${n}장을 학습보관함에도 저장했어요.\n같은 문제를 또 물어보면 자동으로 답변돼요.`);
+    const keyChk=document.getElementById('ansKeyLib_'+qId);
+    const saveOn=!!(chk&&chk.checked);
+    const wantKey=!!(keyChk&&keyChk.checked&&saveOn);
+    let n=0;
+    if(saveOn&&answerPhotos.length){
+      n=await saveAnswerPhotosToLibrary(q,answerPhotos,{keyProblem:wantKey});
+    }
+    // 보관함 저장이 켜져 있을 때만, 이미 있는 '정확히 같은 문제' 해설의 주요문항 표시를 맞춘다. (저장을 끄면 기존 표시는 건드리지 않는다)
+    let marked=0;
+    if(keyChk&&saveOn){
+      for(const m of exactSolutionsForQuestion(q)){
+        if(!!m.keyProblem!==wantKey){
+          const ok=await fsUpdate('solutionPhotos',m.id,{keyProblem:wantKey});
+          if(ok!==false){ m.keyProblem=wantKey; marked++; }
+        }
+      }
+    }
+    if(n||marked){
+      alert([n?`답변 사진 ${n}장을 학습보관함에도 저장했어요.\n같은 문제를 또 물어보면 자동으로 답변돼요.`:'',marked?`⭐ 주요문항 표시를 ${wantKey?'기록':'해제'}했어요.`:''].filter(Boolean).join('\n'));
     }
   }
 }
