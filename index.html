@@ -7176,7 +7176,7 @@ function renderQnaStudentSection(stuId, directorView){
       ${src.sourceType==='MNM'?`<div style="margin-top:6px;"><input value="${escapeHtml(src.problemId||'')}" placeholder="문제 ID" oninput="setNewQSourceField('${stuId}','problemId',this.value,false,${index})"></div>`:''}
       <textarea id="newQText_${index}" oninput="setQuestionDraftText('${stuId}',${index},this.value)" placeholder="이 문제에서 궁금한 점을 적어주세요" rows="2" style="width:100%;margin-top:8px;">${escapeHtml(item.text||'')}</textarea>
       <div class="row" style="margin-top:6px;"><label class="btn sm outline" style="cursor:pointer;">📷 촬영<input type="file" accept="image/*" capture="environment" onchange="uploadNewQPhoto(this,${index})" style="display:none;"></label><label class="btn sm outline" style="cursor:pointer;">🖼️ 갤러리<input type="file" accept="image/*" multiple onchange="uploadNewQPhoto(this,${index})" style="display:none;"></label></div>
-      <div style="font-size:11px;color:#a83b32;margin-top:5px;font-weight:700;">📷 사진은 이 문제 하나만 찍어서 올려요.</div>
+      <div style="font-size:11px;color:#a83b32;margin-top:5px;font-weight:700;">📷 이 문제의 사진만 올려요. (문제 + 내 풀이 과정은 여러 장 OK)</div>
       <div class="thumbs">${item.photos.map((p,i)=>`<div class="thumb-wrap"><img src="${photoSrc(p,true)}" onclick="openLightboxSet('newq','${index}','','${i}')"><button class="thumb-x" onclick="removeNewQPhoto(${index},${i})">✕</button></div>`).join('')}</div>
     </div>`;
   }).join('');
@@ -7188,7 +7188,7 @@ function renderQnaStudentSection(stuId, directorView){
   }).join(''):`<div class="empty">등록된 질문이 없어요.</div>`;
   return `<div class="card"><h3 style="margin-top:0;">💬 질문 게시판</h3>${session.mode==='student'?`<div data-one-problem-notice style="border:2px solid #c9a227;background:#fff8e1;border-radius:12px;padding:12px 14px;margin-bottom:10px;line-height:1.65;">
         <div style="font-size:15px;font-weight:900;color:#7a5b00;">📌 질문 1개 = 문제 1개!</div>
-        <div style="font-size:13px;color:#4a4630;margin-top:4px;">· 문제가 여러 개면 <b>“＋ 질문 추가”</b>를 눌러 <b>문제마다 질문을 따로</b> 만들어요.<br>· 문제번호 칸에는 <b>번호 하나만</b> (예: 7) — “2,3번”, “2~5번”은 등록이 안 돼요.<br>· 사진도 <b>그 문제 하나만</b> 찍어요. (한 문제의 풀이가 길 때만 여러 장 가능)<br>· 이렇게 해야 같은 문제 질문에 <b>바로 풀이가 자동으로</b> 달려요!</div></div>
+        <div style="font-size:13px;color:#4a4630;margin-top:4px;">· 문제가 여러 개면 <b>“＋ 질문 추가”</b>를 눌러 <b>문제마다 질문을 따로</b> 만들어요.<br>· 문제번호 칸에는 <b>번호 하나만</b> (예: 7) — “2,3번”, “2~5번”은 등록이 안 돼요.<br>· 사진은 <b>그 문제의 것만</b> 올려요. 문제 + <b>내 풀이 과정</b>은 여러 장이어도 괜찮아요!<br>· 이렇게 해야 같은 문제 질문에 <b>바로 풀이가 자동으로</b> 달려요!</div></div>
       <div style="font-size:12px;color:#6f6958;margin-bottom:8px;line-height:1.5;">교재 목록에 없는 책은 ‘목록에 없는 교재’를 선택해 이름을 적어주세요. 보관함에서 같은 출처의 풀이를 찾지 못하면 선생님 확인 대기로 전달됩니다.</div>${compose}<div class="row" style="margin-top:8px;"><button class="btn sm outline" onclick="addQuestionDraft('${stuId}')">＋ 질문 추가</button><button class="btn sm gold" onclick="submitQuestion('${stuId}')">질문 모두 등록</button></div><hr style="border:none;border-top:1px solid var(--line);margin:14px 0;">`:''}${history}</div>`;
 }
 async function uploadNewQPhoto(inputEl,index=0){

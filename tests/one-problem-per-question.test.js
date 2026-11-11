@@ -22,7 +22,7 @@ const results = []; const check = (n, ok, d) => { results.push(!!ok); console.lo
     document.getElementById('mainArea').innerHTML = renderQnaStudentSection('s1', false);
     const h = document.getElementById('mainArea').innerHTML;
     o.banner = /data-one-problem-notice/.test(h) && /질문 1개 = 문제 1개/.test(h) && /＋ 질문 추가/.test(h) && !/한 문제에 사진을 여러 장 첨부할 수 있어요/.test(h);
-    o.photoHint = /사진은 이 문제 하나만/.test(h);
+    o.photoHint = /이 문제의 사진만 올려요/.test(h) && /내 풀이 과정/.test(h) && !/그 문제 하나만/.test(h);
     const warn = document.querySelector('[data-multi-warn="0"]'); o.warnShown = warn && warn.style.display === 'block';
     // 실시간 경고: 입력 바꾸면 표시/숨김
     const inp = document.getElementById('newQProblemNo_0'); inp.value = '7'; checkMultiProblemNo(inp); o.warnHidden = warn.style.display === 'none';
