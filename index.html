@@ -10611,14 +10611,24 @@ async function problemPdfVisionRegions(pdf,pages,file,say,plans=[]){
     if(!key) throw new Error(`${n}페이지 임시 이미지가 R2에 저장되지 않았습니다.`);
     try{
       const token=await photoApiToken();
-      const res=await fetch(PROBLEM_SEGMENT_API,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token,'X-MNM-Role':session?.mode||'user'},body:JSON.stringify({cropKey:key,page:n,fileName:file.name})});
-      let data={};
-      try{ data=await readMnmJsonResponse(res); }
-      catch(parseErr){
-        if(!res.ok) throw parseErr;
-        throw new Error(`AI 페이지 분리 응답 해석 실패 · ${parseErr.message}`);
+      const requestBody=JSON.stringify({cropKey:key,page:n,fileName:file.name});
+      let data={},res;
+      for(let attempt=0;attempt<2;attempt++){
+        res=await fetch(PROBLEM_SEGMENT_API,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token,'X-MNM-Role':session?.mode||'user'},body:requestBody});
+        try{ data=await readMnmJsonResponse(res); }
+        catch(parseErr){
+          if(!res.ok) throw parseErr;
+          throw new Error(`AI 페이지 분리 응답 해석 실패 · ${parseErr.message}`);
+        }
+        if(res.ok) break;
+        const detail=String(data?.detail||'');
+        const malformedAiJson=data?.error==='Problem page segmentation failed'&&/(?:JSON|parse|position|column|array element)/i.test(detail);
+        if(attempt===0&&malformedAiJson){
+          say(`AI 응답 형식 오류 · ${n}페이지 한 번 더 분석 중…`);
+          continue;
+        }
+        throw new Error([data?.error||`페이지 분리 ${res.status}`,detail].filter(Boolean).join(' · '));
       }
-      if(!res.ok) throw new Error([data?.error||`페이지 분리 ${res.status}`,data?.detail].filter(Boolean).join(' · '));
       for(const seg of (data.segments||[])){
         const left=Number(seg.left),top=Number(seg.top),right=Number(seg.right),bottom=Number(seg.bottom);
         if(!(right>left&&bottom>top)) continue;
