@@ -1285,6 +1285,7 @@ const DIRECTOR_NAV = [
   {id:'qna', label:'질문', icon:'💬', group:'오늘의 관리'},
   {id:'kmmMakeup', label:'KMM 보강', icon:'📐', group:'오늘의 관리'},
   {id:'weekendStudy', label:'주말학습', icon:'🌙', group:'오늘의 관리'},
+  {id:'problemWorkshop', label:'문제공작소', icon:'🛠️', group:'자료'},
   {id:'problemRepo', label:'문제저장소', icon:'🧩', group:'자료'},
   {id:'solutionLib', label:'해설 보관함', icon:'🗂️', group:'자료'},
   {id:'videolib', label:'영상 보관함', icon:'🎬', group:'자료'},
@@ -2248,6 +2249,7 @@ function renderInner(){
       case 'classes': html+=renderClasses(); break;
       case 'curriculum': html+=renderCurriculum(); break;
       case 'videolib': html+=renderVideoLib(); break;
+      case 'problemWorkshop': html+=renderProblemWorkshopPage(); break;
       case 'problemRepo': html+=renderProblemRepository(); break;
       case 'solutionLib': html+=renderSolutionLib(); break;
       case 'students': html+=renderStudents(); break;
@@ -9229,7 +9231,8 @@ function problemDraftConfidence(d){
   const checks=[
     !!(d.problemText||d.rawText), !!(d.problemNo||d.no), !!d.grade, !!d.semester,
     !!(d.majorUnit||d.major), !!(d.middleUnit||d.middle), !!d.type,
-    d.type==='constructed' || !!(d.answer||d.answerMatched), !!(d.cropKey||d.cropUrl||d.imageUrl||d.originalRegion)
+    d.type==='constructed' || !!(d.answer||d.answerMatched), !!(d.cropKey||d.cropUrl||d.imageUrl||d.originalRegion),
+    !d.workshopClassificationRequired || !!(d.curriculumId&&d.primaryUnitId&&d.primaryTypeId&&d.problemTypeName)
   ];
   return Math.round(checks.filter(Boolean).length/checks.length*100);
 }
@@ -9256,6 +9259,7 @@ function problemAiQuality(d){
 }
 function problemDraftStatus(d){
   if(d.status==='saved'||d.status==='superseded'||d.status==='error'||d.status==='analyzing'||d.status==='queued') return d.status;
+  if(d.workshopClassificationRequired&&!(d.curriculumId&&d.primaryUnitId&&d.primaryTypeId&&d.problemTypeName)) return 'review';
   if(d.analysis?.needsVision && d.analysis?.status==='vision-pending') return 'review';
   const aq=problemAiQuality(d);
   if(aq.analyzed && !aq.valid) return 'review';
@@ -9389,8 +9393,10 @@ function problemSearchTokens(d){
   add(problemFieldSearchTokens('geometry',d.geometryStructure||''));
   add(problemFieldSearchTokens('ask',d.askType||''));
   (d.solutionSkills||[]).forEach(v=>add(problemFieldSearchTokens('skill',v)));
-  // 자유검색은 본문/출처의 단어 단위만 인덱싱해 배열 폭증을 방지한다.
-  problemLexemes([problemReadableProblemText(d),d.sourceName||d.bookName||''].join(' ')).slice(0,35).forEach(w=>out.add('q:'+problemTokenNorm(w)));
+  add(problemFieldSearchTokens('type',d.primaryTypeId||'')); add(problemFieldSearchTokens('type',d.problemTypeName||''));
+  (d.conditionTags||[]).forEach(v=>add(problemFieldSearchTokens('condition',v)));
+  (d.representationTags||[]).forEach(v=>add(problemFieldSearchTokens('representation',v)));
+  problemLexemes([problemReadableProblemText(d),d.sourceName||d.bookName||'',d.primaryTypeId||'',d.problemTypeName||''].join(' ')).slice(0,45).forEach(w=>out.add('q:'+problemTokenNorm(w)));
   return [...out].filter(Boolean).slice(0,180);
 }
 function problemPrimarySearchToken(f){
@@ -9413,6 +9419,9 @@ function problemDraftPublicData(d){
     grade:d.grade||'', semester:d.semester||'', majorUnit:d.majorUnit||d.major||'', middleUnit:d.middleUnit||d.middle||'',
     mainConceptId:d.mainConceptId||'', relatedConceptIds:d.relatedConceptIds||[], conceptTags:d.conceptTags||[], geometryStructure:d.geometryStructure||'',
     askType:d.askType||'', solutionSkills:d.solutionSkills||[], predictedDifficulty:d.predictedDifficulty||'',
+    curriculumId:d.curriculumId||'', primaryUnitId:d.primaryUnitId||'', primaryTypeId:d.primaryTypeId||'', problemTypeName:d.problemTypeName||'',
+    conditionTags:Array.isArray(d.conditionTags)?d.conditionTags:[], representationTags:Array.isArray(d.representationTags)?d.representationTags:[],
+    problemRole:d.problemRole||'', difficultyConfirmed:Number(d.difficultyConfirmed)||null,
     analysis:{version:d.analysis?.version||PROBLEM_ANALYSIS_VERSION,method:d.analysis?.method||d.analysis?.status||'reviewed',reviewedAt:d.analysis?.reviewedAt||null},
     imageUrl:d.cropUrl||d.imageUrl||'', cropKey:d.cropKey||'', cropHash:d.cropHash||'', sourceId:d.sourceId||'', sourceName:d.sourceName||'',
     sourcePage:d.page||d.sourcePage||null, sourceProblemNo:d.problemNo||d.no||d.sourceProblemNo||'', occurrenceId:d.id||'',
@@ -9888,7 +9897,7 @@ async function createProblemDraftsFromManifest(packet,{confirmWarnings=true}={})
   try{
     for(let i=0;i<problems.length;i++){
       const x=problems[i]||{};
-      let draft={...x,sourceId,sourceName:src.title||src.fileName||'',problemNo:x.problemNo||x.no||String(i+1).padStart(2,'0'),
+      let draft={...x,sourceId,sourceName:src.title||src.fileName||'',workshopClassificationRequired:src.sourceType==='pdf',problemNo:x.problemNo||x.no||String(i+1).padStart(2,'0'),
         grade:x.grade||src.grade||'',semester:x.semester||src.semester||'',majorUnit:x.majorUnit||src.majorUnit||'',middleUnit:x.middleUnit||src.middleUnit||'',
         status:'review',ingestVersion:'v87.3',createdAt:now};
       draft=mergeProblemRuleAnalysis(draft);
@@ -11153,6 +11162,7 @@ function problemDraftMissing(d){
   if((d.type||'short')!=='constructed'&&!String(d.answer||'').trim()) miss.push('정답 미확인');
   if(!(d.cropKey||d.cropUrl||d.imageUrl||d.originalRegion)) miss.push('원본 crop 없음');
   if(d.analysis?.needsVision&&d.analysis?.status==='vision-pending') miss.push('이미지분석 대기');
+  if(d.workshopClassificationRequired&&!(d.curriculumId&&d.primaryUnitId&&d.primaryTypeId&&d.problemTypeName)) miss.push('M&m 세부 유형 분류 미확정');
   const aq=problemAiQuality(d);
   if(aq.analyzed&&!aq.valid) miss.push('AI분석 검토: '+aq.issues.join(', '));
   return miss;
@@ -11200,7 +11210,7 @@ function renderProblemIngest(){
     return true;
   });
   const sum=problemIngestSummary(drafts);
-  return `<div class="card" style="margin-bottom:12px;"><div class="row between"><div><b>📥 PDF 수집 파이프라인</b><div style="font-size:11px;color:#8a8674;margin-top:3px;">PDF·학습보관함·학생질문 → 문제후보 통합 → 자동분석·중복연결 → 문제저장소</div></div><div class="row" style="gap:8px;flex-wrap:wrap;"><label class="btn gold" style="cursor:pointer;min-height:48px;display:inline-flex;align-items:center;justify-content:center;padding:0 18px;font-size:14px;">📄 PDF 파일 올리기<input id="problemPdfAutoInput" type="file" accept="application/pdf,.pdf" multiple style="display:none" onchange="autoIngestProblemPdf(this)"></label><button class="btn outline" onclick="loadProblemIngestQueue()">새로고침</button><button id="problemAnalyzeAllBtn" class="btn outline" onclick="analyzePendingProblemDrafts()" ${problemStore.analysisRun.active?'disabled style="opacity:.6;cursor:wait;"':''}>${problemStore.analysisRun.active?`AI 분석 ${problemStore.analysisRun.done}/${problemStore.analysisRun.total}`:'필요문항 AI 일괄분석'}</button><button class="btn outline" onclick="registerProblemSourceFromManifest()">manifest 등록</button><button id="problemSaveAllBtn" class="btn gold" ${problemStore.saveRun.active?'disabled style="opacity:.6;cursor:wait;"':''} onclick="saveAllReadyProblemDrafts()">${problemStore.saveRun.active?`저장 중 ${problemStore.saveRun.done}/${problemStore.saveRun.total}`:'저장가능 일괄저장'}</button></div></div>
+  return `<div class="card" style="margin-bottom:12px;"><div class="row between"><div><b>🛠️ 문제공작소 작업대</b><div style="font-size:11px;color:#8a8674;margin-top:3px;">PDF 등록 → 문항 분할·분류 검수 → 선택 문항을 문제저장소에 저장</div></div><div class="row" style="gap:8px;flex-wrap:wrap;"><label class="btn gold" style="cursor:pointer;min-height:48px;display:inline-flex;align-items:center;justify-content:center;padding:0 18px;font-size:14px;">📄 PDF 파일 올리기<input id="problemPdfAutoInput" type="file" accept="application/pdf,.pdf" multiple style="display:none" onchange="autoIngestProblemPdf(this)"></label><button class="btn outline" onclick="loadProblemIngestQueue()">새로고침</button><button id="problemAnalyzeAllBtn" class="btn outline" onclick="analyzePendingProblemDrafts()" ${problemStore.analysisRun.active?'disabled style="opacity:.6;cursor:wait;"':''}>${problemStore.analysisRun.active?`AI 분석 ${problemStore.analysisRun.done}/${problemStore.analysisRun.total}`:'필요문항 AI 일괄분석'}</button><button class="btn outline" onclick="registerProblemSourceFromManifest()">manifest 등록</button><button id="problemSaveAllBtn" class="btn gold" ${problemStore.saveRun.active?'disabled style="opacity:.6;cursor:wait;"':''} onclick="saveAllReadyProblemDrafts()">${problemStore.saveRun.active?`저장 중 ${problemStore.saveRun.done}/${problemStore.saveRun.total}`:'저장가능 일괄저장'}</button></div></div>
   ${problemStore.saveRun.message?`<div id="problemSaveRunStatus" style="margin-top:8px;font-size:12px;font-weight:700;color:${problemStore.saveRun.failed?'#b5473d':'#6f6a59'};">${escapeHtml(problemStore.saveRun.message)}</div>`:''}
   ${problemStore.saveRun.errors?.length?`<div style="margin-top:7px;padding:9px 10px;background:#fff1ef;border:1px solid #f2c8c2;border-radius:8px;font-size:11px;line-height:1.65;color:#8b3f36;"><b>저장 실패 상세</b><br>${problemStore.saveRun.errors.slice(0,8).map(x=>`${escapeHtml(String(x.no))} · ${escapeHtml(String(x.error))}`).join('<br>')}<div style="margin-top:7px;"><button class="btn sm outline" onclick="saveAllReadyProblemDrafts()">실패/남은 저장가능 문항 다시 저장</button></div></div>`:''}
   <div style="margin-top:10px;padding:10px;background:#faf8f2;border-radius:9px;font-size:12px;line-height:1.7;"><b>저장 원칙</b> · PDF/학습보관함/학생질문은 모두 같은 문제저장소로 유입 · 문제/도형 원본은 <code>problems</code> · 유입경로는 <code>problemSources/problemDrafts</code> · 정답/선생님 해설은 학생 비공개 <code>problemKeys</code></div><div id="problemPdfAutoStatus" style="margin-top:8px;font-size:12px;color:${problemStore.analysisRun.error?'#b5473d':problemStore.analysisRun.active?'#7a5b00':'#6f6a59'};font-weight:${problemStore.analysisRun.active?'700':'400'};">${escapeHtml(problemStore.analysisRun.message||'태블릿·PC에서 PDF 파일을 선택하세요 · 여러 PDF 동시 선택 가능 · 선택 후 자동분리 시작')}</div></div>
@@ -11221,7 +11231,7 @@ ${currentSubState._problemAiDetail?.[d.id]?`<div style="margin-top:8px;padding:1
   <div><b>AI 모델 자신감</b> · ${Math.round(Number(d.analysis?.confidence||0)*100)}% <span style="color:#8a8674;">(참고값)</span></div>
   ${!problemAiQuality(d).valid?`<div style="margin-top:5px;color:#a56b25;"><b>자동 검토사유</b> · ${escapeHtml(problemAiQuality(d).issues.join(' · '))}</div>`:''}
 </div>`:''}`:''}
-<label style="display:block;font-size:11px;margin-top:9px;">정답 ${d.answerMethod==='answer-table-choice'?'<span class="badge green">정답표 자동연결</span>':'<span class="badge yellow">확인 필요</span>'}<div class="row" style="gap:6px;margin-top:4px;"><input value="${escapeHtml(d.answer||'')}" placeholder="정답 확인" style="max-width:180px;" onchange="updateProblemDraftAnswer('${d.id}',this.value)"></div></label>${miss.length?`<div style="font-size:11px;color:#a56b25;margin-top:7px;">검토필요 · ${miss.map(escapeHtml).join(' · ')}</div>`:`<div style="font-size:11px;color:#4f7a52;margin-top:7px;">필수항목 확인 완료</div>`}${problemDraftStatus(d)==='ready'?`<button class="btn sm gold" style="margin-top:8px;" onclick="saveProblemDraft('${d.id}')">문제저장소에 저장</button>`:''}</div></div></div>`}).join(''):'<div class="empty">현재 조건의 수집 초안이 없어요.<br><span style="font-size:11px;">다음 단계에서 PDF 원본 등록/문항분리 기능이 이 대기열을 채웁니다.</span></div>'}</div>`;
+${renderProblemWorkshopClassificationEditor(d)}<label style="display:block;font-size:11px;margin-top:9px;">정답 ${d.answerMethod==='answer-table-choice'?'<span class="badge green">정답표 자동연결</span>':'<span class="badge yellow">확인 필요</span>'}<div class="row" style="gap:6px;margin-top:4px;"><input value="${escapeHtml(d.answer||'')}" placeholder="정답 확인" style="max-width:180px;" onchange="updateProblemDraftAnswer('${d.id}',this.value)"></div></label>${miss.length?`<div style="font-size:11px;color:#a56b25;margin-top:7px;">검토필요 · ${miss.map(escapeHtml).join(' · ')}</div>`:`<div style="font-size:11px;color:#4f7a52;margin-top:7px;">필수항목 확인 완료</div>`}${problemDraftStatus(d)==='ready'?`<button class="btn sm gold" style="margin-top:8px;" onclick="saveProblemDraft('${d.id}')">문제저장소에 저장</button>`:''}</div></div></div>`}).join(''):'<div class="empty">현재 조건의 수집 초안이 없어요.<br><span style="font-size:11px;">다음 단계에서 PDF 원본 등록/문항분리 기능이 이 대기열을 채웁니다.</span></div>'}</div>`;
 }
 
 function problemText(p){ return p?.problemText || p?.text || p?.stem || p?.title || ''; }
@@ -11232,7 +11242,7 @@ function problemFilteredItems(){
   return problemStore.items.filter(p=>{
     const concepts=[p.mainConceptId,...(p.relatedConceptIds||[]),...(p.conceptTags||[])].filter(Boolean).join(' ');
     const skills=(p.solutionSkills||[]).join(' ');
-    const hay=[problemText(p),p.sourceName,p.bookName,p.grade,p.semester,p.majorUnit,p.major,p.middleUnit,p.middle,p.problemNo,concepts,p.geometryStructure,p.askType,skills].join(' ').toLowerCase();
+    const hay=[problemText(p),p.sourceName,p.bookName,p.grade,p.semester,p.majorUnit,p.major,p.middleUnit,p.middle,p.problemNo,p.curriculumId,p.primaryUnitId,p.primaryTypeId,p.problemTypeName,p.problemRole,p.difficultyConfirmed,(p.conditionTags||[]).join(' '),(p.representationTags||[]).join(' '),concepts,p.geometryStructure,p.askType,skills].join(' ').toLowerCase();
     return (!q||hay.includes(q)) && (!f.grade||p.grade===f.grade) && (!f.semester||p.semester===f.semester)
       && (!f.major||String(p.majorUnit||p.major||'').includes(f.major)) && (!f.middle||String(p.middleUnit||p.middle||'').includes(f.middle))
       && (!f.concept||concepts.includes(f.concept)) && (!f.geometry||String(p.geometryStructure||'').includes(f.geometry))
@@ -11285,13 +11295,66 @@ function setProblemFilter(key,value){
 }
 function toggleProblemSelect(id){ problemStore.selected.has(id)?problemStore.selected.delete(id):problemStore.selected.add(id); render(); }
 function clearProblemSelection(){ problemStore.selected.clear(); render(); }
+
+const PROBLEM_WORKSHOP_M31_TYPES = [
+  ['M3-1-U03-T01','이차방정식 여부 판별'],['M3-1-U03-T02','주어진 수가 근인지 대입 확인'],['M3-1-U03-T03','한 근으로 계수 결정'],
+  ['M3-1-U03-T04','인수분해로 해 구하기'],['M3-1-U03-T05','중근 조건으로 근·계수 구하기'],['M3-1-U03-T06','제곱근을 이용해 해 구하기'],
+  ['M3-1-U03-T07','완전제곱식으로 변형해 해 구하기'],['M3-1-U03-T08','근의 공식으로 해 구하기'],['M3-1-U03-T09','판별식으로 근의 개수·계수 범위 판정'],
+  ['M3-1-U03-T10','주어진 근으로 방정식 구성'],['M3-1-U03-T11','근과 계수의 관계로 식 계산·조건 추론'],['M3-1-U03-T12','켤레근으로 근·계수 결정'],
+  ['M3-1-U03-T13','정수 관계·수열 합 문장제 모델링'],['M3-1-U03-T14','높이·시간 운동 문장제 모델링'],['M3-1-U03-T15','도형 넓이 문장제 모델링'],
+  ['M3-1-U03-T16','상자 부피 문장제 모델링'],['M3-1-U03-T17','잘못 본 계수 정보로 방정식 복원'],['M3-1-U03-T18','두 방정식의 공통근·근 연결']
+];
+function problemWorkshopIsM31Equation(d){
+  return /중3/.test(String(d.grade||'')) && /1/.test(String(d.semester||'')) && /이차방정식/.test(String(d.middleUnit||d.majorUnit||''));
+}
+function renderProblemWorkshopClassificationEditor(d){
+  const id=escapeHtml(d.id||'');
+  const field=(key,label,value,placeholder)=>'<label style="display:block;font-size:10px;">'+label+'<input id="pw_'+id+'_'+key+'" value="'+escapeHtml(value||'')+'" placeholder="'+escapeHtml(placeholder||'')+'" style="width:100%;margin-top:3px;font-size:12px;"></label>';
+  const isM31=problemWorkshopIsM31Equation(d);
+  const options=PROBLEM_WORKSHOP_M31_TYPES.map(x=>'<option value="'+x[0]+'" '+(d.primaryTypeId===x[0]?'selected':'')+'>'+x[0]+' · '+escapeHtml(x[1])+'</option>').join('');
+  const roleOptions=[['','선택'],['concept_example','개념 예제'],['basic','기본'],['representative','대표'],['application','응용'],['advanced','심화'],['challenge','도전']].map(x=>'<option value="'+x[0]+'" '+(d.problemRole===x[0]?'selected':'')+'>'+x[1]+'</option>').join('');
+  const diffOptions=[['','미확정'],['1','1 기초'],['2','2 기본'],['3','3 보통'],['4','4 어려움'],['5','5 최상']].map(x=>'<option value="'+x[0]+'" '+(String(d.difficultyConfirmed||'')===x[0]?'selected':'')+'>'+x[1]+'</option>').join('');
+  return '<div style="margin-top:10px;padding:10px;background:#fbfaf6;border:1px solid var(--line);border-radius:9px;"><div style="font-size:11px;font-weight:700;margin-bottom:7px;">M&amp;m 분류 확정 · 저장 전 문항별로 확인</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;">'+
+    field('curriculumId','과정 코드',d.curriculumId,'예: M3-1 / H-ALG')+
+    field('primaryUnitId','기준 단원 ID',d.primaryUnitId,'예: M3-1-U03')+
+    (isM31?'<label style="display:block;font-size:10px;">세부 풀이 유형<select id="pw_'+id+'_typeSelect" onchange="fillProblemWorkshopType(\''+id+'\',this.value)" style="width:100%;margin-top:3px;font-size:12px;"><option value="">유형 선택</option>'+options+'</select></label>':'')+
+    field('primaryTypeId','세부 유형 ID',d.primaryTypeId,isM31?'목록 선택 시 자동 입력':'과정-단원-T번호')+
+    field('problemTypeName','세부 유형명',d.problemTypeName,'문제 풀이 유형')+
+    '<label style="display:block;font-size:10px;">난이도<select id="pw_'+id+'_difficulty" style="width:100%;margin-top:3px;font-size:12px;">'+diffOptions+'</select></label>'+
+    '<label style="display:block;font-size:10px;">문항 역할<select id="pw_'+id+'_role" style="width:100%;margin-top:3px;font-size:12px;">'+roleOptions+'</select></label>'+
+    field('conditionTags','조건 태그',Array.isArray(d.conditionTags)?d.conditionTags.join(', '):d.conditionTags,'예: 정수근, 매개변수')+
+    field('representationTags','표현 태그',Array.isArray(d.representationTags)?d.representationTags.join(', '):d.representationTags,'예: 식, 그래프, 도형')+
+    '</div><button class="btn sm outline" style="margin-top:4px;" onclick="saveProblemWorkshopTaxonomy(\''+id+'\')">분류 저장</button>'+
+    (d.taxonomyReviewStatus==='confirmed'?'<span class="badge green" style="margin-left:6px;">분류 확인됨</span>':'<span style="font-size:10px;color:#8a8674;margin-left:6px;">과정·단원·유형 ID와 유형명을 입력해주세요.</span>')+'</div>';
+}
+function fillProblemWorkshopType(id,typeId){
+  const row=PROBLEM_WORKSHOP_M31_TYPES.find(x=>x[0]===typeId); if(!row)return;
+  const typeEl=document.getElementById('pw_'+id+'_primaryTypeId'), nameEl=document.getElementById('pw_'+id+'_problemTypeName');
+  const courseEl=document.getElementById('pw_'+id+'_curriculumId'), unitEl=document.getElementById('pw_'+id+'_primaryUnitId');
+  if(typeEl)typeEl.value=row[0]; if(nameEl)nameEl.value=row[1]; if(courseEl)courseEl.value='M3-1'; if(unitEl)unitEl.value='M3-1-U03';
+}
+async function saveProblemWorkshopTaxonomy(id){
+  const d=problemStore.ingest.drafts.find(x=>x.id===id); if(!d)return;
+  const value=key=>String(document.getElementById('pw_'+id+'_'+key)?.value||'').trim();
+  const tags=key=>value(key).split(/[,·|;/\n]+/).map(x=>x.trim()).filter(Boolean);
+  const patch={curriculumId:value('curriculumId'),primaryUnitId:value('primaryUnitId'),primaryTypeId:value('primaryTypeId'),problemTypeName:value('problemTypeName'),difficultyConfirmed:Number(value('difficulty'))||null,problemRole:value('role'),conditionTags:tags('conditionTags'),representationTags:tags('representationTags'),taxonomyReviewStatus:'confirmed',taxonomyReviewedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+  if(!patch.curriculumId||!patch.primaryUnitId||!patch.primaryTypeId||!patch.problemTypeName){alert('과정 코드, 단원 ID, 세부 유형 ID와 유형명을 모두 입력해주세요.');return;}
+  const ok=await fsUpdate('problemDrafts',id,patch); if(!ok){alert('분류 저장에 실패했어요.');return;}
+  Object.assign(d,patch); d.confidence=problemDraftConfidence(d); d.status=problemDraftStatus(d); render();
+}
+function renderProblemWorkshopPage(){
+  return '<h1 class="page-title">🛠️ 문제공작소</h1><p class="page-sub">PDF에서 문항을 분리하고, 유형·단원·난이도를 검수해 초안으로 저장합니다. 직접 문제저장소에 저장한 문항만 정식 DB에 추가됩니다.</p>'+
+    '<div class="card" style="margin-bottom:12px;border-left:4px solid var(--gold);"><b>작업 순서</b><div style="font-size:12px;line-height:1.8;margin-top:5px;">① PDF 등록·문항 분할 → ② 원본 crop·정답·분류 검수 → ③ 문항별 저장 승인 → ④ 문제저장소에 누적</div><div style="font-size:11px;color:#7a7666;margin-top:4px;">전체 자료를 한꺼번에 넣지 않아도 됩니다. 처음에는 한 PDF의 일부 문항만 처리해도 돼요.</div><button class="btn sm outline" style="margin-top:8px;" onclick="goto(\'problemRepo\')">승인된 문제 보기</button></div>'+renderProblemIngest();
+}
+
 function renderProblemRepository(){
   const tab=problemStore.tab||'library';
   if(tab==='ingest') return `<h1 class="page-title">🧩 문제저장소</h1><p class="page-sub">문제 원본과 정답키를 분리해 수집합니다.</p><div class="tabs2"><button onclick="setProblemRepoTab('library')">저장된 문제</button><button class="active" onclick="setProblemRepoTab('ingest')">PDF 수집·검토</button></div>${renderProblemIngest()}`;
   ensureProblemRepositoryLoaded();
   const f=problemStore.filter, rows=problemFilteredItems(), selected=problemStore.selected.size;
   const grades=['초4','초5','초6','중1','중2','중3','고1','고2','고3'];
-  return `<h1 class="page-title">🧩 문제저장소</h1><p class="page-sub">문제는 로그인 때 불러오지 않습니다. 검색 조건이 있으면 서버 인덱스로 후보를 좁힌 뒤 60개 단위로 조회합니다.</p><div class="tabs2"><button class="active" onclick="setProblemRepoTab('library')">저장된 문제</button><button onclick="setProblemRepoTab('ingest')">PDF 수집·검토</button></div>
+  return `<h1 class="page-title">🧩 문제저장소</h1><p class="page-sub">문제는 로그인 때 불러오지 않습니다. 검색 조건이 있으면 서버 인덱스로 후보를 좁힌 뒤 60개 단위로 조회합니다.</p><div class="tabs2"><span class="badge gray">검수 승인된 문제 DB</span><button onclick="goto('problemWorkshop')">🛠️ 문제공작소 열기</button></div>
   <div class="card" style="margin-bottom:12px;"><div class="row" style="gap:8px;flex-wrap:wrap;align-items:end;">
     <label style="flex:2;min-width:180px;font-size:11px;">검색<input value="${escapeHtml(f.q)}" oninput="setProblemFilter('q',this.value)" placeholder="문제·교재·출처 검색" style="width:100%;margin-top:4px;"></label>
     <label style="min-width:105px;font-size:11px;">학년<select onchange="setProblemFilter('grade',this.value)" style="width:100%;margin-top:4px;"><option value="">전체</option>${grades.map(x=>`<option ${f.grade===x?'selected':''}>${x}</option>`).join('')}</select></label>
