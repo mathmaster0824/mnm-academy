@@ -228,8 +228,40 @@ function segmentationPrompt(payload) {
   return `이 이미지는 한국 수학 교재/PDF의 한 페이지다. 문제은행 수집을 위해 이 페이지에 실제로 존재하는 독립 문항의 경계를 찾아라.
 문항번호가 보이면 그대로 숫자로 읽고, 각 문항 전체(문제문장, 보기, 도형, 표)를 빠짐없이 포함하는 사각형을 이미지 전체 기준 0~1 좌표로 반환한다.
 머리말, 쪽번호, 단원제목, 정답표, 해설만 있는 영역은 문항으로 만들지 않는다. 2단 편집이면 좌우 문항을 각각 분리한다.
-반드시 JSON만 반환한다. 형식: {"segments":[{"problemNo":"1","box":{"left":0.0,"top":0.0,"right":0.5,"bottom":0.5}}]}.
+최대 20개까지만 반환한다. 좌표는 0~1 사이 숫자다. 각 문항은 아래처럼 좌표를 평탄하게 적어라.
+반드시 JSON 객체 하나만 반환한다. 설명, 마크다운, 코드펜스, 주석은 쓰지 않는다.
+형식: {"segments":[{"problemNo":"1","left":0.05,"top":0.08,"right":0.95,"bottom":0.30}]}
 문항이 없으면 {"segments":[]}. 페이지 번호: ${cleanString(payload.page,20)} / 파일: ${cleanString(payload.fileName,180)}`;
+}
+
+async function segmentProblemPageWithRetry(env, image, payload) {
+  const system = "You locate math problem regions on a page image. Return one compact JSON object only.";
+  const run = (content, maxTokens) => runAnalysisModel(env, {
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content },
+    ],
+    image,
+    max_tokens: maxTokens,
+    temperature: 0.05,
+  });
+
+  const firstOutput = await run(segmentationPrompt(payload), 2048);
+  try {
+    return parseModelJson(firstOutput);
+  } catch (firstError) {
+    // The vision model sometimes returns malformed/truncated JSON. Retry once with
+    // a shorter instruction so one bad completion does not immediately abort a PDF.
+    const retryPrompt = `다시 답하라. 첨부 페이지의 독립된 수학 문항 경계만 찾는다. 각 문항 전체를 포함하는 0~1 좌표를 쓴다. 좌표는 left,top,right,bottom 숫자다. 최대 20개.
+JSON 객체 하나만 출력: {"segments":[{"problemNo":"1","left":0.05,"top":0.08,"right":0.95,"bottom":0.30}]}
+문항이 없으면 {"segments":[]}. 설명이나 다른 문자는 출력하지 않는다. 페이지 ${cleanString(payload.page,20)}.`;
+    try {
+      const retryOutput = await run(retryPrompt, 2048);
+      return parseModelJson(retryOutput);
+    } catch (retryError) {
+      throw new Error(`AI 응답 JSON을 읽지 못했습니다. 첫 시도: ${cleanString(firstError?.message,240)} · 재시도: ${cleanString(retryError?.message,240)}`);
+    }
+  }
 }
 
 function analysisPrompt(payload) {
@@ -422,23 +454,7 @@ export default {
         const payload=await request.json();
         const {key,image}=await loadProblemImage(payload,env);
 
-        const output=await runAnalysisModel(env,{
-          messages:[
-            {
-              role:"system",
-              content:"You locate math problem regions on a page image. Return JSON only."
-            },
-            {
-              role:"user",
-              content:segmentationPrompt(payload)
-            }
-          ],
-          image,
-          max_tokens:1200,
-          temperature:0.05
-        });
-
-        const parsed=parseModelJson(output);
+        const parsed=await segmentProblemPageWithRetry(env,image,payload);
 
         return json({
           ok:true,
