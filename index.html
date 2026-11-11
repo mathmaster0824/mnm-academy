@@ -1977,7 +1977,7 @@ function weekDates(weekStart){
    휴대폰은 앱 탭을 며칠씩 열어 둔 채로 쓰기 때문에, 고친 버전이 올라가도 예전 화면이 계속 돌 수 있다.
    예전 화면은 지금 보안 규칙과 맞지 않아 저장이 막힐 수 있으므로, 새 버전이 올라오면 새로 고침을 안내한다.
    (배포할 때마다 APP_BUILD 값을 바꾼다) */
-const APP_BUILD='2026-11-12-pdf-large';
+const APP_BUILD='2026-11-13a';
 let newVersionReady=false, versionCheckAt=0;
 async function checkAppVersion(force){
   if(location.protocol==='file:') return false;
@@ -7064,8 +7064,28 @@ function toggleOtherQuestionCourses(stuId,index=0){
   d.sourceCourseId=''; d.sourceBook=''; d.sourceBookNotListed=false; d.sourcePage=''; d.sourceProblemNo='';
   render();
 }
+// 같은 교재·같은 페이지에서 다른 문제를 질문할 때: 출처(학년학기·교재·페이지)를 복사한 새 질문 카드를 만들고 문제번호만 비워 둔다.
+function addSameSourceQuestionDraft(stuId,index){
+  rememberQuestionTexts();
+  const items=questionDraftItems(stuId), from=(items[index]||{}).source||{};
+  const src={sourceType:'TEXTBOOK',sourceCourseId:from.sourceCourseId||'',sourceBook:from.sourceBook||'',sourceBookNotListed:!!from.sourceBookNotListed,sourcePage:from.sourcePage||'',sourceProblemNo:'',showAllCourses:!!from.showAllCourses};
+  items.splice(index+1,0,{text:'',photos:[],source:src});
+  render();
+  setTimeout(()=>{ const el=document.getElementById('newQProblemNo_'+(index+1)); if(el){ el.focus(); try{ el.scrollIntoView({block:'center'}); }catch(e){} } },60);
+}
 function addQuestionDraft(stuId){rememberQuestionTexts();questionDraftItems(stuId).push({text:'',photos:[],source:{}});render();}
 function removeQuestionDraft(stuId,index){rememberQuestionTexts();const items=questionDraftItems(stuId);if(items.length>1){items.splice(index,1);render();}}
+// 문제번호 칸에 여러 문제를 한 번에 적었는지(쉼표·물결·및·& 등, 또는 "2번 3번") 검사한다. 하이픈은 "3-1" 같은 정상 번호가 있어 검사하지 않는다.
+function hasMultipleProblemNumbers(v){
+  const t=String(v||'').normalize('NFKC').trim();
+  if(!t) return false;
+  return /[,;~∼&]|\/|및|그리고|와\s*\d|과\s*\d/.test(t) || /\d\s*번\s*\d/.test(t);
+}
+const ONE_PROBLEM_MSG='한 문제씩 질문해 주세요. 문제가 여러 개면 “＋ 질문 추가”를 눌러 질문을 나눠 주세요.';
+function checkMultiProblemNo(el){
+  const box=el&&el.parentElement&&el.parentElement.parentElement&&el.parentElement.parentElement.querySelector('[data-multi-warn]');
+  if(box) box.style.display=hasMultipleProblemNumbers(el.value)?'block':'none';
+}
 function questionSourceLabel(q){
   const t=q?.sourceType;
   if(t==='TEXTBOOK'){
@@ -7143,9 +7163,11 @@ function renderQnaStudentSection(stuId, directorView){
           <select id="newQCourse_${index}" onchange="setNewQSourceField('${stuId}','sourceCourseId',this.value,true,${index})"><option value="">학년·학기 선택</option>${courseList.map(c=>`<option value="${c.id}" ${src.sourceCourseId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select>
           ${src.sourceBookNotListed?`<input id="newQBookCustom_${index}" value="${escapeHtml(src.sourceBook||'')}" placeholder="교재명을 입력하세요" ${src.sourceCourseId?'':'disabled'} oninput="setNewQSourceField('${stuId}','sourceBook',this.value,false,${index})">`:`<select id="newQBook_${index}" ${src.sourceCourseId?'':'disabled'} onchange="this.value==='__OTHER_BOOK__'?setNewQSourceField('${stuId}','sourceBookNotListed','true',true,${index}):setNewQSourceField('${stuId}','sourceBook',this.value,false,${index})"><option value="">교재 선택</option>${books.map(b=>`<option value="${escapeHtml(b)}" ${src.sourceBook===b?'selected':''}>${escapeHtml(b)}</option>`).join('')}<option value="__OTHER_BOOK__">목록에 없는 교재 (직접 입력)</option></select>`}
           <input id="newQPage_${index}" inputmode="numeric" value="${escapeHtml(src.sourcePage||'')}" placeholder="페이지" oninput="setNewQSourceField('${stuId}','sourcePage',this.value,false,${index})">
-          <input id="newQProblemNo_${index}" value="${escapeHtml(src.sourceProblemNo||'')}" placeholder="문제번호" oninput="setNewQSourceField('${stuId}','sourceProblemNo',this.value,false,${index})">
+          <input id="newQProblemNo_${index}" value="${escapeHtml(src.sourceProblemNo||'')}" placeholder="문제번호 (한 문제만)" oninput="setNewQSourceField('${stuId}','sourceProblemNo',this.value,false,${index});checkMultiProblemNo(this)">
         </div>
+        <div data-multi-warn="${index}" style="display:${hasMultipleProblemNumbers(src.sourceProblemNo)?'block':'none'};margin-top:6px;padding:7px 9px;border-radius:8px;background:#fdeceb;color:#a83b32;font-size:12px;font-weight:700;line-height:1.5;">⚠️ 문제번호에 여러 문제를 적은 것 같아요. ${ONE_PROBLEM_MSG}</div>
         ${src.sourceBookNotListed?`<div style="font-size:10.5px;color:#7a5b00;margin-top:6px;">교재명을 적어주세요. 보관함에 같은 출처의 풀이가 있으면 자동 연결되고, 없으면 선생님 확인 대기로 전달됩니다.</div>`:''}
+        <button class="btn sm gold" data-same-page-add="${index}" style="font-size:11px;margin-top:7px;margin-right:6px;" onclick="addSameSourceQuestionDraft('${stuId}',${index})">＋ 같은 페이지 다른 문제 추가</button>
         <button class="btn sm outline" style="font-size:10px;margin-top:7px;" onclick="toggleOtherQuestionCourses('${stuId}',${index})">${src.showAllCourses?'현재 학습과정만 보기':'다른 과정 질문'}</button>
         ${!courseList.length?`<div style="font-size:10.5px;color:#a26b28;margin-top:6px;">현재 학습과정이 자동으로 잡히지 않았어요. ‘다른 과정 질문’을 눌러 선택해주세요.</div>`:''}
         ${src.sourceCourseId&&!books.length?`<div style="font-size:10.5px;color:#a83b32;margin-top:6px;">이 과정에 등록된 교재가 없어요. 원장 화면의 누적 진도 현황에서 교재를 먼저 등록해주세요.</div>`:''}
@@ -7154,6 +7176,7 @@ function renderQnaStudentSection(stuId, directorView){
       ${src.sourceType==='MNM'?`<div style="margin-top:6px;"><input value="${escapeHtml(src.problemId||'')}" placeholder="문제 ID" oninput="setNewQSourceField('${stuId}','problemId',this.value,false,${index})"></div>`:''}
       <textarea id="newQText_${index}" oninput="setQuestionDraftText('${stuId}',${index},this.value)" placeholder="이 문제에서 궁금한 점을 적어주세요" rows="2" style="width:100%;margin-top:8px;">${escapeHtml(item.text||'')}</textarea>
       <div class="row" style="margin-top:6px;"><label class="btn sm outline" style="cursor:pointer;">📷 촬영<input type="file" accept="image/*" capture="environment" onchange="uploadNewQPhoto(this,${index})" style="display:none;"></label><label class="btn sm outline" style="cursor:pointer;">🖼️ 갤러리<input type="file" accept="image/*" multiple onchange="uploadNewQPhoto(this,${index})" style="display:none;"></label></div>
+      <div style="font-size:11px;color:#a83b32;margin-top:5px;font-weight:700;">📷 사진은 이 문제 하나만 찍어서 올려요.</div>
       <div class="thumbs">${item.photos.map((p,i)=>`<div class="thumb-wrap"><img src="${photoSrc(p,true)}" onclick="openLightboxSet('newq','${index}','','${i}')"><button class="thumb-x" onclick="removeNewQPhoto(${index},${i})">✕</button></div>`).join('')}</div>
     </div>`;
   }).join('');
@@ -7163,7 +7186,10 @@ function renderQnaStudentSection(stuId, directorView){
     const waitingNote=q.status==='대기'?`<div style="font-size:11px;color:#7a5b00;margin-top:5px;">${q.solutionLibraryLookupFailed?'보관함을 자동 확인하지 못해 선생님이 출처를 확인하고 있어요.':'보관함에서 연결할 풀이를 찾지 못해 선생님 확인 대기 중이에요.'}</div>`:'';
     return `<div style="padding:10px 0;border-bottom:1px solid var(--line);"><div class="row between"><span style="font-size:12px;color:#9c9880;">${fmtDate(q.date)}</span><span class="badge ${q.status==='답변완료'?'green':'yellow'}">${statusText}</span></div>${waitingNote}${questionSourceLabel(q)?`<div style="font-size:11px;color:#6b6858;margin-top:5px;"><b>출처</b> · ${escapeHtml(questionSourceLabel(q))}</div>`:''}<div style="margin:6px 0;">${q.text}</div><div class="thumbs">${(q.photos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','photos',${i})">`).join('')}</div>${q.answerText||(q.answerPhotos&&q.answerPhotos.length)?`<div style="margin-top:8px;background:#f6f4ec;padding:8px 10px;border-radius:8px;"><div style="font-size:12px;color:#8a8674;">선생님 답변</div><div>${q.answerText||''}</div><div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})">`).join('')}</div></div>`:''}${session.mode==='student'?`<button class="btn sm outline" style="margin-top:6px;" onclick="editQuestion('${q.id}')">수정</button>`:''}</div>`;
   }).join(''):`<div class="empty">등록된 질문이 없어요.</div>`;
-  return `<div class="card"><h3 style="margin-top:0;">💬 질문 게시판</h3>${session.mode==='student'?`<div style="font-size:12px;color:#6f6958;margin-bottom:8px;line-height:1.5;">문제마다 출처와 사진을 각각 입력해주세요. 한 문제에 사진을 여러 장 첨부할 수 있어요. 교재 목록에 없는 책은 ‘목록에 없는 교재’를 선택해 이름을 적어주세요. 보관함에서 같은 출처의 풀이를 찾지 못하면 선생님 확인 대기로 전달됩니다.</div>${compose}<div class="row" style="margin-top:8px;"><button class="btn sm outline" onclick="addQuestionDraft('${stuId}')">＋ 질문 추가</button><button class="btn sm gold" onclick="submitQuestion('${stuId}')">질문 모두 등록</button></div><hr style="border:none;border-top:1px solid var(--line);margin:14px 0;">`:''}${history}</div>`;
+  return `<div class="card"><h3 style="margin-top:0;">💬 질문 게시판</h3>${session.mode==='student'?`<div data-one-problem-notice style="border:2px solid #c9a227;background:#fff8e1;border-radius:12px;padding:12px 14px;margin-bottom:10px;line-height:1.65;">
+        <div style="font-size:15px;font-weight:900;color:#7a5b00;">📌 질문 1개 = 문제 1개!</div>
+        <div style="font-size:13px;color:#4a4630;margin-top:4px;">· 문제가 여러 개면 <b>“＋ 질문 추가”</b>를 눌러 <b>문제마다 질문을 따로</b> 만들어요.<br>· 문제번호 칸에는 <b>번호 하나만</b> (예: 7) — “2,3번”, “2~5번”은 등록이 안 돼요.<br>· 사진도 <b>그 문제 하나만</b> 찍어요. (한 문제의 풀이가 길 때만 여러 장 가능)<br>· 이렇게 해야 같은 문제 질문에 <b>바로 풀이가 자동으로</b> 달려요!</div></div>
+      <div style="font-size:12px;color:#6f6958;margin-bottom:8px;line-height:1.5;">교재 목록에 없는 책은 ‘목록에 없는 교재’를 선택해 이름을 적어주세요. 보관함에서 같은 출처의 풀이를 찾지 못하면 선생님 확인 대기로 전달됩니다.</div>${compose}<div class="row" style="margin-top:8px;"><button class="btn sm outline" onclick="addQuestionDraft('${stuId}')">＋ 질문 추가</button><button class="btn sm gold" onclick="submitQuestion('${stuId}')">질문 모두 등록</button></div><hr style="border:none;border-top:1px solid var(--line);margin:14px 0;">`:''}${history}</div>`;
 }
 async function uploadNewQPhoto(inputEl,index=0){
   rememberQuestionTexts();
@@ -7199,7 +7225,9 @@ async function submitQuestion(stuId){
       if(!source.sourceBook){alert(`질문 ${i+1}: 교재를 선택해주세요.`);return;}
       if(!source.sourcePage){alert(`질문 ${i+1}: 페이지를 입력해주세요.`);return;}
       if(!source.sourceProblemNo){alert(`질문 ${i+1}: 문제번호를 입력해주세요.`);return;}
+      if(hasMultipleProblemNumbers(source.sourceProblemNo)){alert(`질문 ${i+1}: 문제번호에 여러 문제를 적은 것 같아요.\n${ONE_PROBLEM_MSG}`);return;}
       if(!source.sourceKey){alert(`질문 ${i+1}: 문제 출처를 다시 확인해주세요.`);return;}
+    }else if(source.sourceType==='PRINT'&&hasMultipleProblemNumbers(source.sourceProblemNo)){alert(`질문 ${i+1}: 문제번호에 여러 문제를 적은 것 같아요.\n${ONE_PROBLEM_MSG}`);return;
     }else if(source.sourceType==='MNM'&&!source.problemId){alert(`질문 ${i+1}: M&m 문제 ID를 입력해주세요.`);return;}
   }
   const prepared=[];
@@ -7299,7 +7327,7 @@ function renderQnaDirector(){
     return `<div class="card">
       <div class="row between"><b>${s?s.name:'(삭제된 학생)'}</b><span>${autoA?`<span class="badge ${q.autoAnswerSeen?'gray':'yellow'}" data-qna-auto="${q.id}">🤖 자동답변${q.autoAnswerSeen?' · 확인함':''}</span> `:''}<span class="badge ${q.status==='답변완료'?'green':'yellow'}">${q.status}</span></span></div>
       <div style="font-size:12px;color:#9c9880;margin:2px 0 4px;">${fmtDate(q.date)}</div>
-      ${questionSourceLabel(q)?`<div style="font-size:12px;background:#f6f4ec;border:1px solid var(--line);border-radius:8px;padding:7px 9px;margin-bottom:8px;"><b>문제 출처</b> · ${escapeHtml(questionSourceLabel(q))}</div>`:''}
+      ${questionSourceLabel(q)?`<div style="font-size:12px;background:#f6f4ec;border:1px solid var(--line);border-radius:8px;padding:7px 9px;margin-bottom:8px;"><b>문제 출처</b> · ${escapeHtml(questionSourceLabel(q))}${hasMultipleProblemNumbers(q.sourceProblemNo)?' <span data-multi-badge class="badge yellow" style="margin-left:4px;">⚠️ 여러 문제 묶음</span>':''}</div>`:''}
       ${q.solutionLibraryLookupFailed?`<div style="font-size:11px;color:#9a5b00;margin-bottom:7px;">학습보관함 자동 조회를 못 했어요. 보관함에서 직접 찾아 확인해주세요.</div>`:''}
       <div>${q.text}</div>
       <div class="thumbs">${(q.photos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','photos',${i})">`).join('')}</div>
