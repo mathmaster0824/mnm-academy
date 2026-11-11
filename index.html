@@ -343,9 +343,14 @@ let db = {
 const problemStore = {
   items:[], selected:new Set(), lastDoc:null, page:1, hasMore:false,
   loading:false, loaded:false, queryToken:'', searchDebounce:null, filter:{q:'',grade:'',semester:'',major:'',middle:'',concept:'',geometry:'',ask:'',skill:''},
-  tab:'library', ingest:{sources:[],drafts:[],loading:false,loaded:false,sourceFilter:'',statusFilter:'review',aiFilter:''},
+  tab:'library', ingest:{sources:[],drafts:[],loading:false,loaded:false,sourceFilter:'',statusFilter:'review',aiFilter:'',materialKind:'textbook',school:'',examYear:'',examTerm:'',examType:''},
   analysisRun:{active:false,total:0,done:0,current:'',message:'',error:''},
   saveRun:{active:false,total:0,done:0,saved:0,duplicates:0,failed:0,message:'',errors:[]}
+};
+const examMakerStore = {
+  loaded:false, loading:false, exams:[], items:[], title:'', grade:'', range:'', examDate:todayISO(), duration:'50분', instructions:'문항별 배점을 확인하고 답을 작성하세요. 서술형은 풀이 과정을 함께 적으세요.', selectedExamId:'',
+  filter:{q:'',grade:'',semester:'',majorUnit:'',middleUnit:'',smallUnit:'',subtype:'',flags:{major:false,past:false,frequent:false},flagMatch:'all'}, targetCount:10,
+  candidates:[],candidateLoading:false,candidateHasMore:false,candidateStreams:null,candidateKey:'',candidateScanned:0,candidateError:''
 };
 
 function uid(prefix){ return prefix+'_'+Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-4); }
@@ -1285,7 +1290,9 @@ const DIRECTOR_NAV = [
   {id:'qna', label:'질문', icon:'💬', group:'오늘의 관리'},
   {id:'kmmMakeup', label:'KMM 보강', icon:'📐', group:'오늘의 관리'},
   {id:'weekendStudy', label:'주말학습', icon:'🌙', group:'오늘의 관리'},
+  {id:'problemWorkshop', label:'문제공작소', icon:'🛠️', group:'자료'},
   {id:'problemRepo', label:'문제저장소', icon:'🧩', group:'자료'},
+  {id:'examMaker', label:'시험지 만들기', icon:'📝', group:'자료'},
   {id:'solutionLib', label:'해설 보관함', icon:'🗂️', group:'자료'},
   {id:'videolib', label:'영상 보관함', icon:'🎬', group:'자료'},
   {id:'schoolExams', label:'내신 성적', icon:'🏫', group:'기록 · 보고'},
@@ -2248,7 +2255,9 @@ function renderInner(){
       case 'classes': html+=renderClasses(); break;
       case 'curriculum': html+=renderCurriculum(); break;
       case 'videolib': html+=renderVideoLib(); break;
+      case 'problemWorkshop': html+=renderProblemWorkshopPage(); break;
       case 'problemRepo': html+=renderProblemRepository(); break;
+      case 'examMaker': html+=renderExamMaker(); break;
       case 'solutionLib': html+=renderSolutionLib(); break;
       case 'students': html+=renderStudents(); break;
       case 'kmmMakeup': html+=renderKmmMakeup(); break;
@@ -7301,8 +7310,8 @@ function renderQnaDirector(){
         <input type="file" accept="image/*" multiple id="ansPhoto_${q.id}" style="margin-top:6px;">
         ${renderAutoSolutionMatches(q.id)}
         ${renderSolLibPickerForQuestion(q.id)}
-        ${questionCanSaveToLibrary(q)?`<label data-qna-savelib="${q.id}" style="display:flex;align-items:flex-start;gap:6px;margin-top:8px;font-size:12px;color:#5a5648;line-height:1.5;cursor:pointer;"><input type="checkbox" id="ansSaveLib_${q.id}" checked style="margin-top:3px;" onchange="syncAnswerLibraryOptions('${q.id}','save')"><span>이 답변 사진을 <b>학습보관함에도 저장</b>해요 <span style="color:#8a8674;">(같은 문제를 또 물으면 자동으로 답변돼요 · 사진이 있을 때만)</span></span></label>
-        <label data-qna-keylib="${q.id}" style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:#5a5648;cursor:pointer;"><input type="checkbox" id="ansKeyLib_${q.id}" ${questionIsKeyProblem(q)?'checked':''} onchange="syncAnswerLibraryOptions('${q.id}','key')"><span>⭐ <b>주요문항</b>으로 표시 <span style="color:#8a8674;">(학습보관함에 같이 기록돼요)</span></span></label>`:''}
+        ${questionCanSaveToLibrary(q)?`<label data-qna-savelib="${q.id}" style="display:flex;align-items:flex-start;gap:6px;margin-top:8px;font-size:12px;color:#5a5648;line-height:1.5;cursor:pointer;"><input type="checkbox" id="ansSaveLib_${q.id}" checked style="margin-top:3px;"><span>이 답변 사진을 <b>학습보관함에도 저장</b>해요 <span style="color:#8a8674;">(같은 문제를 또 물으면 자동으로 답변돼요 · 사진이 있을 때만)</span></span></label>`:''}
+        <div class="row" style="gap:10px;flex-wrap:wrap;margin-top:8px;font-size:11px;"><span style="color:#777;">문항 표시</span><label><input type="checkbox" id="ansTag_${q.id}_past" ${q.pastExam||q.isPastExam?'checked':''}> 기출</label><label><input type="checkbox" id="ansTag_${q.id}_major" ${q.majorQuestion||q.isKeyProblem||questionIsKeyProblem(q)?'checked':''}> 주요문항</label><label><input type="checkbox" id="ansTag_${q.id}_frequent" ${q.isFrequent?'checked':''}> 빈출</label></div>
         <div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<div class="thumb-wrap"><img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})"><button class="thumb-x" onclick="removeAnswerPhoto('${q.id}',${i})">✕</button></div>`).join('')}</div>
         <button class="btn sm gold" style="margin-top:8px;" onclick="answerQuestion('${q.id}')">답변 등록</button>
       </div>
@@ -7374,28 +7383,32 @@ async function saveAnswerPhotosToLibrary(q,answerPhotos,opts={}){
 async function answerQuestion(qId){
   const q = db.questions.find(x=>x.id===qId);
   const answerText = document.getElementById('ans_'+qId).value;
+  const pastExam=!!document.getElementById('ansTag_'+qId+'_past')?.checked;
+  const majorQuestion=!!document.getElementById('ansTag_'+qId+'_major')?.checked;
+  const isFrequent=!!document.getElementById('ansTag_'+qId+'_frequent')?.checked;
+  const tags={pastExam,isPastExam:pastExam,majorQuestion,isKeyProblem:majorQuestion,isFrequent};
   const photosInput = document.getElementById('ansPhoto_'+qId);
   const answerPhotos = [...(q.answerPhotos||[])];
   await handleMultiPhotoInput(photosInput, (durl)=>answerPhotos.push(durl), 1000, 0.7);
   if(embeddedPhotoLimitExceeded({...q, answerText, answerPhotos}, 950)){ alert('답변 사진 용량이 너무 커요. 사진 개수를 줄여서 다시 시도해주세요.'); return; }
-  const ok=await fsUpdate('questions', qId, {answerText, answerPhotos, status:'답변완료', autoAnswerSeen:true, autoAnswerSeenAt:new Date().toISOString()});
+  const ok=await fsUpdate('questions', qId, {answerText, answerPhotos, ...tags, status:'답변완료', autoAnswerSeen:true, autoAnswerSeenAt:new Date().toISOString()});
   if(ok){
-    syncAnsweredQuestionToProblemRepo(qId,answerText,answerPhotos).catch(e=>console.error(e));
+    Object.assign(q||{},tags,{answerText,answerPhotos,status:'답변완료'});
+    syncAnsweredQuestionToProblemRepo(qId,answerText,answerPhotos,tags).catch(e=>console.error(e));
     const chk=document.getElementById('ansSaveLib_'+qId);
-    const keyChk=document.getElementById('ansKeyLib_'+qId);
     const saveOn=!!(chk&&chk.checked);
-    const wantKey=!!(keyChk&&keyChk.checked&&saveOn);
+    const wantKey=majorQuestion;
     let n=0;
     if(saveOn&&answerPhotos.length){
       n=await saveAnswerPhotosToLibrary(q,answerPhotos,{keyProblem:wantKey});
     }
     // 보관함 저장이 켜져 있을 때만, 이미 있는 '정확히 같은 문제' 해설의 주요문항 표시를 맞춘다. (저장을 끄면 기존 표시는 건드리지 않는다)
     let marked=0;
-    if(keyChk&&saveOn){
+    if(saveOn){
       for(const m of exactSolutionsForQuestion(q)){
         if(!!m.keyProblem!==wantKey){
-          const ok=await fsUpdate('solutionPhotos',m.id,{keyProblem:wantKey});
-          if(ok!==false){ m.keyProblem=wantKey; marked++; }
+          const updated=await fsUpdate('solutionPhotos',m.id,{keyProblem:wantKey});
+          if(updated!==false){ m.keyProblem=wantKey; marked++; }
         }
       }
     }
@@ -9229,7 +9242,8 @@ function problemDraftConfidence(d){
   const checks=[
     !!(d.problemText||d.rawText), !!(d.problemNo||d.no), !!d.grade, !!d.semester,
     !!(d.majorUnit||d.major), !!(d.middleUnit||d.middle), !!d.type,
-    d.type==='constructed' || !!(d.answer||d.answerMatched), !!(d.cropKey||d.cropUrl||d.imageUrl||d.originalRegion)
+    d.type==='constructed' || !!(d.answer||d.answerMatched), !!(d.cropKey||d.cropUrl||d.imageUrl||d.originalRegion),
+    !d.workshopClassificationRequired || !!(d.grade&&d.semester&&d.majorUnit&&d.middleUnit&&d.curriculumId&&d.primaryUnitId&&d.primaryTypeId&&d.problemTypeName&&d.difficultyConfirmed)
   ];
   return Math.round(checks.filter(Boolean).length/checks.length*100);
 }
@@ -9256,6 +9270,7 @@ function problemAiQuality(d){
 }
 function problemDraftStatus(d){
   if(d.status==='saved'||d.status==='superseded'||d.status==='error'||d.status==='analyzing'||d.status==='queued') return d.status;
+  if(d.workshopClassificationRequired&&!(d.grade&&d.semester&&d.majorUnit&&d.middleUnit&&d.curriculumId&&d.primaryUnitId&&d.primaryTypeId&&d.problemTypeName&&d.difficultyConfirmed)) return 'review';
   if(d.analysis?.needsVision && d.analysis?.status==='vision-pending') return 'review';
   const aq=problemAiQuality(d);
   if(aq.analyzed && !aq.valid) return 'review';
@@ -9389,8 +9404,10 @@ function problemSearchTokens(d){
   add(problemFieldSearchTokens('geometry',d.geometryStructure||''));
   add(problemFieldSearchTokens('ask',d.askType||''));
   (d.solutionSkills||[]).forEach(v=>add(problemFieldSearchTokens('skill',v)));
-  // 자유검색은 본문/출처의 단어 단위만 인덱싱해 배열 폭증을 방지한다.
-  problemLexemes([problemReadableProblemText(d),d.sourceName||d.bookName||''].join(' ')).slice(0,35).forEach(w=>out.add('q:'+problemTokenNorm(w)));
+  add(problemFieldSearchTokens('type',d.primaryTypeId||'')); add(problemFieldSearchTokens('type',d.problemTypeName||''));
+  (d.conditionTags||[]).forEach(v=>add(problemFieldSearchTokens('condition',v)));
+  (d.representationTags||[]).forEach(v=>add(problemFieldSearchTokens('representation',v)));
+  problemLexemes([problemReadableProblemText(d),d.sourceName||d.bookName||'',d.primaryTypeId||'',d.problemTypeName||''].join(' ')).slice(0,45).forEach(w=>out.add('q:'+problemTokenNorm(w)));
   return [...out].filter(Boolean).slice(0,180);
 }
 function problemPrimarySearchToken(f){
@@ -9409,10 +9426,12 @@ function problemDraftPublicData(d){
   const now=new Date().toISOString();
   const fp=problemFingerprintInfo(d);
   return {
-    problemText:problemReadableProblemText(d), type:d.type||'short', points:Number(d.points||1),
-    grade:d.grade||'', semester:d.semester||'', majorUnit:d.majorUnit||d.major||'', middleUnit:d.middleUnit||d.middle||'',
+    problemText:problemReadableProblemText(d), type:d.type||'short', questionFormat:d.questionFormat||({mc:'multiple_choice',short:'short_answer',constructed:'constructed_response'}[d.type||'short']), points:Number(d.points||1),
+    grade:d.grade||'', semester:d.semester||'', majorUnit:d.majorUnit||d.major||'', middleUnit:d.middleUnit||d.middle||'', smallUnit:d.smallUnit||'',
+    curriculumVersion:d.curriculumVersion||'2022-revised',curriculumId:d.curriculumId||'',primaryUnitId:d.primaryUnitId||'',linkedUnitIds:Array.isArray(d.linkedUnitIds)?d.linkedUnitIds:[],primaryTypeId:d.primaryTypeId||'',primaryTypeName:d.problemTypeName||d.primaryTypeName||'',secondaryTypeIds:Array.isArray(d.secondaryTypeIds)?d.secondaryTypeIds:[],problemRole:d.problemRole||'',difficultyConfirmed:Number(d.difficultyConfirmed)||null,conditionTags:Array.isArray(d.conditionTags)?d.conditionTags:[],representationTags:Array.isArray(d.representationTags)?d.representationTags:[],
     mainConceptId:d.mainConceptId||'', relatedConceptIds:d.relatedConceptIds||[], conceptTags:d.conceptTags||[], geometryStructure:d.geometryStructure||'',
-    askType:d.askType||'', solutionSkills:d.solutionSkills||[], predictedDifficulty:d.predictedDifficulty||'',
+    askType:d.askType||'', solutionSkills:d.solutionSkills||[], predictedDifficulty:d.predictedDifficulty||'',materialKind:d.materialKind||'textbook',
+    school:d.school||'',examYear:Number(d.examYear)||null,examTerm:d.examTerm||'',examType:d.examType||'',pastExam:!!(d.pastExam||d.isPastExam),isPastExam:!!(d.pastExam||d.isPastExam),majorQuestion:!!(d.majorQuestion||d.isKeyProblem),isKeyProblem:!!(d.majorQuestion||d.isKeyProblem),isFrequent:!!d.isFrequent,
     analysis:{version:d.analysis?.version||PROBLEM_ANALYSIS_VERSION,method:d.analysis?.method||d.analysis?.status||'reviewed',reviewedAt:d.analysis?.reviewedAt||null},
     imageUrl:d.cropUrl||d.imageUrl||'', cropKey:d.cropKey||'', cropHash:d.cropHash||'', sourceId:d.sourceId||'', sourceName:d.sourceName||'',
     sourcePage:d.page||d.sourcePage||null, sourceProblemNo:d.problemNo||d.no||d.sourceProblemNo||'', occurrenceId:d.id||'',
@@ -9567,12 +9586,13 @@ function operationalProblemMetaFromQuestion(q){
   const sourceKey=operationalQuestionSourceKey(q), cm=problemCourseMeta(q?.sourceCourseId||'');
   const firstPhoto=(q?.photos||[])[0]||null;
   return {
-    originType:'student-question', originId:q?.id||'', sourceKey,
+    originType:'student-question', originId:q?.id||'', sourceKey, problemId:q?.problemId||'',
     sourceType:q?.sourceType||'question', sourceCourseId:q?.sourceCourseId||'',
     sourceBook:q?.sourceBook||'', sourcePage:q?.sourcePage||'',
     sourceProblemNo:q?.sourceProblemNo||'', printId:q?.printId||'',
     grade:cm.grade, semester:cm.semester,
     questionText:q?.text||'', problemText:'', problemPhoto:firstPhoto,
+    pastExam:!!(q?.pastExam||q?.isPastExam), majorQuestion:!!(q?.majorQuestion||q?.isKeyProblem), isFrequent:!!q?.isFrequent,
     explanation:q?.answerText||'', explanationPhotos:q?.answerPhotos||[]
   };
 }
@@ -9594,6 +9614,9 @@ async function appendProblemOriginMeta(problemId,meta){
   };
   if(meta.sourceKey) patch.sourceKeys=firebase.firestore.FieldValue.arrayUnion(meta.sourceKey);
   if(meta.originType==='learning-library'&&meta.originId) patch.solutionAssetIds=firebase.firestore.FieldValue.arrayUnion(meta.originId);
+  if(meta.pastExam){patch.pastExam=true;patch.isPastExam=true;}
+  if(meta.majorQuestion){patch.majorQuestion=true;patch.isKeyProblem=true;}
+  if(meta.isFrequent)patch.isFrequent=true;
   await fsdb.collection('problems').doc(problemId).set(patch,{merge:true});
 }
 async function addTeacherExplanationToProblem(problemId,{text='',photos=[],questionId=''}={}){
@@ -9630,7 +9653,10 @@ async function ensureOperationalProblemCandidate(meta){
   const sourceKey=meta.sourceKey||'';
 
   // 1. 이미 정식 문제로 존재하면 즉시 연결한다.
-  const existing=await findCanonicalProblemBySourceKey(sourceKey);
+  let existing=await findCanonicalProblemBySourceKey(sourceKey);
+  if(!existing&&meta.problemId){
+    try{const snap=await fsdb.collection('problems').doc(meta.problemId).get();if(snap.exists)existing={id:snap.id,...snap.data()};}catch(_){}
+  }
   if(existing){
     await appendProblemOriginMeta(existing.id,meta);
     await linkProblemOrigin(meta.originType,meta.originId,{problemId:existing.id});
@@ -9654,6 +9680,9 @@ async function ensureOperationalProblemCandidate(meta){
       ...(meta.originType==='learning-library'?{solutionAssetIds:[...new Set([...(draft.solutionAssetIds||[]),meta.originId])]}:{}),
       updatedAt:new Date().toISOString()
     };
+    if(meta.pastExam){patch.pastExam=true;patch.isPastExam=true;}
+    if(meta.majorQuestion){patch.majorQuestion=true;patch.isKeyProblem=true;}
+    if(meta.isFrequent)patch.isFrequent=true;
     if(meta.originType==='learning-library'&&meta.originId) patch.solutionAssetIds=[...new Set([...(draft.solutionAssetIds||[]),meta.originId])];
     if(problemPhoto && !draft.cropKey){
       patch.media=[problemPhoto]; patch.cropKey=cropKey; patch.cropUrl='';
@@ -9689,6 +9718,7 @@ async function ensureOperationalProblemCandidate(meta){
       solutionAssetIds:meta.originType==='learning-library'?[meta.originId]:[],
       originTypes:[meta.originType],origins:[{type:meta.originType,id:meta.originId,at:now}],
       analysis:cropKey?{version:PROBLEM_ANALYSIS_VERSION,needsVision:true,status:'vision-pending'}:{version:PROBLEM_ANALYSIS_VERSION,needsVision:false,status:'source-only'},
+      pastExam:!!meta.pastExam,isPastExam:!!meta.pastExam,majorQuestion:!!meta.majorQuestion,isKeyProblem:!!meta.majorQuestion,isFrequent:!!meta.isFrequent,
       autoIntake:true,status:'review',ingestVersion:'v92-operational',createdAt:now,updatedAt:now
     };
     draft.confidence=problemDraftConfidence(draft);
@@ -9727,7 +9757,7 @@ async function syncQuestionToProblemRepo(qId,qData){
     return await ensureOperationalProblemCandidate(operationalProblemMetaFromQuestion({id:qId,...qData}));
   }catch(e){ console.error('[질문→문제저장소]',e); return {status:'error'}; }
 }
-async function syncAnsweredQuestionToProblemRepo(qId,answerText,answerPhotos){
+async function syncAnsweredQuestionToProblemRepo(qId,answerText,answerPhotos,tags={}){
   try{
     let q=db.questions.find(x=>x.id===qId);
     if(!q){
@@ -9735,7 +9765,7 @@ async function syncAnsweredQuestionToProblemRepo(qId,answerText,answerPhotos){
       if(!doc.exists) return;
       q={id:doc.id,...doc.data()};
     }
-    const meta=operationalProblemMetaFromQuestion({...q,answerText,answerPhotos});
+    const meta=operationalProblemMetaFromQuestion({...q,...tags,answerText,answerPhotos});
     const linked=await ensureOperationalProblemCandidate(meta);
     const problemId=linked?.problemId||q.problemId||'';
     if(problemId) await addTeacherExplanationToProblem(problemId,{text:answerText,photos:answerPhotos,questionId:qId});
@@ -9778,10 +9808,13 @@ async function saveProblemDraft(draftId,options={}){
       if(incomingType!==existingType && (rank[incomingType]||0)>(rank[existingType]||0)){
         await problemUpdateDoc('problems',existingId,{type:incomingType,updatedAt:new Date().toISOString(),typeAutoRepaired:true});
       }
-      if(d.sourceKey || (d.originTypes||[]).length){
+      if(d.sourceKey || (d.originTypes||[]).length || d.pastExam || d.isPastExam || d.majorQuestion || d.isKeyProblem || d.isFrequent){
         const originPatch={updatedAt:new Date().toISOString()};
         if(d.sourceKey) originPatch.sourceKeys=firebase.firestore.FieldValue.arrayUnion(d.sourceKey);
         if((d.originTypes||[]).length) originPatch.originTypes=firebase.firestore.FieldValue.arrayUnion(...d.originTypes);
+        if(d.pastExam||d.isPastExam){originPatch.pastExam=true;originPatch.isPastExam=true;}
+        if(d.majorQuestion||d.isKeyProblem){originPatch.majorQuestion=true;originPatch.isKeyProblem=true;}
+        if(d.isFrequent)originPatch.isFrequent=true;
         await fsdb.collection('problems').doc(existingId).set(originPatch,{merge:true});
       }
       if((d.type||'short')!=='constructed'){
@@ -9880,6 +9913,7 @@ async function createProblemDraftsFromManifest(packet,{confirmWarnings=true}={})
   const sourceId=await fsAdd('problemSources',{
     title:src.title||src.fileName||'PDF 원본',fileName:src.fileName||'',sourceType:src.sourceType||'pdf',
     grade:src.grade||'',semester:src.semester||'',majorUnit:src.majorUnit||'',middleUnit:src.middleUnit||'',
+    materialKind:src.materialKind==='exam'?'exam':'textbook',school:src.school||'',examYear:Number(src.examYear)||null,examTerm:src.examTerm||'',examType:src.examType||'',
     pageCount:Number(src.pageCount||0)||null,problemCount:problems.length,
     ingestMethod:src.ingestMethod||'manifest',segmentationMeta:src.segmentationMeta||null,createdAt:now,ingestVersion:'v87.3'
   });
@@ -9888,7 +9922,7 @@ async function createProblemDraftsFromManifest(packet,{confirmWarnings=true}={})
   try{
     for(let i=0;i<problems.length;i++){
       const x=problems[i]||{};
-      let draft={...x,sourceId,sourceName:src.title||src.fileName||'',problemNo:x.problemNo||x.no||String(i+1).padStart(2,'0'),
+      let draft={...x,sourceId,sourceName:src.title||src.fileName||'',materialKind:src.materialKind==='exam'?'exam':'textbook',school:x.school||src.school||'',examYear:Number(x.examYear||src.examYear)||null,examTerm:x.examTerm||src.examTerm||'',examType:x.examType||src.examType||'',pastExam:!!(src.materialKind==='exam'||x.pastExam||x.isPastExam),isPastExam:!!(src.materialKind==='exam'||x.pastExam||x.isPastExam),workshopClassificationRequired:src.sourceType==='pdf',problemNo:x.problemNo||x.no||String(i+1).padStart(2,'0'),
         grade:x.grade||src.grade||'',semester:x.semester||src.semester||'',majorUnit:x.majorUnit||src.majorUnit||'',middleUnit:x.middleUnit||src.middleUnit||'',
         status:'review',ingestVersion:'v87.3',createdAt:now};
       draft=mergeProblemRuleAnalysis(draft);
@@ -10387,6 +10421,16 @@ function problemPdfSourceMeta(fileName){
   // 제목 끝의 회차/파일 역할 표현은 단원명에서 제거
   unit=unit.replace(/\s+(?:문제|해설)(?:-\d+)?(?:\(\d+주차\))?$/i,'').replace(/\s*\(\d+주차\)$/i,'').trim();
   return {grade,semester,majorUnit:unit,middleUnit:unit};
+}
+function setProblemIngestMeta(key,value){
+  if(!['materialKind','school','examYear','examTerm','examType'].includes(key))return;
+  problemStore.ingest[key]=String(value||'');
+  render();
+}
+function autoIngestProblemPdfFromUi(input){
+  const ing=problemStore.ingest;
+  const sourceMeta={materialKind:ing.materialKind==='exam'?'exam':'textbook',school:String(ing.school||'').trim(),examYear:Number(ing.examYear)||null,examTerm:ing.examTerm||'',examType:String(ing.examType||'').trim()};
+  autoIngestProblemPdf(input,{sourceMeta});
 }
 function problemPdfDecodePrivateGlyphs(value){
   const map={
@@ -10902,7 +10946,7 @@ async function autoIngestProblemPdf(input,options={}){
         const answerMap=await problemPdfExtractAnswerMapFromFile(pair.teacher);
         if(!answerMap.size) throw new Error('교사용 PDF에서 연결 가능한 정답표를 찾지 못했습니다. 두 파일은 수집하지 않았어요.');
         const dt=new DataTransfer(); dt.items.add(pair.student);
-        await autoIngestProblemPdf({files:dt.files,value:''},{answerMap,answerSourceFile:pair.teacher.name,pairMode:true});
+        await autoIngestProblemPdf({files:dt.files,value:''},{...options,answerMap,answerSourceFile:pair.teacher.name,pairMode:true});
         const liveStatus=document.getElementById('problemPdfAutoStatus');
         if(liveStatus&&!String(liveStatus.textContent||'').startsWith('자동분리 중단')){
           liveStatus.textContent='짝 등록 완료 · 학생용 문항만 저장 · 교사용 정답표 '+answerMap.size+'개 연결 · '+pair.teacher.name;
@@ -10919,7 +10963,7 @@ async function autoIngestProblemPdf(input,options={}){
       const proxy={files:dt.files,value:''};
       const status=document.getElementById('problemPdfAutoStatus');
       if(status) status.textContent=`PDF ${i+1}/${files.length} 처리 시작 · ${files[i].name}`;
-      await autoIngestProblemPdf(proxy);
+      await autoIngestProblemPdf(proxy,options);
     }
     const status=document.getElementById('problemPdfAutoStatus');
     if(status) status.textContent=`완료 · PDF ${files.length}개 처리`;
@@ -10945,7 +10989,7 @@ async function autoIngestProblemPdf(input,options={}){
     if(textDetected&&regions.length){ regions=problemPdfCutInlineAnswers(plans,regions); regions=await problemPdfTrimTrailingRegions(pages,plans,regions); }
     if(!regions.length) throw new Error('문항을 찾지 못했습니다. 텍스트 탐지와 AI 이미지 탐지를 모두 확인해주세요.');
     say(`문항 ${regions.length}개 탐지 · ${segmentationMeta.layout||''} · 경계품질 ${Math.round(Number(segmentationMeta.quality||0)*100)}% · 정답표 확인 중…`);
-    const answerMap=options.answerMap instanceof Map?options.answerMap:await problemPdfExtractAnswerCandidates(pdf), sourceMeta=problemPdfSourceMeta(file.name);
+    const answerMap=options.answerMap instanceof Map?options.answerMap:await problemPdfExtractAnswerCandidates(pdf), sourceMeta={...problemPdfSourceMeta(file.name),...options.sourceMeta};
     // 정답표에는 있는데 문제 쪽에서 짝을 못 찾은 대표 항목은 추측해 붙이지 않고 기록만 한다(쪽 포함).
     const usedRepIds=new Set(regions.filter(r=>r.representative&&r.idSource==='printed-type-number').map(r=>r.problemNo));
     const unmatchedRep=[...answerMap.entries()].filter(([k,v])=>v&&v.representative&&!usedRepIds.has(k)).map(([k,v])=>({id:k,answerPage:v.answerPage||null}));
@@ -10970,10 +11014,10 @@ async function autoIngestProblemPdf(input,options={}){
       if(!reviewReason&&r.representative&&r.idSource==='printed-type-number'&&!key) reviewReason='answer-table-entry-missing';
       if(!reviewReason&&key?.conflict) reviewReason='answer-table-conflict';
       const rawText=plan?problemPdfRegionText(plan.items,r,plan.height):'';
-      problems.push({problemNo:r.problemNo,printedProblemNo:printedNo,idSource:r.representative?r.idSource:'printed-number',typeNo:r.typeNo||'',reviewReason,answerSourcePage:key&&key.answerPage?key.answerPage:null,answerLinkBasis:key&&key.basis?key.basis:'',answerSourceFile:key&&key.answerPage?(key.sourceFile||options.answerSourceFile||file.name):'',page:r.page,rawText,rawTextDecoded:true,type:problemPdfInferType(rawText,key),grade:sourceMeta.grade,semester:sourceMeta.semester,majorUnit:sourceMeta.majorUnit,middleUnit:sourceMeta.middleUnit,cropUrl:'',cropKey,cropHash,media:photo?[photo]:[],segmentationMethod:r.segmentationMethod||segmentationMeta.method||'',segmentationQuality:Number(segmentationMeta.quality||0),answer:key?.answer||'',answerConfidence:key?.confidence||0,answerMethod:key?.method||'needs-review',status:'review'});
+      problems.push({problemNo:r.problemNo,printedProblemNo:printedNo,idSource:r.representative?r.idSource:'printed-number',typeNo:r.typeNo||'',reviewReason,answerSourcePage:key&&key.answerPage?key.answerPage:null,answerLinkBasis:key&&key.basis?key.basis:'',answerSourceFile:key&&key.answerPage?(key.sourceFile||options.answerSourceFile||file.name):'',page:r.page,rawText,rawTextDecoded:true,type:problemPdfInferType(rawText,key),grade:sourceMeta.grade,semester:sourceMeta.semester,majorUnit:sourceMeta.majorUnit,middleUnit:sourceMeta.middleUnit,materialKind:sourceMeta.materialKind,school:sourceMeta.school,examYear:sourceMeta.examYear,examTerm:sourceMeta.examTerm,examType:sourceMeta.examType,pastExam:sourceMeta.materialKind==='exam',isPastExam:sourceMeta.materialKind==='exam',cropUrl:'',cropKey,cropHash,media:photo?[photo]:[],segmentationMethod:r.segmentationMethod||segmentationMeta.method||'',segmentationQuality:Number(segmentationMeta.quality||0),answer:key?.answer||'',answerConfidence:key?.confidence||0,answerMethod:key?.method||'needs-review',status:'review'});
     }
     say('수집 대기열 저장 중…');
-    const ingestOut=await createProblemDraftsFromManifest({source:{title:file.name.replace(/\.pdf$/i,''),fileName:file.name,sourceType:'pdf',pageCount:pdf.numPages,grade:sourceMeta.grade,semester:sourceMeta.semester,majorUnit:sourceMeta.majorUnit,middleUnit:sourceMeta.middleUnit,ingestMethod:'browser-pdfjs-v3-rail-sequence',segmentationMeta},problems},{confirmWarnings:false});
+    const ingestOut=await createProblemDraftsFromManifest({source:{title:file.name.replace(/\.pdf$/i,''),fileName:file.name,sourceType:'pdf',pageCount:pdf.numPages,grade:sourceMeta.grade,semester:sourceMeta.semester,majorUnit:sourceMeta.majorUnit,middleUnit:sourceMeta.middleUnit,materialKind:sourceMeta.materialKind,school:sourceMeta.school,examYear:sourceMeta.examYear,examTerm:sourceMeta.examTerm,examType:sourceMeta.examType,ingestMethod:'browser-pdfjs-v3-rail-sequence',segmentationMeta},problems},{confirmWarnings:false});
     if(ingestOut?.sourceId) await supersedeOlderProblemSourceDrafts(file.name,ingestOut.sourceId);
     problemStore.ingest.loaded=false; await loadProblemIngestQueue();
     const mcCount=problems.filter(x=>x.type==='mc').length, constructedCount=problems.filter(x=>x.type==='constructed').length;
@@ -11153,6 +11197,7 @@ function problemDraftMissing(d){
   if((d.type||'short')!=='constructed'&&!String(d.answer||'').trim()) miss.push('정답 미확인');
   if(!(d.cropKey||d.cropUrl||d.imageUrl||d.originalRegion)) miss.push('원본 crop 없음');
   if(d.analysis?.needsVision&&d.analysis?.status==='vision-pending') miss.push('이미지분석 대기');
+  if(d.workshopClassificationRequired&&!(d.grade&&d.semester&&d.majorUnit&&d.middleUnit&&d.curriculumId&&d.primaryUnitId&&d.primaryTypeId&&d.problemTypeName&&d.difficultyConfirmed)) miss.push('M&m 분류·난이도 미확정');
   const aq=problemAiQuality(d);
   if(aq.analyzed&&!aq.valid) miss.push('AI분석 검토: '+aq.issues.join(', '));
   return miss;
@@ -11170,6 +11215,17 @@ async function updateProblemDraftAnswer(id,value){
   const next={...d,...patch}; patch.confidence=problemDraftConfidence(next); patch.status=problemDraftStatus(next);
   const ok=await fsUpdate('problemDrafts',id,patch);
   if(!ok){alert('정답 저장에 실패했어요.');return;}
+  Object.assign(d,patch); render();
+}
+async function updateProblemDraftTag(id,tag,checked){
+  const d=problemStore.ingest.drafts.find(x=>x.id===id); if(!d)return;
+  const on=!!checked, patch={updatedAt:new Date().toISOString()};
+  if(tag==='past'){patch.pastExam=on;patch.isPastExam=on;}
+  else if(tag==='major'){patch.majorQuestion=on;patch.isKeyProblem=on;}
+  else if(tag==='frequent')patch.isFrequent=on;
+  else return;
+  const ok=await fsUpdate('problemDrafts',id,patch);
+  if(!ok){alert('문항 표시 저장에 실패했어요.');return;}
   Object.assign(d,patch); render();
 }
 function problemIngestSummary(rows){
@@ -11200,7 +11256,8 @@ function renderProblemIngest(){
     return true;
   });
   const sum=problemIngestSummary(drafts);
-  return `<div class="card" style="margin-bottom:12px;"><div class="row between"><div><b>📥 PDF 수집 파이프라인</b><div style="font-size:11px;color:#8a8674;margin-top:3px;">PDF·학습보관함·학생질문 → 문제후보 통합 → 자동분석·중복연결 → 문제저장소</div></div><div class="row" style="gap:8px;flex-wrap:wrap;"><label class="btn gold" style="cursor:pointer;min-height:48px;display:inline-flex;align-items:center;justify-content:center;padding:0 18px;font-size:14px;">📄 PDF 파일 올리기<input id="problemPdfAutoInput" type="file" accept="application/pdf,.pdf" multiple style="display:none" onchange="autoIngestProblemPdf(this)"></label><button class="btn outline" onclick="loadProblemIngestQueue()">새로고침</button><button id="problemAnalyzeAllBtn" class="btn outline" onclick="analyzePendingProblemDrafts()" ${problemStore.analysisRun.active?'disabled style="opacity:.6;cursor:wait;"':''}>${problemStore.analysisRun.active?`AI 분석 ${problemStore.analysisRun.done}/${problemStore.analysisRun.total}`:'필요문항 AI 일괄분석'}</button><button class="btn outline" onclick="registerProblemSourceFromManifest()">manifest 등록</button><button id="problemSaveAllBtn" class="btn gold" ${problemStore.saveRun.active?'disabled style="opacity:.6;cursor:wait;"':''} onclick="saveAllReadyProblemDrafts()">${problemStore.saveRun.active?`저장 중 ${problemStore.saveRun.done}/${problemStore.saveRun.total}`:'저장가능 일괄저장'}</button></div></div>
+  return `<div class="card" style="margin-bottom:12px;"><div class="row between"><div><b>🛠️ 문제공작소 작업대</b><div style="font-size:11px;color:#8a8674;margin-top:3px;">PDF 등록 → 문항 분할·분류 검수 → 선택 문항을 문제저장소에 저장</div></div><div class="row" style="gap:8px;flex-wrap:wrap;"><label class="btn gold" style="cursor:pointer;min-height:48px;display:inline-flex;align-items:center;justify-content:center;padding:0 18px;font-size:14px;">📄 PDF 파일 올리기<input id="problemPdfAutoInput" type="file" accept="application/pdf,.pdf" multiple style="display:none" onchange="autoIngestProblemPdfFromUi(this)"></label><button class="btn outline" onclick="loadProblemIngestQueue()">새로고침</button><button id="problemAnalyzeAllBtn" class="btn outline" onclick="analyzePendingProblemDrafts()" ${problemStore.analysisRun.active?'disabled style="opacity:.6;cursor:wait;"':''}>${problemStore.analysisRun.active?`AI 분석 ${problemStore.analysisRun.done}/${problemStore.analysisRun.total}`:'필요문항 AI 일괄분석'}</button><button class="btn outline" onclick="registerProblemSourceFromManifest()">manifest 등록</button><button id="problemSaveAllBtn" class="btn gold" ${problemStore.saveRun.active?'disabled style="opacity:.6;cursor:wait;"':''} onclick="saveAllReadyProblemDrafts()">${problemStore.saveRun.active?`저장 중 ${problemStore.saveRun.done}/${problemStore.saveRun.total}`:'저장가능 일괄저장'}</button></div></div>
+  <div class="row" style="gap:8px;flex-wrap:wrap;align-items:end;margin-top:10px;padding:9px;background:#faf8f2;border-radius:8px;"><label style="min-width:180px;font-size:11px;font-weight:700;">자료 종류<select onchange="setProblemIngestMeta('materialKind',this.value)" style="width:100%;margin-top:4px;"><option value="textbook" ${ing.materialKind!=='exam'?'selected':''}>교재·학습자료</option><option value="exam" ${ing.materialKind==='exam'?'selected':''}>시험지 (전체 문항 기출 표시)</option></select></label>${ing.materialKind==='exam'?`<label style="min-width:130px;font-size:11px;">학교/출처<input value="${escapeHtml(ing.school)}" onchange="setProblemIngestMeta('school',this.value)" placeholder="예: ○○중학교" style="width:100%;margin-top:4px;"></label><label style="min-width:90px;font-size:11px;">시험 연도<input type="number" min="2000" max="2100" value="${escapeHtml(ing.examYear)}" onchange="setProblemIngestMeta('examYear',this.value)" placeholder="2026" style="width:100%;margin-top:4px;"></label><label style="min-width:105px;font-size:11px;">학기<select onchange="setProblemIngestMeta('examTerm',this.value)" style="width:100%;margin-top:4px;"><option value="" ${!ing.examTerm?'selected':''}>선택</option><option value="1학기" ${ing.examTerm==='1학기'?'selected':''}>1학기</option><option value="2학기" ${ing.examTerm==='2학기'?'selected':''}>2학기</option></select></label><label style="min-width:130px;font-size:11px;">시험 종류<input value="${escapeHtml(ing.examType)}" onchange="setProblemIngestMeta('examType',this.value)" placeholder="중간고사·기말고사" style="width:100%;margin-top:4px;"></label><span class="badge yellow">시험지로 올리면 모든 분할 문항에 기출 표시가 자동 지정됩니다.</span>`:''}</div>
   ${problemStore.saveRun.message?`<div id="problemSaveRunStatus" style="margin-top:8px;font-size:12px;font-weight:700;color:${problemStore.saveRun.failed?'#b5473d':'#6f6a59'};">${escapeHtml(problemStore.saveRun.message)}</div>`:''}
   ${problemStore.saveRun.errors?.length?`<div style="margin-top:7px;padding:9px 10px;background:#fff1ef;border:1px solid #f2c8c2;border-radius:8px;font-size:11px;line-height:1.65;color:#8b3f36;"><b>저장 실패 상세</b><br>${problemStore.saveRun.errors.slice(0,8).map(x=>`${escapeHtml(String(x.no))} · ${escapeHtml(String(x.error))}`).join('<br>')}<div style="margin-top:7px;"><button class="btn sm outline" onclick="saveAllReadyProblemDrafts()">실패/남은 저장가능 문항 다시 저장</button></div></div>`:''}
   <div style="margin-top:10px;padding:10px;background:#faf8f2;border-radius:9px;font-size:12px;line-height:1.7;"><b>저장 원칙</b> · PDF/학습보관함/학생질문은 모두 같은 문제저장소로 유입 · 문제/도형 원본은 <code>problems</code> · 유입경로는 <code>problemSources/problemDrafts</code> · 정답/선생님 해설은 학생 비공개 <code>problemKeys</code></div><div id="problemPdfAutoStatus" style="margin-top:8px;font-size:12px;color:${problemStore.analysisRun.error?'#b5473d':problemStore.analysisRun.active?'#7a5b00':'#6f6a59'};font-weight:${problemStore.analysisRun.active?'700':'400'};">${escapeHtml(problemStore.analysisRun.message||'태블릿·PC에서 PDF 파일을 선택하세요 · 여러 PDF 동시 선택 가능 · 선택 후 자동분리 시작')}</div></div>
@@ -11221,7 +11278,7 @@ ${currentSubState._problemAiDetail?.[d.id]?`<div style="margin-top:8px;padding:1
   <div><b>AI 모델 자신감</b> · ${Math.round(Number(d.analysis?.confidence||0)*100)}% <span style="color:#8a8674;">(참고값)</span></div>
   ${!problemAiQuality(d).valid?`<div style="margin-top:5px;color:#a56b25;"><b>자동 검토사유</b> · ${escapeHtml(problemAiQuality(d).issues.join(' · '))}</div>`:''}
 </div>`:''}`:''}
-<label style="display:block;font-size:11px;margin-top:9px;">정답 ${d.answerMethod==='answer-table-choice'?'<span class="badge green">정답표 자동연결</span>':'<span class="badge yellow">확인 필요</span>'}<div class="row" style="gap:6px;margin-top:4px;"><input value="${escapeHtml(d.answer||'')}" placeholder="정답 확인" style="max-width:180px;" onchange="updateProblemDraftAnswer('${d.id}',this.value)"></div></label>${miss.length?`<div style="font-size:11px;color:#a56b25;margin-top:7px;">검토필요 · ${miss.map(escapeHtml).join(' · ')}</div>`:`<div style="font-size:11px;color:#4f7a52;margin-top:7px;">필수항목 확인 완료</div>`}${problemDraftStatus(d)==='ready'?`<button class="btn sm gold" style="margin-top:8px;" onclick="saveProblemDraft('${d.id}')">문제저장소에 저장</button>`:''}</div></div></div>`}).join(''):'<div class="empty">현재 조건의 수집 초안이 없어요.<br><span style="font-size:11px;">다음 단계에서 PDF 원본 등록/문항분리 기능이 이 대기열을 채웁니다.</span></div>'}</div>`;
+<div class="row" style="gap:10px;flex-wrap:wrap;margin:9px 0;padding:8px;background:#faf8f2;border-radius:7px;font-size:11px;"><b>문항 표시</b>${d.materialKind==='exam'?'<span class="badge">기출 · 시험지에서 자동 지정</span>':`<label><input type="checkbox" ${d.pastExam||d.isPastExam?'checked':''} onchange="updateProblemDraftTag('${d.id}','past',this.checked)"> 기출</label>`}<label><input type="checkbox" ${d.majorQuestion||d.isKeyProblem?'checked':''} onchange="updateProblemDraftTag('${d.id}','major',this.checked)"> 주요문항</label><label><input type="checkbox" ${d.isFrequent?'checked':''} onchange="updateProblemDraftTag('${d.id}','frequent',this.checked)"> 빈출</label></div>${renderProblemWorkshopClassificationEditor(d)}<label style="display:block;font-size:11px;margin-top:9px;">정답 ${d.answerMethod==='answer-table-choice'?'<span class="badge green">정답표 자동연결</span>':'<span class="badge yellow">확인 필요</span>'}<div class="row" style="gap:6px;margin-top:4px;"><input value="${escapeHtml(d.answer||'')}" placeholder="정답 확인" style="max-width:180px;" onchange="updateProblemDraftAnswer('${d.id}',this.value)"></div></label>${miss.length?`<div style="font-size:11px;color:#a56b25;margin-top:7px;">검토필요 · ${miss.map(escapeHtml).join(' · ')}</div>`:`<div style="font-size:11px;color:#4f7a52;margin-top:7px;">필수항목 확인 완료</div>`}${problemDraftStatus(d)==='ready'?`<button class="btn sm gold" style="margin-top:8px;" onclick="saveProblemDraft('${d.id}')">문제저장소에 저장</button>`:''}</div></div></div>`}).join(''):'<div class="empty">현재 조건의 수집 초안이 없어요.<br><span style="font-size:11px;">다음 단계에서 PDF 원본 등록/문항분리 기능이 이 대기열을 채웁니다.</span></div>'}</div>`;
 }
 
 function problemText(p){ return p?.problemText || p?.text || p?.stem || p?.title || ''; }
@@ -11232,7 +11289,7 @@ function problemFilteredItems(){
   return problemStore.items.filter(p=>{
     const concepts=[p.mainConceptId,...(p.relatedConceptIds||[]),...(p.conceptTags||[])].filter(Boolean).join(' ');
     const skills=(p.solutionSkills||[]).join(' ');
-    const hay=[problemText(p),p.sourceName,p.bookName,p.grade,p.semester,p.majorUnit,p.major,p.middleUnit,p.middle,p.problemNo,concepts,p.geometryStructure,p.askType,skills].join(' ').toLowerCase();
+    const hay=[problemText(p),p.sourceName,p.bookName,p.grade,p.semester,p.majorUnit,p.major,p.middleUnit,p.middle,p.problemNo,p.curriculumId,p.primaryUnitId,p.primaryTypeId,p.problemTypeName,p.problemRole,p.difficultyConfirmed,(p.conditionTags||[]).join(' '),(p.representationTags||[]).join(' '),concepts,p.geometryStructure,p.askType,skills].join(' ').toLowerCase();
     return (!q||hay.includes(q)) && (!f.grade||p.grade===f.grade) && (!f.semester||p.semester===f.semester)
       && (!f.major||String(p.majorUnit||p.major||'').includes(f.major)) && (!f.middle||String(p.middleUnit||p.middle||'').includes(f.middle))
       && (!f.concept||concepts.includes(f.concept)) && (!f.geometry||String(p.geometryStructure||'').includes(f.geometry))
@@ -11285,13 +11342,70 @@ function setProblemFilter(key,value){
 }
 function toggleProblemSelect(id){ problemStore.selected.has(id)?problemStore.selected.delete(id):problemStore.selected.add(id); render(); }
 function clearProblemSelection(){ problemStore.selected.clear(); render(); }
+
+const PROBLEM_WORKSHOP_M31_TYPES = [
+  ['M3-1-U03-T01','이차방정식 여부 판별'],['M3-1-U03-T02','주어진 수가 근인지 대입 확인'],['M3-1-U03-T03','한 근으로 계수 결정'],
+  ['M3-1-U03-T04','인수분해로 해 구하기'],['M3-1-U03-T05','중근 조건으로 근·계수 구하기'],['M3-1-U03-T06','제곱근을 이용해 해 구하기'],
+  ['M3-1-U03-T07','완전제곱식으로 변형해 해 구하기'],['M3-1-U03-T08','근의 공식으로 해 구하기'],['M3-1-U03-T09','판별식으로 근의 개수·계수 범위 판정'],
+  ['M3-1-U03-T10','주어진 근으로 방정식 구성'],['M3-1-U03-T11','근과 계수의 관계로 식 계산·조건 추론'],['M3-1-U03-T12','켤레근으로 근·계수 결정'],
+  ['M3-1-U03-T13','정수 관계·수열 합 문장제 모델링'],['M3-1-U03-T14','높이·시간 운동 문장제 모델링'],['M3-1-U03-T15','도형 넓이 문장제 모델링'],
+  ['M3-1-U03-T16','상자 부피 문장제 모델링'],['M3-1-U03-T17','잘못 본 계수 정보로 방정식 복원'],['M3-1-U03-T18','두 방정식의 공통근·근 연결']
+];
+function problemWorkshopIsM31Equation(d){
+  return /중3/.test(String(d.grade||'')) && /1/.test(String(d.semester||'')) && /이차방정식/.test(String(d.middleUnit||d.majorUnit||''));
+}
+function renderProblemWorkshopClassificationEditor(d){
+  const id=escapeHtml(d.id||'');
+  const field=(key,label,value,placeholder)=>'<label style="display:block;font-size:10px;">'+label+'<input id="pw_'+id+'_'+key+'" value="'+escapeHtml(value||'')+'" placeholder="'+escapeHtml(placeholder||'')+'" style="width:100%;margin-top:3px;font-size:12px;"></label>';
+  const isM31=problemWorkshopIsM31Equation(d);
+  const options=PROBLEM_WORKSHOP_M31_TYPES.map(x=>'<option value="'+x[0]+'" '+(d.primaryTypeId===x[0]?'selected':'')+'>'+x[0]+' · '+escapeHtml(x[1])+'</option>').join('');
+  const roleOptions=[['','선택'],['concept_example','개념 예제'],['basic','기본'],['representative','대표'],['application','응용'],['advanced','심화'],['challenge','도전']].map(x=>'<option value="'+x[0]+'" '+(d.problemRole===x[0]?'selected':'')+'>'+x[1]+'</option>').join('');
+  const diffOptions=[['','미확정'],['1','1 기초'],['2','2 기본'],['3','3 보통'],['4','4 어려움'],['5','5 최상']].map(x=>'<option value="'+x[0]+'" '+(String(d.difficultyConfirmed||'')===x[0]?'selected':'')+'>'+x[1]+'</option>').join('');
+  return '<div style="margin-top:10px;padding:10px;background:#fbfaf6;border:1px solid var(--line);border-radius:9px;"><div style="font-size:11px;font-weight:700;margin-bottom:7px;">M&amp;m 분류 확정 · 저장 전 문항별로 확인</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;">'+
+    field('grade','학년',d.grade,'예: 중3')+
+    field('semester','학기',d.semester,'예: 1학기')+
+    field('majorUnit','대단원',d.majorUnit,'교재 기준 대단원')+
+    field('middleUnit','중단원',d.middleUnit,'M&m 기준 중단원')+
+    field('curriculumId','과정 코드',d.curriculumId,'예: M3-1 / H-ALG')+
+    field('primaryUnitId','기준 단원 ID',d.primaryUnitId,'예: M3-1-U03')+
+    (isM31?'<label style="display:block;font-size:10px;">세부 풀이 유형<select id="pw_'+id+'_typeSelect" onchange="fillProblemWorkshopType(\''+id+'\',this.value)" style="width:100%;margin-top:3px;font-size:12px;"><option value="">유형 선택</option>'+options+'</select></label>':'')+
+    field('primaryTypeId','세부 유형 ID',d.primaryTypeId,isM31?'목록 선택 시 자동 입력':'과정-단원-T번호')+
+    field('problemTypeName','세부 유형명',d.problemTypeName,'문제 풀이 유형')+
+    '<label style="display:block;font-size:10px;">난이도<select id="pw_'+id+'_difficulty" style="width:100%;margin-top:3px;font-size:12px;">'+diffOptions+'</select></label>'+
+    '<label style="display:block;font-size:10px;">문항 역할<select id="pw_'+id+'_role" style="width:100%;margin-top:3px;font-size:12px;">'+roleOptions+'</select></label>'+
+    field('conditionTags','조건 태그',Array.isArray(d.conditionTags)?d.conditionTags.join(', '):d.conditionTags,'예: 정수근, 매개변수')+
+    field('representationTags','표현 태그',Array.isArray(d.representationTags)?d.representationTags.join(', '):d.representationTags,'예: 식, 그래프, 도형')+
+    '</div><button class="btn sm outline" style="margin-top:4px;" onclick="saveProblemWorkshopTaxonomy(\''+id+'\')">분류 저장</button>'+
+    (d.taxonomyReviewStatus==='confirmed'?'<span class="badge green" style="margin-left:6px;">분류 확인됨</span>':'<span style="font-size:10px;color:#8a8674;margin-left:6px;">과정·단원·유형 ID와 유형명을 입력해주세요.</span>')+'</div>';
+}
+function fillProblemWorkshopType(id,typeId){
+  const row=PROBLEM_WORKSHOP_M31_TYPES.find(x=>x[0]===typeId); if(!row)return;
+  const typeEl=document.getElementById('pw_'+id+'_primaryTypeId'), nameEl=document.getElementById('pw_'+id+'_problemTypeName');
+  const courseEl=document.getElementById('pw_'+id+'_curriculumId'), unitEl=document.getElementById('pw_'+id+'_primaryUnitId');
+  if(typeEl)typeEl.value=row[0]; if(nameEl)nameEl.value=row[1]; if(courseEl)courseEl.value='M3-1'; if(unitEl)unitEl.value='M3-1-U03';
+}
+async function saveProblemWorkshopTaxonomy(id){
+  const d=problemStore.ingest.drafts.find(x=>x.id===id); if(!d)return;
+  const value=key=>String(document.getElementById('pw_'+id+'_'+key)?.value||'').trim();
+  const tags=key=>value(key).split(/[,·|;/\n]+/).map(x=>x.trim()).filter(Boolean);
+  const patch={grade:value('grade'),semester:value('semester'),majorUnit:value('majorUnit'),middleUnit:value('middleUnit'),curriculumId:value('curriculumId'),primaryUnitId:value('primaryUnitId'),primaryTypeId:value('primaryTypeId'),problemTypeName:value('problemTypeName'),difficultyConfirmed:Number(value('difficulty'))||null,problemRole:value('role'),conditionTags:tags('conditionTags'),representationTags:tags('representationTags'),taxonomyReviewStatus:'confirmed',taxonomyReviewedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+  if(!patch.grade||!patch.semester||!patch.majorUnit||!patch.middleUnit||!patch.curriculumId||!patch.primaryUnitId||!patch.primaryTypeId||!patch.problemTypeName||!patch.difficultyConfirmed){alert('학년·학기·단원·과정 코드·기준 단원·세부 유형·난이도를 모두 확인해주세요.');return;}
+  const ok=await fsUpdate('problemDrafts',id,patch); if(!ok){alert('분류 저장에 실패했어요.');return;}
+  Object.assign(d,patch); d.confidence=problemDraftConfidence(d); d.status=problemDraftStatus(d); render();
+}
+function renderProblemWorkshopPage(){
+  return '<h1 class="page-title">🛠️ 문제공작소</h1><p class="page-sub">PDF에서 문항을 분리하고, 유형·단원·난이도를 검수해 초안으로 저장합니다. 직접 문제저장소에 저장한 문항만 정식 DB에 추가됩니다.</p>'+
+    '<div class="card" style="margin-bottom:12px;border-left:4px solid var(--gold);"><b>작업 순서</b><div style="font-size:12px;line-height:1.8;margin-top:5px;">① PDF 등록·문항 분할 → ② 원본 crop·정답·분류 검수 → ③ 문항별 저장 승인 → ④ 문제저장소에 누적</div><div style="font-size:11px;color:#7a7666;margin-top:4px;">전체 자료를 한꺼번에 넣지 않아도 됩니다. 처음에는 한 PDF의 일부 문항만 처리해도 돼요.</div><button class="btn sm outline" style="margin-top:8px;" onclick="goto(\'problemRepo\')">승인된 문제 보기</button></div>'+renderProblemIngest();
+}
+
 function renderProblemRepository(){
   const tab=problemStore.tab||'library';
   if(tab==='ingest') return `<h1 class="page-title">🧩 문제저장소</h1><p class="page-sub">문제 원본과 정답키를 분리해 수집합니다.</p><div class="tabs2"><button onclick="setProblemRepoTab('library')">저장된 문제</button><button class="active" onclick="setProblemRepoTab('ingest')">PDF 수집·검토</button></div>${renderProblemIngest()}`;
   ensureProblemRepositoryLoaded();
   const f=problemStore.filter, rows=problemFilteredItems(), selected=problemStore.selected.size;
   const grades=['초4','초5','초6','중1','중2','중3','고1','고2','고3'];
-  return `<h1 class="page-title">🧩 문제저장소</h1><p class="page-sub">문제는 로그인 때 불러오지 않습니다. 검색 조건이 있으면 서버 인덱스로 후보를 좁힌 뒤 60개 단위로 조회합니다.</p><div class="tabs2"><button class="active" onclick="setProblemRepoTab('library')">저장된 문제</button><button onclick="setProblemRepoTab('ingest')">PDF 수집·검토</button></div>
+  return `<h1 class="page-title">🧩 문제저장소</h1><p class="page-sub">문제는 로그인 때 불러오지 않습니다. 검색 조건이 있으면 서버 인덱스로 후보를 좁힌 뒤 60개 단위로 조회합니다.</p><div class="tabs2"><span class="badge gray">검수 승인된 문제 DB</span><button onclick="goto('problemWorkshop')">🛠️ 문제공작소 열기</button></div>
   <div class="card" style="margin-bottom:12px;"><div class="row" style="gap:8px;flex-wrap:wrap;align-items:end;">
     <label style="flex:2;min-width:180px;font-size:11px;">검색<input value="${escapeHtml(f.q)}" oninput="setProblemFilter('q',this.value)" placeholder="문제·교재·출처 검색" style="width:100%;margin-top:4px;"></label>
     <label style="min-width:105px;font-size:11px;">학년<select onchange="setProblemFilter('grade',this.value)" style="width:100%;margin-top:4px;"><option value="">전체</option>${grades.map(x=>`<option ${f.grade===x?'selected':''}>${x}</option>`).join('')}</select></label>
@@ -11306,10 +11420,181 @@ function renderProblemRepository(){
     ${problemStore.queryToken?`<span class="badge gray" title="Firestore 서버 검색 인덱스">서버검색 ${escapeHtml(problemStore.queryToken)}</span>`:''}
   </div></div>
   ${selected?`<div class="card" style="position:sticky;top:8px;z-index:8;border-color:var(--gold);"><div class="row between"><b>${selected}문항 선택</b><div class="row"><button class="btn sm outline" onclick="clearProblemSelection()">선택 해제</button><button class="btn sm gold" onclick="assignSelectedProblems()">선택 문제 배정</button></div></div></div>`:''}
-  <div class="card">${problemStore.loading&&!problemStore.loaded?'<div class="empty">문제 불러오는 중…</div>':rows.length?rows.map((p,i)=>`<div style="padding:12px 0;border-bottom:1px solid var(--line);"><div class="row" style="align-items:flex-start;"><input type="checkbox" ${problemStore.selected.has(p.id)?'checked':''} onchange="toggleProblemSelect('${p.id}')" style="margin-top:4px;"><div style="flex:1;"><div class="row" style="gap:5px;flex-wrap:wrap;"><b>${escapeHtml(p.problemNo||p.no||p.sourceProblemNo||(p.id?`저장문제 ${String(p.id).slice(0,6)}`:'저장문제'))}</b><span class="badge gray">${escapeHtml(problemTypeLabel(p.type))}</span>${problemMetaLabel(p)?`<span class="badge">${escapeHtml(problemMetaLabel(p))}</span>`:''}${p.sourceName||p.bookName?`<span style="font-size:11px;color:#8a8674;">${escapeHtml(p.sourceName||p.bookName)}</span>`:''}${p.dedupMode?`<span style="font-size:9px;color:#aaa;">중복판정:${escapeHtml(p.dedupMode)}</span>`:''}</div><div style="margin-top:7px;white-space:pre-wrap;line-height:1.55;">${escapeHtml(problemText(p)||'(문제 본문/이미지 메타데이터 등록 대기)')}</div>${p.imageUrl?`<img src="${escapeHtml(p.imageUrl)}" style="max-width:220px;max-height:180px;margin-top:8px;border-radius:8px;" loading="lazy">`:''}</div></div></div>`).join(''):'<div class="empty">현재 불러온 범위에 조건과 맞는 문제가 없어요.</div>'}
+  <div class="card">${problemStore.loading&&!problemStore.loaded?'<div class="empty">문제 불러오는 중…</div>':rows.length?rows.map((p,i)=>`<div style="padding:12px 0;border-bottom:1px solid var(--line);"><div class="row" style="align-items:flex-start;"><input type="checkbox" ${problemStore.selected.has(p.id)?'checked':''} onchange="toggleProblemSelect('${p.id}')" style="margin-top:4px;"><div style="flex:1;"><div class="row" style="gap:5px;flex-wrap:wrap;"><b>${escapeHtml(p.problemNo||p.no||p.sourceProblemNo||(p.id?`저장문제 ${String(p.id).slice(0,6)}`:'저장문제'))}</b><span class="badge gray">${escapeHtml(problemTypeLabel(p.type))}</span>${problemMetaLabel(p)?`<span class="badge">${escapeHtml(problemMetaLabel(p))}</span>`:''}${(p.pastExam||p.isPastExam)?'<span class="badge">기출</span>':''}${(p.majorQuestion||p.isKeyProblem)?'<span class="badge yellow">주요문항</span>':''}${p.isFrequent?'<span class="badge" style="background:#f1e8ff;color:#60408a;">빈출</span>':''}${p.sourceName||p.bookName?`<span style="font-size:11px;color:#8a8674;">${escapeHtml(p.sourceName||p.bookName)}</span>`:''}${p.dedupMode?`<span style="font-size:9px;color:#aaa;">중복판정:${escapeHtml(p.dedupMode)}</span>`:''}</div><div style="margin-top:7px;white-space:pre-wrap;line-height:1.55;">${escapeHtml(problemText(p)||'(문제 본문/이미지 메타데이터 등록 대기)')}</div>${p.imageUrl?`<img src="${escapeHtml(p.imageUrl)}" style="max-width:220px;max-height:180px;margin-top:8px;border-radius:8px;" loading="lazy">`:''}</div></div></div>`).join(''):'<div class="empty">현재 불러온 범위에 조건과 맞는 문제가 없어요.</div>'}
     ${problemStore.hasMore?'<button class="btn outline" style="width:100%;margin-top:12px;" onclick="loadProblemPage(false)">다음 60개 더 불러오기</button>':''}
   </div>`;
 }
+function ensureExamMakerLoaded(){
+  if(examMakerStore.loaded||examMakerStore.loading) return;
+  examMakerStore.loading=true;
+  fsdb.collection('exams').orderBy('updatedAt','desc').limit(30).get()
+    .catch(()=>fsdb.collection('exams').limit(30).get())
+    .then(snap=>{examMakerStore.exams=snap.docs.map(d=>({id:d.id,...d.data()}));examMakerStore.loaded=true;})
+    .catch(e=>{console.error('exam list load',e);alert('저장된 시험지를 불러오지 못했어요.');})
+    .finally(()=>{examMakerStore.loading=false;render();});
+}
+function examProblemSnapshot(p){
+  return {problemText:problemText(p),imageUrl:p.imageUrl||'',type:p.type||'short',grade:p.grade||'',semester:p.semester||'',majorUnit:p.majorUnit||p.major||'',middleUnit:p.middleUnit||p.middle||'',smallUnit:p.smallUnit||'',subtype:p.subtype||'',primaryTypeId:p.primaryTypeId||'',primaryTypeName:p.primaryTypeName||'',majorQuestion:!!(p.majorQuestion||p.isKeyProblem),pastExam:!!(p.pastExam||p.isPastExam),isFrequent:!!p.isFrequent,conditionTags:p.conditionTags||[],sourceName:p.sourceName||p.bookName||'',problemNo:p.problemNo||p.no||p.sourceProblemNo||'',difficulty:p.difficultyConfirmed||p.predictedDifficulty||p.difficulty||'',updatedAt:p.updatedAt||p.createdAt||''};
+}
+function addProblemToExam(id){
+  const p=examMakerStore.candidates.find(x=>x.id===id);
+  if(!p||examMakerStore.items.some(x=>x.problemId===id)) return;
+  examMakerStore.items.push({problemId:id,points:Number(p.points||1),problemSnapshot:examProblemSnapshot(p)});
+  render();
+}
+function removeExamItem(index){examMakerStore.items.splice(index,1);render();}
+function moveExamItem(index,delta){const next=index+delta;if(next<0||next>=examMakerStore.items.length)return;const [item]=examMakerStore.items.splice(index,1);examMakerStore.items.splice(next,0,item);render();}
+function changeExamItemPoints(index,value){const n=Number(value);if(Number.isFinite(n)&&n>=0)examMakerStore.items[index].points=n;}
+function updateExamMakerMeta(key,value){examMakerStore[key]=value;}
+function examMakerFilterKey(){return JSON.stringify(examMakerStore.filter);}
+function resetExamMakerCandidates(){examMakerStore.candidateKey='';examMakerStore.candidates=[];examMakerStore.candidateStreams=null;examMakerStore.candidateScanned=0;examMakerStore.candidateError='';loadExamMakerCandidates(true);}
+function setExamMakerFilter(key,value){examMakerStore.filter[key]=String(value||'').trim();resetExamMakerCandidates();}
+function setExamMakerFlag(tag,value){if(!['major','past','frequent'].includes(tag))return;examMakerStore.filter.flags[tag]=!!value;resetExamMakerCandidates();}
+function setExamMakerFlagMatch(value){examMakerStore.filter.flagMatch=value==='any'?'any':'all';resetExamMakerCandidates();}
+function examMakerProblemType(p){return String(p.subtype||p.primaryTypeName||p.primaryTypeId||'').trim();}
+function examMakerOptions(keys){const values=new Set();(examMakerStore.candidates||[]).forEach(p=>keys.map(k=>p?.[k]).filter(Boolean).forEach(v=>values.add(String(v).trim())));return [...values].filter(Boolean).sort((a,b)=>a.localeCompare(b,'ko'));}
+function examMakerMatchesFilter(p){
+  const f=examMakerStore.filter,q=String(f.q||'').trim().toLowerCase();
+  const text=[problemText(p),p.sourceName,p.bookName,p.problemNo,p.grade,p.semester,p.majorUnit,p.middleUnit,p.smallUnit,p.subtype,p.primaryTypeName,p.primaryTypeId].filter(Boolean).join(' ').toLowerCase();
+  const selectedFlags=[];
+  if(f.flags?.major)selectedFlags.push(!!(p.majorQuestion||p.isKeyProblem));
+  if(f.flags?.past)selectedFlags.push(!!(p.pastExam||p.isPastExam));
+  if(f.flags?.frequent)selectedFlags.push(!!p.isFrequent);
+  const flagOk=!selectedFlags.length||(f.flagMatch==='any'?selectedFlags.some(Boolean):selectedFlags.every(Boolean));
+  return (!q||text.includes(q))&&(!f.grade||p.grade===f.grade)&&(!f.semester||p.semester===f.semester)
+    &&(!f.majorUnit||String(p.majorUnit||p.major||'')===f.majorUnit)&&(!f.middleUnit||String(p.middleUnit||p.middle||'')===f.middleUnit)
+    &&(!f.smallUnit||String(p.smallUnit||'')===f.smallUnit)&&(!f.subtype||examMakerProblemType(p)===f.subtype)&&flagOk;
+}
+function examMakerQueryStreamSpecs(){
+  const f=examMakerStore.filter, selected=[];
+  if(f.flags?.major)selected.push([{id:'major',field:'majorQuestion',value:true},{id:'majorLegacy',field:'isKeyProblem',value:true}]);
+  if(f.flags?.past)selected.push([{id:'past',field:'pastExam',value:true},{id:'pastLegacy',field:'isPastExam',value:true}]);
+  if(f.flags?.frequent)selected.push([{id:'frequent',field:'isFrequent',value:true}]);
+  if(selected.length)return f.flagMatch==='any'?selected.flat():selected[0];
+  if(f.subtype)return [{id:'subtype',field:'subtype',value:f.subtype},{id:'typeName',field:'primaryTypeName',value:f.subtype},{id:'typeId',field:'primaryTypeId',value:f.subtype}];
+  if(f.smallUnit)return [{id:'range',field:'smallUnit',value:f.smallUnit}];
+  if(f.middleUnit)return [{id:'range',field:'middleUnit',value:f.middleUnit}];
+  if(f.majorUnit)return [{id:'range',field:'majorUnit',value:f.majorUnit}];
+  if(f.semester)return [{id:'range',field:'semester',value:f.semester}];
+  if(f.grade)return [{id:'range',field:'grade',value:f.grade}];
+  const qword=problemLexemes(f.q||'')[0];
+  if(qword)return [{id:'search',field:'searchTokens',value:'q:'+problemTokenNorm(qword),array:true}];
+  return [{id:'all',field:'',value:''}];
+}
+function ensureExamMakerCandidates(){
+  if(examMakerStore.candidateKey!==examMakerFilterKey()&&!examMakerStore.candidateLoading)setTimeout(()=>{if(examMakerStore.candidateKey!==examMakerFilterKey())loadExamMakerCandidates(true);},0);
+}
+async function loadExamMakerCandidates(reset=true){
+  if(examMakerStore.candidateLoading)return;
+  const key=examMakerFilterKey();
+  if(!reset&&examMakerStore.candidateKey!==key)reset=true;
+  if(reset){examMakerStore.candidates=[];examMakerStore.candidateStreams=examMakerQueryStreamSpecs().map(s=>({...s,lastDoc:null,hasMore:true}));examMakerStore.candidateScanned=0;examMakerStore.candidateKey=key;examMakerStore.candidateError='';}
+  const streams=(examMakerStore.candidateStreams||[]).filter(s=>s.hasMore);
+  if(!streams.length){examMakerStore.candidateHasMore=false;render();return;}
+  examMakerStore.candidateLoading=true;examMakerStore.candidateHasMore=true;render();
+  try{
+    const results=await Promise.all(streams.map(async stream=>{
+      let q=fsdb.collection('problems');
+      if(stream.field){q=stream.array?q.where(stream.field,'array-contains',stream.value):q.where(stream.field,'==',stream.value);}
+      q=q.limit(60);if(stream.lastDoc)q=q.startAfter(stream.lastDoc);
+      const snap=await q.get();
+      stream.lastDoc=snap.docs[snap.docs.length-1]||stream.lastDoc;stream.hasMore=snap.size===60;
+      return snap.docs.map(d=>({id:d.id,...d.data()}));
+    }));
+    if(key!==examMakerFilterKey())return;
+    const existing=new Set(examMakerStore.candidates.map(p=>p.id));
+    results.flat().forEach(p=>{examMakerStore.candidateScanned++;if(!existing.has(p.id)&&examMakerMatchesFilter(p)){existing.add(p.id);examMakerStore.candidates.push(p);}});
+    examMakerStore.candidateHasMore=examMakerStore.candidateStreams.some(s=>s.hasMore);
+  }catch(e){
+    console.error('exam candidate query',e);if(key===examMakerFilterKey()){examMakerStore.candidateError=problemErrorText(e);examMakerStore.candidateHasMore=false;}
+  }finally{examMakerStore.candidateLoading=false;render();}
+}
+async function composeExamFromFilters(){
+  const count=Math.max(1,Math.min(200,Number(examMakerStore.targetCount)||1));
+  if(examMakerStore.candidateKey!==examMakerFilterKey())await loadExamMakerCandidates(true);
+  let pages=0;
+  while(examMakerStore.candidates.length<count&&examMakerStore.candidateHasMore&&pages<20){await loadExamMakerCandidates(false);pages++;}
+  const candidates=examMakerStore.candidates;
+  if(candidates.length<count){alert(`현재 조회한 문제 중 조건에 맞는 문항은 ${candidates.length}개예요.${examMakerStore.candidateHasMore?' 더 불러온 뒤 다시 구성할 수 있어요.':' 조건에 맞는 문제가 부족해요.'}`);return;}
+  if(examMakerStore.items.length&&!confirm('현재 담긴 문항을 조건에 맞춘 새 구성으로 바꿀까요?'))return;
+  const pool=candidates.slice();
+  for(let i=pool.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[pool[i],pool[j]]=[pool[j],pool[i]];}
+  examMakerStore.items=pool.slice(0,count).map(p=>({problemId:p.id,points:Number(p.points||1),problemSnapshot:examProblemSnapshot(p)}));
+  render();
+}
+function examMakerDateLabel(dateISO){if(!dateISO)return '';const d=new Date(dateISO+'T00:00:00');return `${d.getFullYear()}년 ${d.getMonth()+1}월 ${d.getDate()}일`;}
+function startNewExamMaker(){examMakerStore.selectedExamId='';examMakerStore.items=[];examMakerStore.title='';examMakerStore.grade='';examMakerStore.range='';examMakerStore.examDate=todayISO();examMakerStore.duration='50분';examMakerStore.instructions='문항별 배점을 확인하고 답을 작성하세요. 서술형은 풀이 과정을 함께 적으세요.';render();}
+async function saveExamMakerDraft(){
+  if(!session||session.mode!=='director'){alert('원장 모드에서만 저장할 수 있어요.');return;}
+  const title=String(examMakerStore.title||'').trim();
+  if(!title){alert('시험지 제목을 입력해주세요.');return;}
+  if(!examMakerStore.items.length){alert('시험지에 넣을 문제를 먼저 추가해주세요.');return;}
+  if(!examMakerStore.selectedExamId) examMakerStore.examDate=todayISO();
+  const now=new Date().toISOString(), examId=examMakerStore.selectedExamId||uid('exam'), batch=fsdb.batch(), examRef=fsdb.collection('exams').doc(examId);
+  try{
+    const oldItems=examMakerStore.selectedExamId?await fsdb.collection('exam_items').where('examId','==',examId).get():null;
+    const keepItemIds=new Set(examMakerStore.items.map((_,index)=>examId+'_'+String(index+1).padStart(3,'0')));
+    (oldItems?.docs||[]).forEach(d=>{if(!keepItemIds.has(d.id))batch.delete(d.ref);});
+    const existing=examMakerStore.exams.find(x=>x.id===examId);
+    const exam={title,grade:examMakerStore.grade||'',range:examMakerStore.range||'',examDate:examMakerStore.examDate||todayISO(),duration:examMakerStore.duration||'',instructions:examMakerStore.instructions||'',itemCount:examMakerStore.items.length,totalPoints:examMakerStore.items.reduce((n,x)=>n+Number(x.points||0),0),status:'draft',createdAt:existing?.createdAt||now,updatedAt:now,createdByMode:'director',schemaVersion:1};
+    batch.set(examRef,exam);
+    examMakerStore.items.forEach((item,index)=>{
+      const itemId=examId+'_'+String(index+1).padStart(3,'0');
+      batch.set(fsdb.collection('exam_items').doc(itemId),{examId,problemId:item.problemId,itemOrder:index+1,points:Number(item.points||0),problemVersion:item.problemSnapshot.updatedAt||'',problemSnapshot:item.problemSnapshot,createdAt:now});
+    });
+    await batch.commit();
+    const saved={id:examId,...exam}, existingIndex=examMakerStore.exams.findIndex(x=>x.id===examId);
+    if(existingIndex>=0) examMakerStore.exams.splice(existingIndex,1);
+    examMakerStore.exams.unshift(saved);examMakerStore.selectedExamId=examId;alert('시험지와 문항 구성이 저장됐어요.');render();
+  }
+  catch(e){console.error('exam save',e);alert('시험지를 저장하지 못했어요. '+problemErrorText(e));}
+}
+async function openSavedExam(id){
+  try{
+    const snap=await fsdb.collection('exam_items').where('examId','==',id).get();
+    examMakerStore.items=snap.docs.map(d=>d.data()).sort((a,b)=>Number(a.itemOrder||0)-Number(b.itemOrder||0)).map(x=>({problemId:x.problemId,points:Number(x.points||0),problemSnapshot:x.problemSnapshot||{}}));
+    const exam=examMakerStore.exams.find(x=>x.id===id);if(exam){examMakerStore.title=exam.title||'';examMakerStore.grade=exam.grade||'';examMakerStore.range=exam.range||'';examMakerStore.examDate=exam.examDate||todayISO();examMakerStore.duration=exam.duration||'';examMakerStore.instructions=exam.instructions||'';}
+    examMakerStore.selectedExamId=id;render();
+  }catch(e){console.error('exam item load',e);alert('시험지 문항을 불러오지 못했어요.');}
+}
+function printExamPaper(teacher=false){
+  const items=examMakerStore.items;
+  if(!items.length){alert('출력할 시험지 문항이 없어요.');return;}
+  const win=window.open('','_blank');
+  if(!win){alert('새 창이 차단됐어요. 브라우저에서 팝업을 허용한 뒤 다시 눌러주세요.');return;}
+  if(!examMakerStore.selectedExamId) examMakerStore.examDate=todayISO();
+  const exam={title:examMakerStore.title||'M&m 수학 모의고사',grade:examMakerStore.grade||'',range:examMakerStore.range||'',examDate:examMakerStore.examDate||todayISO(),duration:examMakerStore.duration||'',instructions:examMakerStore.instructions||''};
+  const renderDoc=(keys={})=>{
+    const total=items.reduce((n,x)=>n+Number(x.points||0),0);
+    const questionHtml=items.map((x,i)=>{const p=x.problemSnapshot||{};return `<article class="question"><div class="qhead"><b>${i+1}.</b><span class="qpoints">${Number(x.points||0)}점</span></div>${p.imageUrl?`<img class="problem-image" src="${escapeHtml(p.imageUrl)}">`:''}${p.problemText?`<div class="problem-text">${escapeHtml(p.problemText).replace(/\n/g,'<br>')}</div>`:''}<div class="work-space"></div></article>`;}).join('');
+    const answerHtml=teacher?`<section class="answers"><h2>정답 및 해설</h2>${items.map((x,i)=>{const k=keys[x.problemId]||{};const level=Number(x.problemSnapshot?.difficulty||0);const color=level>=4?'#E8492E':level===3?'#E9B200':'#2E9B4E';return `<article class="answer"><div><b>${i+1}.</b> <span class="answer-value" style="border-color:${color}">${escapeHtml(k.answer||'정답 미등록')}</span> <small>${Number(x.points||0)}점</small></div>${k.explanation?`<div class="explanation">${escapeHtml(k.explanation).replace(/\n/g,'<br>')}</div>`:''}${k.teacherExplanation?`<div class="explanation"><b>교사용 메모</b><br>${escapeHtml(k.teacherExplanation).replace(/\n/g,'<br>')}</div>`:''}</article>`;}).join('')}</section>`:'';
+    win.document.open();win.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(exam.title)}${teacher?' 정답·해설':''}</title><style>@page{size:A4;margin:14mm 13mm 16mm}*{box-sizing:border-box}body{font-family:'Noto Sans KR','Noto Serif KR',Arial,sans-serif;color:#20231e;margin:0;font-size:10pt}.toolbar{position:sticky;top:0;z-index:5;display:flex;justify-content:center;align-items:center;gap:8px;padding:10px;background:#174b38;color:white}.toolbar button{border:0;border-radius:6px;padding:8px 14px;background:white;color:#174b38;font-weight:700;cursor:pointer}.toolbar small{color:#e4efe9}.paper{max-width:210mm;margin:15px auto;padding:14mm;box-shadow:0 2px 18px #bbb}.top{border-bottom:2px solid #174b38;padding-bottom:9px;margin-bottom:12px}.brand{font-size:10pt;color:#174b38;font-weight:800;letter-spacing:.04em;text-align:center}.title{font-size:20pt;text-align:center;margin:5px 0 10px}.meta{display:flex;justify-content:center;flex-wrap:wrap;gap:8px 16px;font-size:9pt}.name{display:flex;justify-content:space-between;margin-top:12px;padding:8px 10px;border:1px solid #777;font-size:10pt}.directions{margin-top:9px;padding:7px 9px;background:#f5f5f0;font-size:9pt;line-height:1.5}.questions{column-count:2;column-gap:9mm;column-rule:1px solid #ddd}.question{break-inside:avoid;border:1px solid #ddd;border-radius:5px;padding:8px;margin:0 0 8mm}.qhead{display:flex;justify-content:space-between;margin-bottom:6px}.qpoints{font-size:8pt;color:#666}.problem-image{display:block;max-width:100%;max-height:90mm;object-fit:contain;margin:4px auto}.problem-text{line-height:1.7;white-space:normal}.work-space{height:13mm}.answers{break-before:page}.answers h2{border-bottom:2px solid #174b38;padding-bottom:7px}.answer{padding:8px 0;border-bottom:1px solid #ddd;break-inside:avoid}.answer-value{display:inline-block;padding:1px 7px;border-bottom:2px solid;font-weight:700}.explanation{margin:5px 0 0 20px;line-height:1.65}.footer{text-align:center;color:#888;font-size:8pt;margin-top:12mm}.page-counter:before{content:counter(page)}@media print{.toolbar{display:none}.paper{max-width:none;margin:0;padding:0;box-shadow:none}.question{border-color:#aaa}.work-space{height:16mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">인쇄</button><button onclick="window.print()">PDF 저장</button><small>PDF 저장은 인쇄창에서 ‘PDF로 저장’을 선택하세요.</small><button onclick="window.close()">닫기</button></div><main class="paper"><header class="top"><div class="brand">M&amp;m 수학훈련소 · 수학 모의고사</div><h1 class="title">${escapeHtml(exam.title)}${teacher?' · 정답 및 해설':''}</h1><div class="meta"><span>${escapeHtml(exam.grade||'학년 미입력')}</span><span>범위: ${escapeHtml(exam.range||'미지정')}</span><span>시행일: ${examMakerDateLabel(exam.examDate)}</span><span>제한시간: ${escapeHtml(exam.duration||'미지정')}</span><span>${items.length}문항 · 총 ${total}점</span></div>${!teacher?`<div class="name"><span>이름: ____________________</span><span>점수: __________</span></div>`:''}<div class="directions">${escapeHtml(exam.instructions||'문항별 배점을 확인하고 답을 작성하세요.')}</div></header>${teacher?'':`<section class="questions">${questionHtml}</section>`}${answerHtml}<div class="footer"><span class="page-counter"></span> | M&amp;m</div></main></body></html>`);win.document.close();
+  };
+  if(!teacher){renderDoc();return;}
+  Promise.all(items.map(async x=>{try{const d=await fsdb.collection('problemKeys').doc(x.problemId).get();return [x.problemId,d.exists?d.data():{}];}catch(e){return [x.problemId,{}];}})).then(rows=>renderDoc(Object.fromEntries(rows)));
+}
+function renderExamProblemPicker(rows){
+  const f=examMakerStore.filter;
+  const select=(key,label,options)=>`<label style="flex:1;min-width:130px;font-size:11px;">${label}<input list="examFilterOptions_${key}" value="${escapeHtml(f[key])}" onchange="setExamMakerFilter('${key}',this.value)" placeholder="전체 또는 입력" style="width:100%;margin-top:4px;"><datalist id="examFilterOptions_${key}">${options.map(x=>`<option value="${escapeHtml(x)}"></option>`).join('')}</datalist></label>`;
+  const problemRows=rows.map(p=>`<div class="row between" style="gap:8px;padding:9px 0;border-bottom:1px solid var(--line);"><div style="min-width:0;"><b>${escapeHtml(p.problemNo||p.no||p.sourceProblemNo||'문제')}</b> <span class="badge gray">${escapeHtml(problemTypeLabel(p.type))}</span>${(p.majorQuestion||p.isKeyProblem)?'<span class="badge yellow">주요</span>':''}${(p.pastExam||p.isPastExam)?'<span class="badge">기출</span>':''}${p.isFrequent?'<span class="badge" style="background:#f1e8ff;color:#60408a;">빈출</span>':''}<div style="font-size:11px;color:#666;margin-top:3px;">${escapeHtml([p.grade,p.semester,p.majorUnit||p.major,p.middleUnit||p.middle,p.smallUnit,examMakerProblemType(p),p.sourceName||p.bookName].filter(Boolean).join(' · '))}</div><div style="font-size:12px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(problemText(p)||'이미지 문항')}</div></div><button class="btn sm ${examMakerStore.items.some(x=>x.problemId===p.id)?'outline':'gold'}" onclick="addProblemToExam('${p.id}')" ${examMakerStore.items.some(x=>x.problemId===p.id)?'disabled':''}>${examMakerStore.items.some(x=>x.problemId===p.id)?'추가됨':'직접 추가'}</button></div>`).join('');
+  const emptyRows=examMakerStore.candidateLoading?'문제저장소에서 조건에 맞는 문제를 조회하고 있어요.':'현재까지 조회한 범위에 조건에 맞는 문제가 없어요.';
+  const error=examMakerStore.candidateError?`<div style="margin-top:8px;color:#a33;font-size:12px;">문제 조회에 실패했어요. ${escapeHtml(examMakerStore.candidateError)}</div>`:'';
+  const more=examMakerStore.candidateHasMore?'<button class="btn outline" style="width:100%;margin-top:10px;" onclick="loadExamMakerCandidates(false)">조건에 맞는 문제 더 불러오기</button>':'';
+  return `<div class="card" style="margin-top:12px;"><h3 style="margin:0 0 8px;">출제 범위와 문항 수</h3><p style="font-size:11px;color:#777;margin:0 0 9px;">세부 유형까지 필터링할 수 있어요. 조건에 맞춰 무작위 문항을 구성하거나, 아래 후보를 하나씩 직접 담을 수 있습니다.</p>
+  <div class="row" style="gap:7px;flex-wrap:wrap;align-items:end;"><label style="flex:2;min-width:170px;font-size:11px;">문제·교재 검색<input value="${escapeHtml(f.q)}" onchange="setExamMakerFilter('q',this.value)" placeholder="검색어" style="width:100%;margin-top:4px;"></label>${select('grade','학년',examMakerOptions(['grade']))}${select('semester','학기',examMakerOptions(['semester']))}${select('majorUnit','대단원',examMakerOptions(['majorUnit','major']))}${select('middleUnit','중단원',examMakerOptions(['middleUnit','middle']))}${select('smallUnit','소단원',examMakerOptions(['smallUnit']))}${select('subtype','세부 유형',examMakerOptions(['subtype','primaryTypeName','primaryTypeId']))}<div style="flex:1;min-width:190px;font-size:11px;"><b>문항 표시 조건</b><div class="row" style="gap:8px;flex-wrap:wrap;margin-top:5px;"><label><input type="checkbox" ${f.flags.major?'checked':''} onchange="setExamMakerFlag('major',this.checked)"> 주요</label><label><input type="checkbox" ${f.flags.past?'checked':''} onchange="setExamMakerFlag('past',this.checked)"> 기출</label><label><input type="checkbox" ${f.flags.frequent?'checked':''} onchange="setExamMakerFlag('frequent',this.checked)"> 빈출</label></div><select onchange="setExamMakerFlagMatch(this.value)" style="width:100%;margin-top:5px;"><option value="all" ${f.flagMatch==='all'?'selected':''}>선택한 표시 모두 해당</option><option value="any" ${f.flagMatch==='any'?'selected':''}>선택한 표시 중 하나라도 해당</option></select></div><label style="min-width:115px;font-size:11px;">문항 수<input type="number" min="1" max="200" value="${Number(examMakerStore.targetCount||10)}" oninput="examMakerStore.targetCount=this.value" style="width:100%;margin-top:4px;"></label><button class="btn gold" onclick="composeExamFromFilters()" ${examMakerStore.candidateLoading?'disabled':''}>${examMakerStore.candidateLoading?'문제 조회 중…':'조건으로 문항 구성'}</button></div>
+  <div style="margin-top:8px;font-size:11px;color:#777;">저장된 문제에서 현재까지 ${examMakerStore.candidateScanned}문항을 조회했고, 조건에 맞는 후보 ${rows.length}문항을 찾았습니다.${examMakerStore.candidateHasMore?' 더 불러올 수 있어요.':''}</div>${error}<div style="margin-top:8px;">${problemRows||`<div class="empty">${emptyRows}</div>`}</div>${more}</div>`;
+}
+function renderExamMaker(){
+  ensureExamMakerLoaded();ensureExamMakerCandidates();
+  const rows=examMakerStore.candidates.filter(examMakerMatchesFilter);
+  return `<h1 class="page-title">📝 시험지 만들기</h1><p class="page-sub">문제저장소에서 승인된 문제를 골라 문항 순서와 배점을 정하고 학생용 시험지·교사용 정답지를 출력합니다.</p>
+  <div class="card"><div class="row between"><h3 style="margin:0 0 10px;">모의고사 정보</h3><button class="btn sm outline" onclick="startNewExamMaker()">새 시험지</button></div><label style="display:block;font-size:11px;font-weight:700;">시험지 맨 위에 표시할 제목<input value="${escapeHtml(examMakerStore.title)}" onchange="updateExamMakerMeta('title',this.value)" placeholder="예: 2026 중2 수학 모의고사 제1회" style="width:100%;margin-top:4px;font-size:16px;font-weight:700;"></label><div class="row" style="gap:8px;flex-wrap:wrap;margin-top:9px;"><label style="min-width:100px;font-size:11px;">학년<input value="${escapeHtml(examMakerStore.grade)}" onchange="updateExamMakerMeta('grade',this.value)" placeholder="중2" style="width:100%;margin-top:4px;"></label><label style="flex:1;min-width:140px;font-size:11px;">시험 범위<input value="${escapeHtml(examMakerStore.range)}" onchange="updateExamMakerMeta('range',this.value)" placeholder="예: 1학기 전 범위" style="width:100%;margin-top:4px;"></label><label style="min-width:140px;font-size:11px;">시행일<input type="date" value="${escapeHtml(examMakerStore.examDate||todayISO())}" readonly title="새 시험지 저장일이 자동 입력됩니다." style="width:100%;margin-top:4px;background:#f4f2e9;"></label><label style="min-width:120px;font-size:11px;">제한시간<input value="${escapeHtml(examMakerStore.duration)}" onchange="updateExamMakerMeta('duration',this.value)" placeholder="50분" style="width:100%;margin-top:4px;"></label></div><label style="display:block;font-size:11px;margin-top:9px;">시험 안내 문구<textarea rows="2" onchange="updateExamMakerMeta('instructions',this.value)" style="width:100%;margin-top:4px;">${escapeHtml(examMakerStore.instructions)}</textarea></label>
+  <div style="margin-top:10px;"><b>시험지 문항 (${examMakerStore.items.length})</b> · 총 ${examMakerStore.items.reduce((n,x)=>n+Number(x.points||0),0)}점${examMakerStore.items.length?`<div style="margin-top:7px;">${examMakerStore.items.map((x,i)=>`<div class="row between" style="padding:6px 0;border-bottom:1px solid var(--line);gap:8px;"><span><b>${i+1}.</b> ${escapeHtml(x.problemSnapshot.problemNo||'문제')} · ${escapeHtml(x.problemSnapshot.middleUnit||x.problemSnapshot.majorUnit||'')}</span><div class="row"><label style="font-size:10px;">배점 <input type="number" min="0" step="0.5" value="${Number(x.points||0)}" onchange="changeExamItemPoints(${i},this.value)" style="width:64px;"></label><button class="btn sm outline" onclick="moveExamItem(${i},-1)" ${i===0?'disabled':''}>↑</button><button class="btn sm outline" onclick="moveExamItem(${i},1)" ${i===examMakerStore.items.length-1?'disabled':''}>↓</button><button class="btn sm outline" onclick="removeExamItem(${i})">삭제</button></div></div>`).join('')}</div>`:'<div class="empty" style="padding:12px;">아래 문제 목록에서 문항을 추가하세요.</div>'}
+  <div class="row" style="margin-top:12px;gap:6px;flex-wrap:wrap;"><button class="btn gold" onclick="saveExamMakerDraft()">시험지 저장</button><button class="btn outline" onclick="printExamPaper(false)">학생용 미리보기</button><button class="btn outline" onclick="printExamPaper(true)">교사용 정답·해설 미리보기</button></div></div>
+  ${renderExamProblemPicker(rows)}
+  <div class="card" style="margin-top:12px;"><div class="row between"><h3 style="margin:0;">저장된 시험지</h3><button class="btn sm outline" onclick="examMakerStore.loaded=false;ensureExamMakerLoaded()">새로고침</button></div>${examMakerStore.loading?'<div class="empty">불러오는 중…</div>':examMakerStore.exams.length?examMakerStore.exams.map(e=>`<div class="row between" style="padding:8px 0;border-bottom:1px solid var(--line);"><span><b>${escapeHtml(e.title||'시험지')}</b> <small>${escapeHtml(e.grade||'')} · ${e.itemCount||0}문항 · ${e.totalPoints||0}점</small></span><button class="btn sm outline" onclick="openSavedExam('${e.id}')">열기</button></div>`).join(''):'<div class="empty">저장된 시험지가 아직 없어요.</div>'}</div>`;
+}
+
 async function createProblemManually(){
   const text=prompt('문제 내용을 입력하세요.'); if(!text)return;
   const grade=prompt('학년 (예: 중2)','중2')||''; const semester=prompt('학기 (1학기/2학기)','1학기')||'';
