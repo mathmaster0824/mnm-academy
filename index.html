@@ -7216,8 +7216,8 @@ async function submitQuestion(stuId){
     const item=drafts[i],payload=prepared[i],matchedSolutionPhotos=payload.answerPhotos;
     const ok=await fsAdd('questions',payload);
     if(!ok) break;
+    // 학생 질문은 질문 게시판에만 보관한다. 교사가 답변을 등록할 때만 문제저장소와 연결한다.
     if(matchedSolutionPhotos.length) syncAnsweredQuestionToProblemRepo(ok,payload.answerText,matchedSolutionPhotos).catch(e=>console.error(e));
-    else syncQuestionToProblemRepo(ok,payload).catch(e=>console.error(e));
     item._saved=true; saved++;
   }
   if(saved){
@@ -7312,6 +7312,7 @@ function renderQnaDirector(){
         ${renderSolLibPickerForQuestion(q.id)}
         ${questionCanSaveToLibrary(q)?`<label data-qna-savelib="${q.id}" style="display:flex;align-items:flex-start;gap:6px;margin-top:8px;font-size:12px;color:#5a5648;line-height:1.5;cursor:pointer;"><input type="checkbox" id="ansSaveLib_${q.id}" checked style="margin-top:3px;"><span>이 답변 사진을 <b>학습보관함에도 저장</b>해요 <span style="color:#8a8674;">(같은 문제를 또 물으면 자동으로 답변돼요 · 사진이 있을 때만)</span></span></label>`:''}
         <div class="row" style="gap:10px;flex-wrap:wrap;margin-top:8px;font-size:11px;"><span style="color:#777;">문항 표시</span><label><input type="checkbox" id="ansTag_${q.id}_past" ${q.pastExam||q.isPastExam?'checked':''}> 기출</label><label><input type="checkbox" id="ansTag_${q.id}_major" ${q.majorQuestion||q.isKeyProblem||questionIsKeyProblem(q)?'checked':''}> 주요문항</label><label><input type="checkbox" id="ansTag_${q.id}_frequent" ${q.isFrequent?'checked':''}> 빈출</label></div>
+        <div style="font-size:10px;color:#8a8674;margin-top:4px;">답변 등록 시 문제저장소 후보로 연결됩니다. 학생이 올린 질문 사진은 문제 원본으로 복사하지 않아요.</div>
         <div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<div class="thumb-wrap"><img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})"><button class="thumb-x" onclick="removeAnswerPhoto('${q.id}',${i})">✕</button></div>`).join('')}</div>
         <button class="btn sm gold" style="margin-top:8px;" onclick="answerQuestion('${q.id}')">답변 등록</button>
       </div>
@@ -9584,14 +9585,15 @@ async function linkProblemOrigin(originType,originId,{problemId='',problemDraftI
 }
 function operationalProblemMetaFromQuestion(q){
   const sourceKey=operationalQuestionSourceKey(q), cm=problemCourseMeta(q?.sourceCourseId||'');
-  const firstPhoto=(q?.photos||[])[0]||null;
   return {
     originType:'student-question', originId:q?.id||'', sourceKey, problemId:q?.problemId||'',
     sourceType:q?.sourceType||'question', sourceCourseId:q?.sourceCourseId||'',
     sourceBook:q?.sourceBook||'', sourcePage:q?.sourcePage||'',
     sourceProblemNo:q?.sourceProblemNo||'', printId:q?.printId||'',
     grade:cm.grade, semester:cm.semester,
-    questionText:q?.text||'', problemText:'', problemPhoto:firstPhoto,
+    // 학생이 올린 촬영 사진은 구도·선명도가 일정하지 않으므로 문제 원본으로 복사하지 않는다.
+    // 문제 후보는 교사 답변 등록 시에만 만들고, 답변 사진은 비공개 해설 자료로 연결한다.
+    questionText:q?.text||'', problemText:'', problemPhoto:null,
     pastExam:!!(q?.pastExam||q?.isPastExam), majorQuestion:!!(q?.majorQuestion||q?.isKeyProblem), isFrequent:!!q?.isFrequent,
     explanation:q?.answerText||'', explanationPhotos:q?.answerPhotos||[]
   };
@@ -9729,7 +9731,7 @@ async function ensureOperationalProblemCandidate(meta){
 
   await linkProblemOrigin(meta.originType,meta.originId,{problemDraftId:draft.id});
 
-  // 질문 사진이 있으면 사용자를 기다리게 하지 않고 뒤에서 AI 분석한다.
+  // 문제 원본 사진이 명시적으로 포함된 후보만 AI 분석한다. 학생 질문 사진은 이 경로에 포함하지 않는다.
   if(draft.cropKey){
     await analyzeOperationalProblemDraft(draft);
     if(problemDraftStatus(draft)==='ready'){
