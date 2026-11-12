@@ -11,7 +11,14 @@ function runtime(bucket,run){
   return {c,env:{PHOTOS:bucket,AI:{run:run||(async()=>({response:'{"segments":[]}'}))}}};
 }
 class Bucket{
-  constructor(){this.data=new Map();this.seq=0;}
+  constructor(){this.data=new Map();this.seq=0;this.uploads=new Map();}
+  async head(key){const o=this.data.get(key);return o?{etag:o.etag,size:o.bytes.length,httpMetadata:o.httpMetadata}:null;}
+  async createMultipartUpload(key,options={}){const uploadId='upload-'+(++this.seq);this.uploads.set(uploadId,{key,options,parts:new Map()});return {uploadId,key,...this.resumeMultipartUpload(key,uploadId)};}
+  resumeMultipartUpload(key,uploadId){const bucket=this;return {
+    async uploadPart(n,value){const u=bucket.uploads.get(uploadId);if(!u||u.key!==key)throw new Error('NoSuchUpload');const bytes=new Uint8Array(await new Response(value).arrayBuffer()),etag=`etag-${uploadId}-${n}`;u.parts.set(n,{bytes,etag});return {partNumber:n,etag};},
+    async complete(parts){const u=bucket.uploads.get(uploadId);if(!u||u.key!==key)throw new Error('NoSuchUpload');const bytes=[];for(const p of parts){const v=u.parts.get(p.partNumber);assert.equal(p.etag,v.etag);bytes.push(v.bytes);}await bucket.put(key,new Blob(bytes),u.options);bucket.uploads.delete(uploadId);if(bucket.failAfterComplete){bucket.failAfterComplete=false;throw new Error('acknowledgment lost');}return bucket.head(key);},
+    async abort(){bucket.uploads.delete(uploadId);}
+  };}
   async get(key){const o=this.data.get(key);if(!o)return null;const bytes=o.bytes.slice();return {etag:o.etag,size:bytes.length,httpMetadata:o.httpMetadata,body:new Blob([bytes]).stream(),arrayBuffer:async()=>bytes.buffer,json:async()=>JSON.parse(new TextDecoder().decode(bytes))};}
   async put(key,value,options={}){const previous=this.data.get(key),cond=options.onlyIf;if(cond?.etagMatches&&previous?.etag!==cond.etagMatches)return null;if(cond?.etagDoesNotMatch==='*'&&previous)return null;const bytes=typeof value==='string'?new TextEncoder().encode(value):new Uint8Array(await new Response(value).arrayBuffer());const o={bytes,etag:String(++this.seq),httpMetadata:options.httpMetadata||{}};this.data.set(key,o);return o;}
   async list({prefix='',limit=100,cursor}={}){const keys=[...this.data.keys()].filter(k=>k.startsWith(prefix)).sort(),start=cursor?Number(cursor):0,part=keys.slice(start,start+limit);return {objects:part.map(key=>({key})),truncated:start+limit<keys.length,cursor:String(start+limit)};}
@@ -51,4 +58,25 @@ test('scheduler lease prevents concurrent workers; authorization isolates jobs a
  const req=new Request('https://example.test/pdf-imports/'+id);const other=await r.c.api(req,r.env,new URL(req.url),{role:'director',uid:'other'});assert.equal(other.status,404);
  const anon=await r.c.worker.fetch(new Request('https://example.test/pdf-imports'),r.env);assert.equal(anon.status,401);
  const privatePhoto=await r.c.worker.fetch(new Request('https://example.test/photo?key=_pdf-import/scheduler.json'),r.env);assert.equal(privatePhoto.status,400);
+});
+test('20MB PDF uploads as resumable 8MB parts, reconstructs one exact original, survives completion acknowledgment loss',async()=>{
+ const bucket=new Bucket();let r=runtime(bucket);
+ const made=await call(r,'',{fileHash:'b'.repeat(64),fileName:'large.pdf',pageCount:1,sourceMeta:{},answerMap:[]}),id=made.data.job.id;
+ const bytes=new Uint8Array(20*1024*1024);bytes.set(new TextEncoder().encode('%PDF-1.7'));bytes[bytes.length-1]=123;
+ let init=await call(r,'/'+id+'/source-init',{size:bytes.length});assert.equal(init.status,200);
+ const send=async(n)=>call(r,'/'+id+'/source-part/'+n,new Blob([bytes.slice((n-1)*8*1024*1024,Math.min(n*8*1024*1024,bytes.length))]),true);
+ assert.equal((await send(1)).status,200);assert.equal((await call(r,'/'+id+'/source-complete',{})).status,409);
+ r=runtime(bucket);init=await call(r,'/'+id+'/source-init',{size:bytes.length});assert.deepEqual(init.data.job.sourceParts,[1]);
+ assert.equal((await call(r,'/'+id+'/source-part/2',new Blob(['short']),true)).status,400);
+ assert.equal((await send(2)).status,200);assert.equal((await send(3)).status,200);
+ bucket.failAfterComplete=true;await assert.rejects(()=>call(r,'/'+id+'/source-complete',{}),/acknowledgment lost/);
+ r=runtime(bucket);const recovered=await call(r,'/'+id+'/source-init',{size:bytes.length});assert.equal(recovered.data.job.sourceUploaded,true);
+ const sourceKey=[...bucket.data.keys()].find(k=>k.endsWith('/source.pdf'));assert.deepEqual(bucket.data.get(sourceKey).bytes,bytes);assert.equal([...bucket.data.keys()].filter(k=>k.endsWith('/source.pdf')).length,1);assert.equal(bucket.uploads.size,0);
+});
+test('multipart endpoints reject oversized declarations, wrong parts and another director',async()=>{
+ const bucket=new Bucket(),r=runtime(bucket);const made=await call(r,'',{fileHash:'c'.repeat(64),fileName:'large.pdf',pageCount:1}),id=made.data.job.id;
+ assert.equal((await call(r,'/'+id+'/source-init',{size:513*1024*1024})).status,413);
+ assert.equal((await call(r,'/'+id+'/source-init',{size:20*1024*1024})).status,200);
+ assert.equal((await call(r,'/'+id+'/source-part/4',new Blob(['x']),true)).status,409);
+ const req=new Request('https://example.test/pdf-imports/'+id+'/source-init',{method:'POST',body:JSON.stringify({size:20*1024*1024})});const other=await r.c.api(req,r.env,new URL(req.url),{role:'director',uid:'another-director'});assert.equal(other.status,404);
 });

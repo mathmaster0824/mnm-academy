@@ -27,3 +27,15 @@ test('returning to the page imports persisted results once and preserves reviewe
  assert.equal(store.get('problemSources/'+sourceId).backgroundImportState,'complete');
  assert.equal(store.get('problemSources/'+sourceId).problemCount,2);assert.equal(loads,1);
 });
+test('large PDF fingerprint hashes bounded slices and uploader resumes acknowledged parts after a network interruption',async()=>{
+ const sizes=[],parts=new Set([1]),sent=[];let dropped=false,completed=false;
+ const ctx=vm.createContext({Response,Request,Headers,URL,Blob,File,FormData,console,window:{addEventListener(){}},document:{getElementById:()=>null,addEventListener(){}},setInterval(){},session:{mode:'director'},PHOTO_API_BASE:'https://test',photoApiToken:async()=>'test',readMnmJsonResponse:r=>r.json(),sha256BlobHex:async blob=>{sizes.push(blob.size);return 'a'.repeat(64);},fetch:async(url,opts)=>{
+   if(url.endsWith('/source-init'))return Response.json({ok:true,job:{sourceUploaded:false,sourceParts:[...parts]}});
+   if(url.includes('/source-part/')){const n=Number(url.split('/').pop());sent.push({n,size:opts.body.size});parts.add(n);if(n===2&&!dropped){dropped=true;throw new Error('response lost');}return Response.json({ok:true});}
+   if(url.endsWith('/source-complete')){completed=true;return Response.json({ok:true});}throw new Error(url);
+ }});
+ vm.runInContext(fs.readFileSync(path.join(__dirname,'../pdf-background-import.js'),'utf8')+';globalThis.fingerprint=pdfSourceFingerprint;globalThis.upload=uploadPdfOriginalParts;',ctx);
+ const file=new File([new Uint8Array(20*1024*1024)],'large.pdf',{type:'application/pdf'});
+ const first=await ctx.fingerprint(file),second=await ctx.fingerprint(file);assert.equal(first,second);assert.ok(sizes.every(size=>size<=8*1024*1024));
+ await ctx.upload(file,'job');assert.deepEqual(sent.map(p=>p.n),[2,3]);assert.deepEqual(sent.map(p=>p.size),[8*1024*1024,4*1024*1024]);assert.equal(completed,true);
+});

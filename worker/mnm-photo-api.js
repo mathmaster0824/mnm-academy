@@ -330,6 +330,9 @@ export default {
         authRequired: true,
         workerVersion: PDF_JOB_VERSION,
         pdfBackgroundSupported: true,
+        pdfMultipartSupported: true,
+        pdfMaxSourceBytes: PDF_SOURCE_MAX_BYTES,
+        pdfSourcePartBytes: PDF_SOURCE_PART_BYTES,
         pdfSchedulerReady: await pdfSchedulerReady(env),
         firebaseProject: projectId(env),
       }, 200, corsHeaders);
@@ -562,7 +565,9 @@ export default {
 
 
 // Appended to mnm-photo-api.js. R2 checkpoints + scheduled events survive browser closure.
-const PDF_JOB_VERSION = '2026-11-12-background-v1';
+const PDF_JOB_VERSION = '2026-11-12-background-v2-large-pdf';
+const PDF_SOURCE_MAX_BYTES = 512 * 1024 * 1024;
+const PDF_SOURCE_PART_BYTES = 8 * 1024 * 1024;
 const PDF_JOB_ROOT = '_pdf-import/jobs/';
 const PDF_TICK_KEY = '_pdf-import/scheduler.json';
 const PDF_LOCK_KEY = '_pdf-import/lease.json';
@@ -570,7 +575,8 @@ const pdfJsonOptions = {httpMetadata:{contentType:'application/json'}};
 const pdfJobKey = (uid,id) => `${PDF_JOB_ROOT}${uid}/${id}.json`;
 const pdfPublicJob = j => ({id:j.id,fileName:j.fileName,pageCount:j.pageCount,status:j.status,
   uploadedPages:j.uploadedPages,donePages:j.donePages,failedPages:j.failedPages,problemCount:j.problemCount,currentPage:j.currentPage||null,
-  error:j.error||'',createdAt:j.createdAt,updatedAt:j.updatedAt,sourceUploaded:!!j.sourceUploaded});
+  error:j.error||'',createdAt:j.createdAt,updatedAt:j.updatedAt,sourceUploaded:!!j.sourceUploaded,
+  sourceParts:Object.keys(j.sourceUpload?.parts||{}).map(Number),sourcePartSize:PDF_SOURCE_PART_BYTES});
 async function pdfRead(bucket,key){const o=await bucket.get(key);return o?{value:await o.json(),etag:o.etag}:null;}
 async function pdfWrite(bucket,key,value,etag){return bucket.put(key,JSON.stringify(value),{...pdfJsonOptions,...(etag?{onlyIf:{etagMatches:etag}}:{})});}
 async function pdfHash(bytes){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(b=>b.toString(16).padStart(2,'0')).join('');}
@@ -616,6 +622,45 @@ async function pdfImportApi(request,env,url,auth){
     return json({ok:true,job:pdfPublicJob(job),sourceMeta:job.sourceMeta,answerMap:job.answerMap,problems,nextPage:end<job.pageCount?end+1:null},200,corsHeaders);
   }
   if(request.method!=='POST')return json({ok:false,error:'지원하지 않는 요청입니다.'},405,corsHeaders);
+  if(action==='source-init'&&job.status==='uploading'){
+    const body=await request.json(),size=Number(body.size);
+    if(!Number.isSafeInteger(size)||size<5||size>PDF_SOURCE_MAX_BYTES)return json({ok:false,error:'PDF 원본은 한 파일당 512MB까지 지원합니다.'},413,corsHeaders);
+    if(job.sourceUploaded)return json({ok:true,job:pdfPublicJob(job)},200,corsHeaders);
+    if(job.sourceUpload&&job.sourceUpload.size!==size)return json({ok:false,error:'이어 올릴 파일의 크기가 기존 파일과 다릅니다.'},409,corsHeaders);
+    const sourceKey=job.mediaPrefix+'/source.pdf';
+    // Completion can succeed at R2 even when the acknowledgment/state write was interrupted.
+    const completed=await bucket.head(sourceKey);
+    if(completed?.size===size){job.sourceUploaded=true;await save();return json({ok:true,job:pdfPublicJob(job)},200,corsHeaders);}
+    if(job.sourceUpload?.startedAt&&Date.now()-job.sourceUpload.startedAt>6*24*60*60*1000){
+      await bucket.resumeMultipartUpload(sourceKey,job.sourceUpload.uploadId).abort().catch(()=>{});job.sourceUpload=null;
+    }
+    if(!job.sourceUpload){
+      const upload=await bucket.createMultipartUpload(sourceKey,{httpMetadata:{contentType:'application/pdf'}});
+      job.sourceUpload={uploadId:upload.uploadId,size,parts:{},startedAt:Date.now()};
+      try{await save();}catch(e){await upload.abort().catch(()=>{});throw e;}
+    }
+    return json({ok:true,job:pdfPublicJob(job)},200,corsHeaders);
+  }
+  if(action==='source-part'&&job.status==='uploading'){
+    const upload=job.sourceUpload,n=Number(parts[3]),count=upload?Math.ceil(upload.size/PDF_SOURCE_PART_BYTES):0;
+    if(!upload||job.sourceUploaded||!Number.isInteger(n)||n<1||n>count)return json({ok:false,error:'원본 전송 세션 또는 조각 번호가 올바르지 않습니다.'},409,corsHeaders);
+    const expected=n===count?upload.size-(n-1)*PDF_SOURCE_PART_BYTES:PDF_SOURCE_PART_BYTES;
+    const bytes=await pdfReadBoundedBody(request,expected);
+    if(bytes.byteLength!==expected||(n===1&&new TextDecoder().decode(bytes.slice(0,5))!=='%PDF-'))return json({ok:false,error:'PDF 전송 조각이 손상됐습니다. 같은 파일을 다시 선택해주세요.'},400,corsHeaders);
+    const part=await bucket.resumeMultipartUpload(job.mediaPrefix+'/source.pdf',upload.uploadId).uploadPart(n,bytes);
+    job.sourceUpload.parts[n]={partNumber:n,etag:part.etag};await save();
+    return json({ok:true,job:pdfPublicJob(job)},200,corsHeaders);
+  }
+  if(action==='source-complete'&&job.status==='uploading'){
+    if(job.sourceUploaded)return json({ok:true,job:pdfPublicJob(job)},200,corsHeaders);
+    const upload=job.sourceUpload;if(!upload)return json({ok:false,error:'원본 전송이 시작되지 않았습니다.'},409,corsHeaders);
+    const count=Math.ceil(upload.size/PDF_SOURCE_PART_BYTES),uploaded=Array.from({length:count},(_,i)=>upload.parts[i+1]);
+    if(uploaded.some(p=>!p))return json({ok:false,error:'원본 전송이 아직 완료되지 않았습니다.'},409,corsHeaders);
+    const sourceKey=job.mediaPrefix+'/source.pdf',existing=await bucket.head(sourceKey);
+    if(existing?.size!==upload.size)await bucket.resumeMultipartUpload(sourceKey,upload.uploadId).complete(uploaded);
+    const complete=await bucket.head(sourceKey);if(complete?.size!==upload.size)throw new Error('원본 전체 크기 검증에 실패했습니다.');
+    job.sourceUploaded=true;await save();return json({ok:true,job:pdfPublicJob(job)},200,corsHeaders);
+  }
   if(action==='source'&&job.status==='uploading'){
     const bytes=await request.arrayBuffer();if(bytes.byteLength>MAX_UPLOAD_BYTES||new TextDecoder().decode(bytes.slice(0,5))!=='%PDF-')throw new Error('PDF 원본은 15MB 이하의 PDF 파일이어야 합니다.');
     await bucket.put(job.mediaPrefix+'/source.pdf',bytes,{httpMetadata:{contentType:'application/pdf'}});job.sourceUploaded=true;await save();return json({ok:true,job:pdfPublicJob(job)},200,corsHeaders);
@@ -688,6 +733,14 @@ async function pdfImportTick(env){
   }finally{
     const lock=await pdfRead(bucket,PDF_LOCK_KEY);if(lock?.value.owner===owner)await pdfWrite(bucket,PDF_LOCK_KEY,{owner,until:0},lock.etag);
   }
+}
+async function pdfReadBoundedBody(request,maxBytes){
+  const declared=Number(request.headers.get('content-length')||0);if(declared>maxBytes)throw new Error('전송 조각 용량 초과');
+  if(!request.body)throw new Error('전송 데이터가 없습니다.');
+  const reader=request.body.getReader(),chunks=[];let size=0;
+  try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>maxBytes)throw new Error('전송 조각 용량 초과');chunks.push(value);}}
+  finally{await reader.cancel().catch(()=>{});}
+  return pdfJoin(chunks);
 }
 async function pdfProcessPage(env,job,n){
   const m=await pdfRead(env.PHOTOS,`${job.mediaPrefix}/pages/${n}.json`);if(!m)throw new Error('업로드된 페이지 정보가 없습니다.');
