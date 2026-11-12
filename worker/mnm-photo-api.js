@@ -299,6 +299,9 @@ ${JSON.stringify(context)}
 }
 
 export default {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(pdfImportTick(env));
+  },
   async fetch(request, env) {
     const url = new URL(request.url);
 
@@ -306,6 +309,13 @@ export default {
       return new Response(null, { status: 204, headers: corsHeaders });
     }
 
+    if (url.pathname === '/pdf-imports' || url.pathname.startsWith('/pdf-imports/')) {
+      try {
+        const auth = await authorize(request, env);
+        if (!auth) return unauthorized();
+        return await pdfImportApi(request, env, url, auth);
+      } catch (err) { return json({ok:false,error:String(err?.message||err)},500,corsHeaders); }
+    }
     if (request.method === "GET" && url.pathname === "/health") {
       if (!env.PHOTOS) {
         return json({ ok: false, error: "R2 binding PHOTOS is missing" }, 500, corsHeaders);
@@ -318,7 +328,9 @@ export default {
         ai: Boolean(env.AI),
         aiLicenseAutoRetry: true,
         authRequired: true,
-        workerVersion: "2026-10-30-auth",
+        workerVersion: PDF_JOB_VERSION,
+        pdfBackgroundSupported: true,
+        pdfSchedulerReady: await pdfSchedulerReady(env),
         firebaseProject: projectId(env),
       }, 200, corsHeaders);
     }
@@ -388,7 +400,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/photo") {
       try {
         const key = safeKey(url.searchParams.get("key") || "");
-        if (!key) return json({ ok: false, error: "key is required" }, 400, corsHeaders);
+        if (!key || key.startsWith("_pdf-import/")) return json({ ok: false, error: "key is required" }, 400, corsHeaders);
 
         const object = await env.PHOTOS.get(key);
         if (!object) return json({ ok: false, error: "Photo not found" }, 404, corsHeaders);
@@ -414,7 +426,7 @@ export default {
         if (!auth) return unauthorized();
 
         const key = safeKey(url.searchParams.get("key") || "");
-        if (!key) return json({ ok: false, error: "key is required" }, 400, corsHeaders);
+        if (!key || key.startsWith("_pdf-import/")) return json({ ok: false, error: "key is required" }, 400, corsHeaders);
 
         if (auth.role !== "director") {
           // 학생은 자기가 올린 사진만 지울 수 있다.
@@ -547,3 +559,179 @@ export default {
     }, 404, corsHeaders);
   },
 };
+
+
+// Appended to mnm-photo-api.js. R2 checkpoints + scheduled events survive browser closure.
+const PDF_JOB_VERSION = '2026-11-12-background-v1';
+const PDF_JOB_ROOT = '_pdf-import/jobs/';
+const PDF_TICK_KEY = '_pdf-import/scheduler.json';
+const PDF_LOCK_KEY = '_pdf-import/lease.json';
+const pdfJsonOptions = {httpMetadata:{contentType:'application/json'}};
+const pdfJobKey = (uid,id) => `${PDF_JOB_ROOT}${uid}/${id}.json`;
+const pdfPublicJob = j => ({id:j.id,fileName:j.fileName,pageCount:j.pageCount,status:j.status,
+  uploadedPages:j.uploadedPages,donePages:j.donePages,failedPages:j.failedPages,problemCount:j.problemCount,currentPage:j.currentPage||null,
+  error:j.error||'',createdAt:j.createdAt,updatedAt:j.updatedAt,sourceUploaded:!!j.sourceUploaded});
+async function pdfRead(bucket,key){const o=await bucket.get(key);return o?{value:await o.json(),etag:o.etag}:null;}
+async function pdfWrite(bucket,key,value,etag){return bucket.put(key,JSON.stringify(value),{...pdfJsonOptions,...(etag?{onlyIf:{etagMatches:etag}}:{})});}
+async function pdfHash(bytes){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(b=>b.toString(16).padStart(2,'0')).join('');}
+async function pdfSchedulerReady(env){const tick=await pdfRead(env.PHOTOS,PDF_TICK_KEY);return !!tick&&Date.now()-tick.value.at<180000;}
+async function pdfImportApi(request,env,url,auth){
+  if(auth.role!=='director')return forbidden();
+  const bucket=env.PHOTOS;
+  if(!bucket)return json({ok:false,error:'R2 binding PHOTOS is missing'},503,corsHeaders);
+  const parts=url.pathname.split('/').filter(Boolean),id=parts[1],action=parts[2];
+  if(!id&&request.method==='GET'){
+    const cursor=url.searchParams.get('cursor')||undefined;
+    const list=await bucket.list({prefix:PDF_JOB_ROOT+auth.uid+'/',limit:50,cursor});
+    const rows=[];for(const o of list.objects){const r=await pdfRead(bucket,o.key);if(r)rows.push(pdfPublicJob(r.value));}
+    return json({ok:true,jobs:rows.sort((a,b)=>b.createdAt.localeCompare(a.createdAt)),cursor:list.truncated?list.cursor:null,schedulerReady:await pdfSchedulerReady(env)},200,corsHeaders);
+  }
+  if(!id&&request.method==='POST'){
+    const body=await request.json();
+    if(!/^[a-f0-9]{64}$/.test(body.fileHash||'')||!Number.isInteger(body.pageCount)||body.pageCount<1||body.pageCount>600)throw new Error('PDF 식별자 또는 페이지 수가 올바르지 않습니다(최대 600쪽).');
+    const source={};for(const k of ['grade','semester','majorUnit','middleUnit','materialKind','school','examYear','examTerm','examType'])source[k]=cleanString(body.sourceMeta?.[k],180);
+    source.materialKind=source.materialKind==='exam'?'exam':'textbook';source.examYear=Number(source.examYear)||null;
+    const answers=Array.isArray(body.answerMap)?body.answerMap.slice(0,4000):[];
+    const jobId=await pdfHash(new TextEncoder().encode(auth.uid+body.fileHash+JSON.stringify(source)+JSON.stringify(answers)));
+    const key=pdfJobKey(auth.uid,jobId),old=await pdfRead(bucket,key);if(old)return json({ok:true,job:pdfPublicJob(old.value)},200,corsHeaders);
+    const now=new Date().toISOString(),job={id:jobId,uid:auth.uid,fileHash:body.fileHash,fileName:cleanString(body.fileName,180),pageCount:body.pageCount,sourceMeta:source,answerMap:answers,status:'uploading',uploadedPages:[],donePages:[],failedPages:[],problemCount:0,createdAt:now,updatedAt:now,mediaPrefix:`mnm/director/pdf-import/${crypto.randomUUID()}`};
+    const made=await bucket.put(key,JSON.stringify(job),{...pdfJsonOptions,onlyIf:{etagDoesNotMatch:'*'}});
+    return json({ok:true,job:pdfPublicJob(made?job:(await pdfRead(bucket,key)).value)},201,corsHeaders);
+  }
+  if(!/^[a-f0-9]{64}$/.test(id||''))return json({ok:false,error:'작업을 찾지 못했습니다.'},404,corsHeaders);
+  const key=pdfJobKey(auth.uid,id),record=await pdfRead(bucket,key);if(!record)return json({ok:false,error:'작업을 찾지 못했습니다.'},404,corsHeaders);
+  const job=record.value;
+  const save=async()=>{job.updatedAt=new Date().toISOString();if(!await pdfWrite(bucket,key,job,record.etag))throw new Error('작업 상태가 바뀌었습니다. 다시 확인해주세요.');};
+  if(request.method==='GET'&&!action)return json({ok:true,job:pdfPublicJob(job)},200,corsHeaders);
+  if(request.method==='GET'&&action==='resume')return json({ok:true,fileName:job.fileName,sourceMeta:job.sourceMeta,answerMap:job.answerMap},200,corsHeaders);
+  if(request.method==='GET'&&action==='source'){
+    const o=await bucket.get(job.mediaPrefix+'/source.pdf');if(!o)return json({ok:false,error:'원본 업로드가 끝나지 않았습니다.'},404,corsHeaders);
+    return new Response(o.body,{headers:{...corsHeaders,'Content-Type':'application/pdf','Cache-Control':'no-store'}});
+  }
+  if(request.method==='GET'&&action==='result'){
+    if(!['ready','imported'].includes(job.status))return json({ok:false,error:'아직 전체 문항 처리가 끝나지 않았습니다.'},409,corsHeaders);
+    const from=Math.max(1,Number(url.searchParams.get('from'))||1),end=Math.min(job.pageCount,from+9);if(!Number.isInteger(from)||from>job.pageCount)throw new Error('결과 페이지 범위 오류');
+    const problems=[];for(let n=from;n<=end;n++){const p=await pdfRead(bucket,`${job.mediaPrefix}/results/${n}.json`);if(!p||!Array.isArray(p.value.problems))throw new Error(`${n}쪽 결과를 확인할 수 없습니다.`);problems.push(...p.value.problems);}
+    if(!job.problemCount)return json({ok:false,error:'문항을 찾지 못했습니다. 검토가 필요합니다.'},422,corsHeaders);
+    return json({ok:true,job:pdfPublicJob(job),sourceMeta:job.sourceMeta,answerMap:job.answerMap,problems,nextPage:end<job.pageCount?end+1:null},200,corsHeaders);
+  }
+  if(request.method!=='POST')return json({ok:false,error:'지원하지 않는 요청입니다.'},405,corsHeaders);
+  if(action==='source'&&job.status==='uploading'){
+    const bytes=await request.arrayBuffer();if(bytes.byteLength>MAX_UPLOAD_BYTES||new TextDecoder().decode(bytes.slice(0,5))!=='%PDF-')throw new Error('PDF 원본은 15MB 이하의 PDF 파일이어야 합니다.');
+    await bucket.put(job.mediaPrefix+'/source.pdf',bytes,{httpMetadata:{contentType:'application/pdf'}});job.sourceUploaded=true;await save();return json({ok:true,job:pdfPublicJob(job)},200,corsHeaders);
+  }
+  if(action==='pages'&&job.status==='uploading'){
+    const n=Number(parts[3]);if(!Number.isInteger(n)||n<1||n>job.pageCount)throw new Error('페이지 번호 오류');
+    const form=await request.formData(),file=form.get('file');if(!file||typeof file==='string'||file.size>MAX_IMAGE_BYTES||file.type!=='image/png')throw new Error('페이지 이미지 오류(8MB 이하 PNG)');
+    const meta=JSON.parse(String(form.get('meta')||'{}'));
+    if(!Number.isFinite(meta.width)||!Number.isFinite(meta.height)||meta.width<1||meta.height<1||meta.width>2000||meta.height>2000)throw new Error('페이지 이미지 크기 오류');
+    const bytes=await file.arrayBuffer();if(new Uint8Array(bytes)[0]!==137)throw new Error('PNG 이미지가 아닙니다.');
+    await bucket.put(`${job.mediaPrefix}/pages/${n}.png`,bytes,{httpMetadata:{contentType:'image/png'}});
+    await pdfWrite(bucket,`${job.mediaPrefix}/pages/${n}.json`,{width:meta.width,height:meta.height,answerPage:!!meta.answerPage,regions:Array.isArray(meta.regions)?meta.regions.slice(0,100):null});
+    job.uploadedPages=[...new Set([...job.uploadedPages,n])].sort((a,b)=>a-b);await save();return json({ok:true,job:pdfPublicJob(job)},200,corsHeaders);
+  }
+  if(action==='start'&&job.status==='uploading'){
+    if(!job.sourceUploaded||job.uploadedPages.length!==job.pageCount)return json({ok:false,error:'원본과 모든 페이지의 업로드를 먼저 완료해주세요.'},409,corsHeaders);
+    if(!await pdfSchedulerReady(env))return json({ok:false,error:'서버 예약 실행 설정이 필요합니다. 업로드는 보관됐습니다.',code:'scheduler_not_ready'},503,corsHeaders);
+    job.status='queued';await save();return json({ok:true,job:pdfPublicJob(job)},202,corsHeaders);
+  }
+  if(action==='retry'&&job.status==='error'){
+    if(!await pdfSchedulerReady(env))return json({ok:false,error:'서버 예약 실행이 중단됐습니다.'},503,corsHeaders);
+    job.failedPages=[];job.pageAttempts={};job.error='';job.status='queued';await save();return json({ok:true,job:pdfPublicJob(job)},202,corsHeaders);
+  }
+  if(action==='imported'&&['ready','imported'].includes(job.status)){job.status='imported';await save();return json({ok:true,job:pdfPublicJob(job)},200,corsHeaders);}
+  return json({ok:false,error:'현재 작업 상태에서는 이 요청을 처리할 수 없습니다.'},409,corsHeaders);
+}
+
+async function pdfImportTick(env){
+  const bucket=env.PHOTOS;if(!bucket)return;
+  const heartbeat=await pdfRead(bucket,PDF_TICK_KEY);
+  await pdfWrite(bucket,PDF_TICK_KEY,{at:Date.now(),version:PDF_JOB_VERSION,cursor:heartbeat?.value.cursor||null});
+  const old=await pdfRead(bucket,PDF_LOCK_KEY);if(old&&old.value.until>Date.now())return;
+  const owner=crypto.randomUUID(),lease={owner,until:Date.now()+600000};
+  const acquired=await bucket.put(PDF_LOCK_KEY,JSON.stringify(lease),{...pdfJsonOptions,onlyIf:old?{etagMatches:old.etag}:{etagDoesNotMatch:'*'}});if(!acquired)return;
+  try{
+    const list=await bucket.list({prefix:PDF_JOB_ROOT,limit:40,cursor:heartbeat?.value.cursor||undefined});
+    const deadline=Date.now()+220000;
+    for(const entry of list.objects){
+      let r=await pdfRead(bucket,entry.key);if(!r||!['queued','processing'].includes(r.value.status))continue;
+      let job=r.value;
+      while(Date.now()<deadline&&['queued','processing'].includes(job.status)){
+        const n=Array.from({length:job.pageCount},(_,i)=>i+1).find(p=>!job.donePages.includes(p)&&!job.failedPages.includes(p));
+        if(!n){job.status=job.failedPages.length?'error':job.problemCount?'ready':'error';if(!job.problemCount&&!job.failedPages.length)job.error='전체 페이지에서 문항을 찾지 못했습니다.';}
+        else{
+          job.pageAttempts=job.pageAttempts||{};
+          if((job.pageAttempts[n]||0)>=2){
+            job.failedPages=[...new Set([...job.failedPages,n])];job.error=`${n}쪽 처리 중 서버 실행이 반복 중단됐습니다. 서버 제한을 확인하고 이 페이지만 재시도해주세요.`;
+            if(!await pdfWrite(bucket,entry.key,job,r.etag))break;r=await pdfRead(bucket,entry.key);job=r.value;continue;
+          }
+          job.pageAttempts[n]=(job.pageAttempts[n]||0)+1;
+          job.status='processing';job.currentPage=n;job.updatedAt=new Date().toISOString();
+          if(!await pdfWrite(bucket,entry.key,job,r.etag))break;
+          r=await pdfRead(bucket,entry.key);job=r.value;
+          try{
+            const existing=await pdfRead(bucket,`${job.mediaPrefix}/results/${n}.json`);
+            const result=existing?.value||await pdfProcessPage(env,job,n);
+            if(!existing)await pdfWrite(bucket,`${job.mediaPrefix}/results/${n}.json`,result);
+            job.donePages=[...new Set([...job.donePages,n])];job.problemCount+=result.problems.length;job.error='';
+          }catch(e){
+            job.error=`${n}쪽: ${cleanString(e?.message||e,500)}`;
+            if(job.pageAttempts[n]>=2)job.failedPages=[...new Set([...job.failedPages,n])];
+          }
+        }
+        job.updatedAt=new Date().toISOString();if(!await pdfWrite(bucket,entry.key,job,r.etag))break;
+        r=await pdfRead(bucket,entry.key);job=r.value;
+      }
+      if(Date.now()>=deadline)break;
+    }
+    await pdfWrite(bucket,PDF_TICK_KEY,{at:Date.now(),version:PDF_JOB_VERSION,cursor:Date.now()>=deadline?null:list.truncated?list.cursor:null});
+  }finally{
+    const lock=await pdfRead(bucket,PDF_LOCK_KEY);if(lock?.value.owner===owner)await pdfWrite(bucket,PDF_LOCK_KEY,{owner,until:0},lock.etag);
+  }
+}
+async function pdfProcessPage(env,job,n){
+  const m=await pdfRead(env.PHOTOS,`${job.mediaPrefix}/pages/${n}.json`);if(!m)throw new Error('업로드된 페이지 정보가 없습니다.');
+  if(m.value.answerPage)return {problems:[]};
+  const object=await env.PHOTOS.get(`${job.mediaPrefix}/pages/${n}.png`);if(!object)throw new Error('페이지 이미지가 없습니다.');
+  const bytes=new Uint8Array(await object.arrayBuffer());
+  let segments=m.value.regions;
+  if(!segments){const parsed=await segmentProblemPageWithRetry(env,bytesToDataUrl(bytes,'image/png'),{page:n,fileName:job.fileName});
+    if(!Array.isArray(parsed?.segments))throw new Error('AI 응답에 문항 목록이 없습니다.');
+    segments=normalizeSegments(parsed);if(!segments.length)throw new Error('문항 경계를 찾지 못했습니다. 확인 후 이 페이지만 재시도해주세요.');}
+  const image=await pdfDecodePng(bytes);
+  if(image.width!==m.value.width||image.height!==m.value.height)throw new Error('페이지 크기가 업로드 정보와 다릅니다.');
+  const problems=[];
+  for(let i=0;i<segments.length;i++){
+    const s=segments[i],left=Number(s.left),top=Number(s.top),right=Number(s.right),bottom=Number(s.bottom);
+    if(![left,top,right,bottom].every(Number.isFinite)||left<0||top<0||right>1||bottom>1||right<=left||bottom<=top)throw new Error('문항 경계 좌표가 올바르지 않습니다.');
+    const crop=await pdfCropPng(image,{left,top,right,bottom}),cropKey=`${job.mediaPrefix}/crops/${n}-${i+1}.png`,cropHash=await pdfHash(crop);
+    await env.PHOTOS.put(cropKey,crop,{httpMetadata:{contentType:'image/png'}});
+    problems.push({problemNo:cleanString(s.problemNo||i+1,60),printedProblemNo:cleanString(s.printedProblemNo||s.problemNo||i+1,60),page:n,ordinal:i+1,rawText:cleanString(s.rawText||'',10000),cropKey,cropHash,media:[{key:cropKey}],segmentationMethod:m.value.regions?'text-rail-sequence':'ai-page-vision',segmentationQuality:m.value.regions?1:0,representative:!!s.representative,idSource:cleanString(s.idSource||'printed-number',60),typeNo:cleanString(s.typeNo||'',60),reviewReason:cleanString(s.reviewReason||'',120)});
+  }
+  return {problems};
+}
+
+// Browser canvas PNGs: 8-bit RGB/RGBA, non-interlaced. Bound decompression before decoding.
+function pdfCrc(bytes){let c=0xffffffff;for(const b of bytes){c^=b;for(let k=0;k<8;k++)c=(c>>>1)^((c&1)?0xedb88320:0);}return (c^0xffffffff)>>>0;}
+function pdfPngChunk(type,data){const out=new Uint8Array(data.length+12),view=new DataView(out.buffer);view.setUint32(0,data.length);out.set(new TextEncoder().encode(type),4);out.set(data,8);view.setUint32(out.length-4,pdfCrc(out.subarray(4,out.length-4)));return out;}
+function pdfJoin(parts){const out=new Uint8Array(parts.reduce((n,p)=>n+p.length,0));let off=0;for(const p of parts){out.set(p,off);off+=p.length;}return out;}
+async function pdfInflate(bytes,max){const reader=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate')).getReader();const parts=[];let size=0;try{while(true){const {value,done}=await reader.read();if(done)break;size+=value.length;if(size>max)throw new Error('PNG 압축 해제 크기 초과');parts.push(value);}}finally{await reader.cancel().catch(()=>{});}return pdfJoin(parts);}
+async function pdfDecodePng(bytes){
+  if(bytes.length<33||bytes[0]!==137||bytes[1]!==80||bytes[2]!==78||bytes[3]!==71)throw new Error('PNG 형식 오류');
+  const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);let width,height,channels;const chunks=[];
+  for(let p=8;p+12<=bytes.length;){const len=view.getUint32(p),type=new TextDecoder().decode(bytes.subarray(p+4,p+8));if(p+12+len>bytes.length)throw new Error('잘린 PNG');const d=bytes.subarray(p+8,p+8+len);
+    if(type==='IHDR'){width=new DataView(d.buffer,d.byteOffset,d.length).getUint32(0);height=new DataView(d.buffer,d.byteOffset,d.length).getUint32(4);channels=d[9]===6?4:d[9]===2?3:0;if(d[8]!==8||d[10]||d[11]||d[12]||!channels||width<1||height<1||width>2000||height>2000)throw new Error('지원하지 않는 PNG 형식');}
+    if(type==='IDAT')chunks.push(d);p+=len+12;if(type==='IEND')break;
+  }
+  if(!width||!height||!chunks.length)throw new Error('PNG 데이터 누락');const stride=width*channels,raw=await pdfInflate(pdfJoin(chunks),(stride+1)*height);if(raw.length!==(stride+1)*height)throw new Error('PNG 픽셀 수 오류');
+  const pixels=new Uint8Array(stride*height);let offset=0;
+  const paeth=(a,b,c)=>{const p=a+b-c,pa=Math.abs(p-a),pb=Math.abs(p-b),pc=Math.abs(p-c);return pa<=pb&&pa<=pc?a:pb<=pc?b:c;};
+  for(let y=0;y<height;y++){const filter=raw[offset++];if(filter>4)throw new Error('PNG 필터 오류');for(let x=0;x<stride;x++){const k=y*stride+x,a=x>=channels?pixels[k-channels]:0,b=y?pixels[k-stride]:0,c=y&&x>=channels?pixels[k-stride-channels]:0;pixels[k]=(raw[offset++]+(filter===0?0:filter===1?a:filter===2?b:filter===3?Math.floor((a+b)/2):paeth(a,b,c)))&255;}}
+  return {width,height,channels,pixels};
+}
+async function pdfCropPng(image,box){
+  const x=Math.floor(box.left*image.width),y=Math.floor(box.top*image.height),width=Math.max(1,Math.ceil(box.right*image.width)-x),height=Math.max(1,Math.ceil(box.bottom*image.height)-y),stride=width*image.channels;
+  const raw=new Uint8Array((stride+1)*height);for(let row=0;row<height;row++)raw.set(image.pixels.subarray(((y+row)*image.width+x)*image.channels,((y+row)*image.width+x+width)*image.channels),row*(stride+1)+1);
+  const compressed=new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());const header=new Uint8Array(13),v=new DataView(header.buffer);v.setUint32(0,width);v.setUint32(4,height);header[8]=8;header[9]=image.channels===4?6:2;
+  return pdfJoin([new Uint8Array([137,80,78,71,13,10,26,10]),pdfPngChunk('IHDR',header),pdfPngChunk('IDAT',compressed),pdfPngChunk('IEND',new Uint8Array())]);
+}

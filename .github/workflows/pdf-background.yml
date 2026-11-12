@@ -1,0 +1,20 @@
+name: PDF background import checks
+on:
+  push:
+    branches: [main]
+    paths: [index.html, pdf-background-import.js, worker/mnm-photo-api.js, tests/pdf-background-*.cjs, .github/workflows/pdf-background.yml]
+  pull_request:
+    paths: [index.html, pdf-background-import.js, worker/mnm-photo-api.js, tests/pdf-background-*.cjs, .github/workflows/pdf-background.yml]
+permissions:
+  contents: read
+jobs:
+  background-import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --check worker/mnm-photo-api.js
+      - run: node --check pdf-background-import.js
+      - run: node --test tests/pdf-background-client.test.cjs tests/pdf-background-jobs.test.cjs
