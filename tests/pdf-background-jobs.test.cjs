@@ -80,3 +80,18 @@ test('multipart endpoints reject oversized declarations, wrong parts and another
  assert.equal((await call(r,'/'+id+'/source-part/4',new Blob(['x']),true)).status,409);
  const req=new Request('https://example.test/pdf-imports/'+id+'/source-init',{method:'POST',body:JSON.stringify({size:20*1024*1024})});const other=await r.c.api(req,r.env,new URL(req.url),{role:'director',uid:'another-director'});assert.equal(other.status,404);
 });
+test('stored page result survives exhausted attempts; partial audit does not mark job complete',async()=>{
+ const bucket=new Bucket(),r=runtime(bucket,async()=>{throw new Error('AI must not be called');}),id=await stage(r);
+ const key=[...bucket.data.keys()].find(k=>k.includes('/jobs/'));
+ let job=JSON.parse(new TextDecoder().decode(bucket.data.get(key).bytes));
+ job.status='processing';job.pageAttempts={1:2,2:2};job.donePages=[1];job.problemCount=1;
+ await bucket.put(key,JSON.stringify(job));
+ await bucket.put(`${job.mediaPrefix}/results/1.json`,JSON.stringify({problems:[{problemNo:'1'}]}));
+ let audit=await call(r,'/'+id+'/audit');assert.equal(audit.status,200);assert.equal(audit.data.accuracyVerified,false);assert.equal(audit.data.pages[1].state,'pending');
+ assert.equal((await call(r,'/'+id)).data.job.status,'processing');
+ await bucket.put(`${job.mediaPrefix}/results/2.json`,JSON.stringify({problems:[{problemNo:'2'}]}));
+ await r.c.tick(r.env);
+ const final=(await call(r,'/'+id)).data.job;assert.equal(final.status,'ready');assert.deepEqual(final.donePages,[1,2]);assert.deepEqual(final.failedPages,[]);assert.equal(final.problemCount,2);
+ assert.equal((await call(r,'/'+id+'/audit?from=0')).status,400);
+ const req=new Request('https://example.test/pdf-imports/'+id+'/audit');assert.equal((await r.c.api(req,r.env,new URL(req.url),{role:'director',uid:'other'})).status,404);
+});

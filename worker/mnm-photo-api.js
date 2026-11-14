@@ -565,7 +565,7 @@ export default {
 
 
 // Appended to mnm-photo-api.js. R2 checkpoints + scheduled events survive browser closure.
-const PDF_JOB_VERSION = '2026-11-12-background-v2-large-pdf';
+const PDF_JOB_VERSION = '2026-11-14-background-v3-audit';
 const PDF_SOURCE_MAX_BYTES = 512 * 1024 * 1024;
 const PDF_SOURCE_PART_BYTES = 8 * 1024 * 1024;
 const PDF_JOB_ROOT = '_pdf-import/jobs/';
@@ -613,6 +613,19 @@ async function pdfImportApi(request,env,url,auth){
   if(request.method==='GET'&&action==='source'){
     const o=await bucket.get(job.mediaPrefix+'/source.pdf');if(!o)return json({ok:false,error:'원본 업로드가 끝나지 않았습니다.'},404,corsHeaders);
     return new Response(o.body,{headers:{...corsHeaders,'Content-Type':'application/pdf','Cache-Control':'no-store'}});
+  }
+  // Read-only audit export includes completed pages even when another page failed.
+  if(request.method==='GET'&&action==='audit'){
+    const from=Number(url.searchParams.get('from')||1);
+    if(!Number.isInteger(from)||from<1||from>job.pageCount)return json({ok:false,error:'페이지 범위 오류'},400,corsHeaders);
+    const end=Math.min(job.pageCount,from+9),pages=[];
+    for(let n=from;n<=end;n++){
+      const result=await pdfRead(bucket,`${job.mediaPrefix}/results/${n}.json`);
+      pages.push({page:n,state:result?'result-stored':job.failedPages.includes(n)?'failed':'pending',attempts:job.pageAttempts?.[n]||0,
+        imageKey:`${job.mediaPrefix}/pages/${n}.png`,problems:result?.value.problems||[]});
+    }
+    return json({ok:true,schema:'mnm-pdf-audit-v1',job:pdfPublicJob(job),sourceMeta:job.sourceMeta,answerMap:job.answerMap,
+      accuracyVerified:false,costMeasured:false,pages,nextPage:end<job.pageCount?end+1:null},200,corsHeaders);
   }
   if(request.method==='GET'&&action==='result'){
     if(!['ready','imported'].includes(job.status))return json({ok:false,error:'아직 전체 문항 처리가 끝나지 않았습니다.'},409,corsHeaders);
@@ -705,6 +718,15 @@ async function pdfImportTick(env){
         const n=Array.from({length:job.pageCount},(_,i)=>i+1).find(p=>!job.donePages.includes(p)&&!job.failedPages.includes(p));
         if(!n){job.status=job.failedPages.length?'error':job.problemCount?'ready':'error';if(!job.problemCount&&!job.failedPages.length)job.error='전체 페이지에서 문항을 찾지 못했습니다.';}
         else{
+          // A result may have persisted just before a runtime interruption. Reconcile
+          // it BEFORE the attempt limit so successful AI work is never discarded.
+          const stored=await pdfRead(bucket,`${job.mediaPrefix}/results/${n}.json`);
+          if(stored&&Array.isArray(stored.value.problems)){
+            job.donePages=[...new Set([...job.donePages,n])];job.problemCount+=stored.value.problems.length;
+            job.error='';job.currentPage=null;job.updatedAt=new Date().toISOString();
+            if(!await pdfWrite(bucket,entry.key,job,r.etag))break;
+            r=await pdfRead(bucket,entry.key);job=r.value;continue;
+          }
           job.pageAttempts=job.pageAttempts||{};
           if((job.pageAttempts[n]||0)>=2){
             job.failedPages=[...new Set([...job.failedPages,n])];job.error=`${n}쪽 처리 중 서버 실행이 반복 중단됐습니다. 서버 제한을 확인하고 이 페이지만 재시도해주세요.`;
@@ -723,6 +745,10 @@ async function pdfImportTick(env){
             job.error=`${n}쪽: ${cleanString(e?.message||e,500)}`;
             if(job.pageAttempts[n]>=2)job.failedPages=[...new Set([...job.failedPages,n])];
           }
+        }
+        if(job.donePages.length+job.failedPages.length===job.pageCount){
+          job.status=job.failedPages.length?'error':job.problemCount?'ready':'error';job.currentPage=null;
+          if(!job.problemCount&&!job.failedPages.length)job.error='전체 페이지에서 문항을 찾지 못했습니다.';
         }
         job.updatedAt=new Date().toISOString();if(!await pdfWrite(bucket,entry.key,job,r.etag))break;
         r=await pdfRead(bucket,entry.key);job=r.value;
