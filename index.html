@@ -1976,8 +1976,8 @@ function weekDates(weekStart){
 /* ---------------- 새 버전 알림 ----------------
    휴대폰은 앱 탭을 며칠씩 열어 둔 채로 쓰기 때문에, 고친 버전이 올라가도 예전 화면이 계속 돌 수 있다.
    예전 화면은 지금 보안 규칙과 맞지 않아 저장이 막힐 수 있으므로, 새 버전이 올라오면 새로 고침을 안내한다.
-   (배포할 때마다 APP_BUILD 값을 바꾼다) */
-const APP_BUILD='2026-11-14-pdf-audit';
+   (배포할 const APP_BUILD='2026-11-16-question-items';
+='2026-11-14-pdf-audit';
 let newVersionReady=false, versionCheckAt=0;
 async function checkAppVersion(force){
   if(location.protocol==='file:') return false;
@@ -7120,10 +7120,8 @@ function renderQuestionEditForm(q){
       <button class="btn sm gold" onclick="saveEditQuestion('${q.id}')">저장</button>
       <button class="btn sm outline" onclick="cancelEditQuestion()">취소</button>
     </div>
-  </div>`;
-}
-// 학생은 여러 문제를 카드별로 작성할 수 있으며, 저장 시 카드마다 독립된 질문 문서가 된다.
-function renderQnaStudentSection(stuId, directorView){
+  </div  const myQs=db.questions.filter(q=>q.studentId===stuId&&!q.splitQuestionIds?.length).sort((a,b)=>b.date.localeCompare(a.date));
+ directorView){
   const myQs=db.questions.filter(q=>q.studentId===stuId).sort((a,b)=>b.date.localeCompare(a.date));
   const drafts=questionDraftItems(stuId);
   const compose=drafts.map((item,index)=>{
@@ -7173,9 +7171,8 @@ async function uploadNewQPhoto(inputEl,index=0){
 async function removeNewQPhoto(index,photoIndex){
   const item=questionDraftItems(session.studentId||session.student?.id||'')[index]; if(!item)return;
   const removed=item.photos[photoIndex]; if(removed) await deleteStoredPhoto(removed);
-  rememberQuestionTexts(); item.photos.splice(photoIndex,1); render();
-}
-async function findExactSolutionPhotosForQuestion(source){
+  rememberQue  if(!source || questionProblemNumbers(source).length>1 || source.sourceType!=='TEXTBOOK' || !source.sourceKey) return {photos:[],checked:true};
+uestion(source){
   if(!source || source.sourceType!=='TEXTBOOK' || !source.sourceKey) return {photos:[],checked:true};
   try{
     const snap=await fsdb.collection('solutionPhotos').where('sourceKey','==',source.sourceKey).limit(8).get();
@@ -7197,7 +7194,8 @@ async function submitQuestion(stuId){
     if(source.sourceType==='TEXTBOOK'){
       if(!source.sourceCourseId){alert(`질문 ${i+1}: 학년·학기를 선택해주세요.`);return;}
       if(!source.sourceBook){alert(`질문 ${i+1}: 교재를 선택해주세요.`);return;}
-      if(!source.sourcePage){alert(`질문 ${i+1}: 페이지를 입력해주세요.`);return;}
+      if(!source.sourcePage){      if(questionProblemNumbers(source).length>1){alert(`질문 ${i+1}: 문제번호는 한 개씩 입력해주세요. ‘＋ 질문 추가’를 누르면 같은 교재·페이지로 다음 질문을 추가할 수 있어요.`);return;}
+alert(`질문 ${i+1}: 페이지를 입력해주세요.`);return;}
       if(!source.sourceProblemNo){alert(`질문 ${i+1}: 문제번호를 입력해주세요.`);return;}
       if(!source.sourceKey){alert(`질문 ${i+1}: 문제 출처를 다시 확인해주세요.`);return;}
     }else if(source.sourceType==='MNM'&&!source.problemId){alert(`질문 ${i+1}: M&m 문제 ID를 입력해주세요.`);return;}
@@ -7276,15 +7274,48 @@ async function markAllAutoAnswersSeen(){
   if(!list.length) return;
   if(!confirm(`자동 답변된 질문 ${list.length}건을 모두 "확인했어요"로 표시할까요?\n(질문·답변 내용은 바뀌지 않아요)`)) return;
   const iso=new Date().toISOString();
-  for(const q of list){ const ok=await fsUpdate('questions',q.id,{autoAnswerSeen:true,autoAnswerSeenAt:iso}); if(ok) q.autoAnswerSeen=true; }
-  render();
+  for(const q of list){ const ok=awai
+function questionProblemNumbers(q){
+  const raw=String(q?.sourceProblemNo||'').normalize('NFKC').trim();
+  if(!/^\d+\s*(?:번)?(?:[\s,，、;]+\d+\s*(?:번)?)+$/.test(raw))return [];
+  const nums=raw.match(/\d+/g)||[];
+  return nums.length>1&&nums.length<=20?[...new Set(nums)]:[];
 }
-function renderQnaDirector(){
-  const filter = currentSubState.qnaFilter || 'pending';
-  const autoUnseenCount = db.questions.filter(questionAutoUnseen).length;
-  const todoCount = db.questions.filter(q=>q.status==='대기'||questionAutoUnseen(q)).length;
-  // 기본 목록 "답변·확인 대기" = 답변이 필요한 질문 + 자동으로 답변된 뒤 아직 확인 안 한 질문
-  const list = db.questions.filter(q=> filter==='all' ? true : (q.status==='대기'||questionAutoUnseen(q))).sort((a,b)=>b.date.localeCompare(a.date));
+async function splitQuestionForDirector(qId){
+  if(session?.mode!=='director')return;
+  const ref=fsdb.collection('questions').doc(qId);
+  try{
+    await fsdb.runTransaction(async tx=>{
+      const snap=await tx.get(ref);if(!snap.exists)throw new Error('질문을 찾지 못했습니다.');
+      const q=snap.data(),numbers=questionProblemNumbers(q);
+      if(q.splitQuestionIds?.length)return;
+      if(numbers.length<2)throw new Error('문제 번호를 확인해주세요.');
+      if(q.answerText||(q.answerPhotos||[]).length)throw new Error('기존 답변이 있는 질문은 자동 분리하지 않습니다. 답변이 어느 문항의 것인지 먼저 확인해야 합니다.');
+      const ids=numbers.map(n=>qId+'_item_'+n),refs=ids.map(id=>fsdb.collection('questions').doc(id));
+      const prior=await Promise.all(refs.map(r=>tx.get(r)));
+      if(prior.some(x=>x.exists))throw new Error('같은 분리 문항이 이미 있습니다. 새로고침 후 확인해주세요.');
+      numbers.forEach((n,i)=>{
+        const child={studentId:q.studentId,date:q.date,text:q.text||'',photos:q.photos||[],
+          sourceType:q.sourceType||'TEXTBOOK',sourceCourseId:q.sourceCourseId||'',sourceBook:q.sourceBook||'',
+          sourceBookNotListed:!!q.sourceBookNotListed,sourcePage:q.sourcePage||'',printId:q.printId||'',
+          sourceProblemNo:n,sourceProblemNoKey:sourceProblemNorm(n),
+          sourceKey:q.sourceType==='PRINT'?'':textbookSourceKey(q.sourceCourseId,q.sourceBook,q.sourcePage,n),
+          status:'대기',answerText:'',answerPhotos:[],splitFromQuestionId:qId,
+          sharedQuestionPhotos:true,createdAt:new Date().toISOString()};
+        tx.set(refs[i],child);
+      });
+      tx.update(ref,{splitQuestionIds:ids,splitAt:new Date().toISOString()});
+    });
+    render();
+  }catch(e){alert('문항 분리를 완료하지 못했습니다. '+(e.message||e));}
+}
+
+t fsUpdate('questions',q.id,{autoAnswerSeen:true,autoAnswerSeenAt:iso}); if(ok) q.autoA  const directorQuestions=db.questions.filter(q=>!q.splitQuestionIds?.length);
+  const autoUnseenCount = directorQuestions.filter(questionAutoUnseen).length;
+  const todoCount = directorQuestions.filter(q=>q.status==='대기'||questionAutoUnseen(q)).length;
+questionAutoUnseen).length;
+  const todoCount = db.questions.  const list = directorQuestions.filter(q=> filter==='all' ? true : (q.status==='대기'||questionAutoUnseen(q))).sort((a,b)=>b.date.localeCompare(a.date));
+ilter(q=> filter==='all' ? true : (q.status==='대기'||questionAutoUnseen(q))).sort((a,b)=>b.date.localeCompare(a.date));
   return `
   <h1 class="page-title">질문 게시판</h1>
   <p class="page-sub">모든 학생의 질문을 한 화면에서 확인하고 답변해주세요.</p>
@@ -7304,7 +7335,8 @@ function renderQnaDirector(){
       <div>${q.text}</div>
       <div class="thumbs">${(q.photos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','photos',${i})">`).join('')}</div>
       ${(q.photos||[]).length>1 ? `<button class="btn sm outline" style="margin-top:6px;" onclick="downloadAllPhotos(db.questions.find(x=>x.id==='${q.id}').photos, '${s?s.name:'question'}_${q.date}', this)">📥 사진 모두 받기</button>` : ''}
-      ${questionAutoUnseen(q)?`<div style="margin-top:8px;"><button class="btn sm gold" data-qna-seen="${q.id}" onclick="markAutoAnswerSeen('${q.id}')">✓ 확인했어요</button></div>`:''}
+      ${questionAutoUnseen(q)?`<div style="margin-top:8px;      ${questionProblemNumbers(q).length>1?`<div style="margin-top:10px;padding:12px;background:#fff4da;"><b>여러 문항이 한 질문에 묶여 있습니다.</b><div>${questionProblemNumbers(q).map(escapeHtml).join('번 · ')}번을 각각의 답변 카드로 분리하세요. 질문 사진은 공통 참고자료로 유지됩니다.</div><button class="btn gold" onclick="splitQuestionForDirector('${q.id}')">문항별 답변 칸으로 분리</button></div>`:`<div style="margin-top:10px;">
+a-seen="${q.id}" onclick="markAutoAnswerSeen('${q.id}')">✓ 확인했어요</button></div>`:''}
       <div style="margin-top:10px;">
         <textarea rows="2" placeholder="답변 메모" id="ans_${q.id}">${q.answerText||''}</textarea>
         <input type="file" accept="image/*" multiple id="ansPhoto_${q.id}" style="margin-top:6px;">
@@ -7313,8 +7345,8 @@ function renderQnaDirector(){
         ${questionCanSaveToLibrary(q)?`<label data-qna-savelib="${q.id}" style="display:flex;align-items:flex-start;gap:6px;margin-top:8px;font-size:12px;color:#5a5648;line-height:1.5;cursor:pointer;"><input type="checkbox" id="ansSaveLib_${q.id}" checked style="margin-top:3px;"><span>이 답변 사진을 <b>학습보관함에도 저장</b>해요 <span style="color:#8a8674;">(같은 문제를 또 물으면 자동으로 답변돼요 · 사진이 있을 때만)</span></span></label>`:''}
         <div class="row" style="gap:10px;flex-wrap:wrap;margin-top:8px;font-size:11px;"><span style="color:#777;">문항 표시</span><label><input type="checkbox" id="ansTag_${q.id}_past" ${q.pastExam||q.isPastExam?'checked':''}> 기출</label><label><input type="checkbox" id="ansTag_${q.id}_major" ${q.majorQuestion||q.isKeyProblem||questionIsKeyProblem(q)?'checked':''}> 주요문항</label><label><input type="checkbox" id="ansTag_${q.id}_frequent" ${q.isFrequent?'checked':''}> 빈출</label></div>
         <div style="font-size:10px;color:#8a8674;margin-top:4px;">답변 등록 시 문제저장소 후보로 연결됩니다. 학생이 올린 질문 사진은 문제 원본으로 복사하지 않아요.</div>
-        <div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<div class="thumb-wrap"><img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})"><button class="thumb-x" onclick="removeAnswerPhoto('${q.id}',${i})">✕</button></div>`).join('')}</div>
-        <button class="btn sm gold" style="margin-top:8px;" onclick="answerQuestion('${q.id}')">답변 등록</button>
+        <div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<div class="thumb-wrap"><img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})"><button class="thumb-x" onclick="removeAnswerPhoto('${q.id}',${i})">✕</button></div>`).join(      </div>`}
+      <button class="btn sm gold" style="margin-top:8px;" onclick="answerQuestion('${q.id}')">답변 등록</button>
       </div>
     </div>`;
   }).join('') : `<div class="empty"><div class="big">💬</div>표시할 질문이 없어요.</div>`}
@@ -7351,10 +7383,8 @@ function syncAnswerLibraryOptions(qId,changed){
   const save=document.getElementById('ansSaveLib_'+qId), key=document.getElementById('ansKeyLib_'+qId);
   if(!save||!key) return;
   if(changed==='key' && key.checked) save.checked=true;
-  if(!save.checked){ key.checked=false; key.disabled=true; } else key.disabled=false;
-}
-function questionCanSaveToLibrary(q){
-  return !!(q && q.sourceType==='TEXTBOOK' && q.sourceKey && q.sourceCourseId && q.sourceBook && q.sourcePage && q.sourceProblemNo);
+  i  return !!(q && !q.splitQuestionIds?.length && questionProblemNumbers(q).length<2 && q.sourceType==='TEXTBOOK' && q.sourceKey && q.sourceCourseId && q.sourceBook && q.sourcePage && q.sourceProblemNo);
+!(q && q.sourceType==='TEXTBOOK' && q.sourceKey && q.sourceCourseId && q.sourceBook && q.sourcePage && q.sourceProblemNo);
 }
 async function saveAnswerPhotosToLibrary(q,answerPhotos,opts={}){
   if(!questionCanSaveToLibrary(q)) return 0;
@@ -7376,7 +7406,8 @@ async function saveAnswerPhotosToLibrary(q,answerPhotos,opts={}){
     if(ok){
       have.add(idt); saved++;
       db.solutionPhotos=[...(db.solutionPhotos||[]).filter(x=>x.id!==solId),{id:solId,...solData}];
-      syncSolutionPhotoToProblemRepo(solId,solData).catch(e=>console.error(e));
+      syncSolutionPhotoToProblemRepo(solId,solData).catch(e=>consol  if(!q||q.splitQuestionIds?.length||questionProblemNumbers(q).length>1){alert('문항별로 분리한 뒤 각각 답변해주세요.');return;}
+e.error(e));
     }
   }
   return saved;
@@ -9074,9 +9105,8 @@ function renderStudentHomeworkSummary(stuId){
     <h3 style="margin:0;">📸 숙제 결과</h3>
     ${resultBox}
     <div style="margin-top:12px;padding:12px 14px;background:#f6f4ec;border:1px solid var(--line);border-radius:10px;">
-      <div style="font-size:12px;color:#7b7667;margin-bottom:5px;">${Number(month.slice(5))}월 숙제</div>
-      <div style="font-size:14px;font-weight:800;">PASS ${monthPass}회 · 불합격 ${monthFail}회</div>
-    </div>
+      <div style="font-size:12px;color:#7b7667;margin-bottom:5px;">${Number(month.slice(5))}월 숙  const myQs = db.questions.filter(q=>q.studentId===stuId&&!q.splitQuestionIds?.length).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+v>
   </div>`;
 }
 function renderStudentQuestionSummary(stuId){
@@ -9761,7 +9791,8 @@ async function syncQuestionToProblemRepo(qId,qData){
 }
 async function syncAnsweredQuestionToProblemRepo(qId,answerText,answerPhotos,tags={}){
   try{
-    let q=db.questions.find(x=>x.id===qId);
+    let q=db.q    if(q.splitQuestionIds?.length||questionProblemNumbers(q).length>1)return {status:'needs-split'};
+uestions.find(x=>x.id===qId);
     if(!q){
       const doc=await fsdb.collection('questions').doc(qId).get();
       if(!doc.exists) return;
