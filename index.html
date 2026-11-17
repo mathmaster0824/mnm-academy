@@ -1977,7 +1977,7 @@ function weekDates(weekStart){
    휴대폰은 앱 탭을 며칠씩 열어 둔 채로 쓰기 때문에, 고친 버전이 올라가도 예전 화면이 계속 돌 수 있다.
    예전 화면은 지금 보안 규칙과 맞지 않아 저장이 막힐 수 있으므로, 새 버전이 올라오면 새로 고침을 안내한다.
    (배포할 때마다 APP_BUILD 값을 바꾼다) */
-const APP_BUILD='2026-11-18-single-question';
+const APP_BUILD='2026-11-18-single-question-notice';
 let newVersionReady=false, versionCheckAt=0;
 async function checkAppVersion(force){
   if(location.protocol==='file:') return false;
@@ -7122,6 +7122,7 @@ function renderQuestionEditForm(q){
     <div style="font-size:12px;color:#8a8674;margin-bottom:4px;">질문 수정 중</div>
     <textarea id="editQText" rows="2">${ed.text}</textarea>
     <div class="row" style="margin-top:6px;">
+<div style="margin-top:8px;padding:10px 12px;background:#fff4da;border-left:4px solid #c4a253;border-radius:6px;font-size:13px;line-height:1.6;"><b>📷 한 문제만 찍어서 올려주세요.</b><br>문제 번호·문제 내용·보기·도형이 모두 보이게 찍어주세요.<br>여러 문제가 함께 찍혔다면 질문할 문제만 잘라서 올려주세요.<br><span style="font-size:12px;">같은 문제의 풀이·질문 사진은 여러 장 올려도 됩니다.</span></div>
       <label class="btn sm outline" style="cursor:pointer;">📷 촬영<input type="file" accept="image/*" capture="environment" onchange="uploadEditQPhoto(this)" style="display:none;"></label>
       <label class="btn sm outline" style="cursor:pointer;">🖼️ 갤러리<input type="file" accept="image/*" multiple onchange="uploadEditQPhoto(this)" style="display:none;"></label>
     </div>
@@ -7163,6 +7164,7 @@ function renderQnaStudentSection(stuId, directorView){
       ${src.sourceType==='PRINT'?`<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px;"><input id="newQPrintId_${index}" value="${escapeHtml(src.printId||'')}" placeholder="프린트명 (선택)" oninput="setNewQSourceField('${stuId}','printId',this.value,false,${index})"><input value="${escapeHtml(src.sourceProblemNo||'')}" placeholder="문제번호 (선택)" oninput="setNewQSourceField('${stuId}','sourceProblemNo',this.value,false,${index})"></div>`:''}
       ${src.sourceType==='MNM'?`<div style="margin-top:6px;"><input value="${escapeHtml(src.problemId||'')}" placeholder="문제 ID" oninput="setNewQSourceField('${stuId}','problemId',this.value,false,${index})"></div>`:''}
       <textarea id="newQText_${index}" oninput="setQuestionDraftText('${stuId}',${index},this.value)" placeholder="이 문제에서 궁금한 점을 적어주세요" rows="2" style="width:100%;margin-top:8px;">${escapeHtml(item.text||'')}</textarea>
+      <div style="margin-top:8px;padding:10px 12px;background:#fff4da;border-left:4px solid #c4a253;border-radius:6px;font-size:13px;line-height:1.6;"><b>📷 한 문제만 찍어서 올려주세요.</b><br>문제 번호·문제 내용·보기·도형이 모두 보이게 찍어주세요.<br>여러 문제가 함께 찍혔다면 질문할 문제만 잘라서 올려주세요.<br><span style="font-size:12px;">같은 문제의 풀이·질문 사진은 여러 장 올려도 됩니다.</span></div>
       <div class="row" style="margin-top:6px;"><label class="btn sm outline" style="cursor:pointer;">📷 촬영<input type="file" accept="image/*" capture="environment" onchange="uploadNewQPhoto(this,${index})" style="display:none;"></label><label class="btn sm outline" style="cursor:pointer;">🖼️ 갤러리<input type="file" accept="image/*" multiple onchange="uploadNewQPhoto(this,${index})" style="display:none;"></label></div>
       <div class="thumbs">${item.photos.map((p,i)=>`<div class="thumb-wrap"><img src="${photoSrc(p,true)}" onclick="openLightboxSet('newq','${index}','','${i}')"><button class="thumb-x" onclick="removeNewQPhoto(${index},${i})">✕</button></div>`).join('')}</div>
     </div>`;
