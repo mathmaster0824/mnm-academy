@@ -1977,7 +1977,7 @@ function weekDates(weekStart){
    휴대폰은 앱 탭을 며칠씩 열어 둔 채로 쓰기 때문에, 고친 버전이 올라가도 예전 화면이 계속 돌 수 있다.
    예전 화면은 지금 보안 규칙과 맞지 않아 저장이 막힐 수 있으므로, 새 버전이 올라오면 새로 고침을 안내한다.
    (배포할 때마다 APP_BUILD 값을 바꾼다) */
-const APP_BUILD='2026-11-16-question-items';
+const APP_BUILD='2026-11-18-single-question';
 let newVersionReady=false, versionCheckAt=0;
 async function checkAppVersion(force){
   if(location.protocol==='file:') return false;
@@ -7018,6 +7018,16 @@ function studentQuestionBooks(stuId,courseId,allCatalog=false){
   if(allCatalog || !names.size) courseBookCatalog(courseId).forEach(x=>names.add(x));
   return [...names].sort((a,b)=>a.localeCompare(b,'ko'));
 }
+function singleQuestionNumber(value){
+  const n=String(value||'').normalize('NFKC').trim().replace(/번$/,'').trim();
+  return /^\d{1,6}(?:\(\d{1,3}\))?$/.test(n)?n:'';
+}
+let questionSubmitInFlight=false;
+async function submitQuestion(stuId){
+  if(questionSubmitInFlight)return;
+  questionSubmitInFlight=true;
+  try{await submitSingleQuestion(stuId);}finally{questionSubmitInFlight=false;}
+}
 function questionDraftItems(stuId){
   if(!Array.isArray(currentSubState._newQDraftItems)) currentSubState._newQDraftItems=[{text:currentSubState._newQDraftText||'',photos:currentSubState._newQDraftPhotos||[],source:currentSubState._newQDraftSource||{}}];
   if(!currentSubState._newQDraftItems.length) currentSubState._newQDraftItems.push({text:'',photos:[],source:{}});
@@ -7088,7 +7098,7 @@ function readNewQuestionSource(stuId,index=0){
     const sourceCourseId=d.sourceCourseId||'';
     const sourceBook=String(d.sourceBook||'').trim();
     const sourcePage=String(d.sourcePage||'').trim();
-    const sourceProblemNo=String(d.sourceProblemNo||'').trim();
+    const sourceProblemNo=singleQuestionNumber(d.sourceProblemNo)||String(d.sourceProblemNo||'').trim();
     return {
       sourceType,sourceCourseId,sourceBook,
       sourceBookNotListed:!!d.sourceBookNotListed,
@@ -7098,7 +7108,7 @@ function readNewQuestionSource(stuId,index=0){
       sourceKey:textbookSourceKey(sourceCourseId,sourceBook,sourcePage,sourceProblemNo)
     };
   }
-  if(sourceType==='PRINT') return {sourceType,printId:String(d.printId||'').trim(),sourceProblemNo:String(d.sourceProblemNo||'').trim()};
+  if(sourceType==='PRINT') return {sourceType,printId:String(d.printId||'').trim(),sourceProblemNo:singleQuestionNumber(d.sourceProblemNo)||String(d.sourceProblemNo||'').trim()};
   if(sourceType==='OTHER') return {sourceType};
   return {sourceType,problemId:String(d.problemId||'').trim()};
 }
@@ -7126,13 +7136,13 @@ function renderQuestionEditForm(q){
 function renderQnaStudentSection(stuId, directorView){
   const myQs=db.questions.filter(q=>q.studentId===stuId&&!q.splitQuestionIds?.length).sort((a,b)=>b.date.localeCompare(a.date));
   const drafts=questionDraftItems(stuId);
-  const compose=drafts.map((item,index)=>{
+  const compose=drafts.slice(0,1).map((item,index)=>{
     const src=newQuestionSourceDraft(stuId,index);
     const currentIds=studentCurrentCourseIds(stuId);
     const courseList=src.showAllCourses?sortedCourses():sortedCourses().filter(c=>currentIds.includes(c.id));
     const books=src.sourceCourseId?officialBooksForCourse(src.sourceCourseId):[];
     return `<div style="border:1px solid var(--line);border-radius:10px;padding:10px;margin:9px 0;background:#fff;">
-      <div class="row between" style="margin-bottom:7px;"><b>질문 ${index+1}</b>${drafts.length>1?`<button class="btn sm outline" onclick="removeQuestionDraft('${stuId}',${index})">삭제</button>`:''}</div>
+      <div class="row between" style="margin-bottom:7px;"><b>한 문제 질문하기</b>${drafts.length>1?`<button class="btn sm outline" onclick="removeQuestionDraft('${stuId}',${index})">삭제</button>`:''}</div>
       <label style="font-size:11px;color:#8a8674;display:block;margin-bottom:4px;">이 문제의 출처</label>
       <select id="newQSourceType_${index}" onchange="setNewQSourceField('${stuId}','sourceType',this.value,true,${index})" style="width:100%;max-width:280px;">
         <option value="TEXTBOOK" ${src.sourceType==='TEXTBOOK'?'selected':''}>교재</option><option value="PRINT" ${src.sourceType==='PRINT'?'selected':''}>프린트</option><option value="OTHER" ${src.sourceType==='OTHER'?'selected':''}>기타 질문 (교재 외)</option><option value="MNM" ${src.sourceType==='MNM'?'selected':''}>M&amp;m 수학훈련소</option>
@@ -7163,7 +7173,7 @@ function renderQnaStudentSection(stuId, directorView){
     const waitingNote=q.status==='대기'?`<div style="font-size:11px;color:#7a5b00;margin-top:5px;">${q.solutionLibraryLookupFailed?'보관함을 자동 확인하지 못해 선생님이 출처를 확인하고 있어요.':'보관함에서 연결할 풀이를 찾지 못해 선생님 확인 대기 중이에요.'}</div>`:'';
     return `<div style="padding:10px 0;border-bottom:1px solid var(--line);"><div class="row between"><span style="font-size:12px;color:#9c9880;">${fmtDate(q.date)}</span><span class="badge ${q.status==='답변완료'?'green':'yellow'}">${statusText}</span></div>${waitingNote}${questionSourceLabel(q)?`<div style="font-size:11px;color:#6b6858;margin-top:5px;"><b>출처</b> · ${escapeHtml(questionSourceLabel(q))}</div>`:''}<div style="margin:6px 0;">${q.text}</div><div class="thumbs">${(q.photos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','photos',${i})">`).join('')}</div>${q.answerText||(q.answerPhotos&&q.answerPhotos.length)?`<div style="margin-top:8px;background:#f6f4ec;padding:8px 10px;border-radius:8px;"><div style="font-size:12px;color:#8a8674;">선생님 답변</div><div>${q.answerText||''}</div><div class="thumbs">${(q.answerPhotos||[]).map((p,i)=>`<img src="${photoSrc(p,true)}" onclick="openLightboxSet('q','${q.id}','answerPhotos',${i})">`).join('')}</div></div>`:''}${session.mode==='student'?`<button class="btn sm outline" style="margin-top:6px;" onclick="editQuestion('${q.id}')">수정</button>`:''}</div>`;
   }).join(''):`<div class="empty">등록된 질문이 없어요.</div>`;
-  return `<div class="card"><h3 style="margin-top:0;">💬 질문 게시판</h3>${session.mode==='student'?`<div style="font-size:12px;color:#6f6958;margin-bottom:8px;line-height:1.5;">문제마다 출처와 사진을 각각 입력해주세요. 한 문제에 사진을 여러 장 첨부할 수 있어요. 교재 목록에 없는 책은 ‘목록에 없는 교재’를 선택해 이름을 적어주세요. 보관함에서 같은 출처의 풀이를 찾지 못하면 선생님 확인 대기로 전달됩니다.</div>${compose}<div class="row" style="margin-top:8px;"><button class="btn sm outline" onclick="addQuestionDraft('${stuId}')">＋ 질문 추가</button><button class="btn sm gold" onclick="submitQuestion('${stuId}')">질문 모두 등록</button></div><hr style="border:none;border-top:1px solid var(--line);margin:14px 0;">`:''}${history}</div>`;
+  return `<div class="card"><h3 style="margin-top:0;">💬 질문 게시판</h3>${session.mode==='student'?`<div style="font-size:12px;color:#6f6958;margin-bottom:8px;line-height:1.5;">한 번에 한 문제만 등록해주세요. 번호도 하나만 입력하세요. 사진에는 질문할 문제 하나만 담아주세요. 같은 문제의 풀이 사진은 여러 장 첨부할 수 있어요. 등록하면 교재·페이지는 유지됩니다. 교재 목록에 없는 책은 ‘목록에 없는 교재’를 선택해 이름을 적어주세요. 보관함에서 같은 출처의 풀이를 찾지 못하면 선생님 확인 대기로 전달됩니다.</div>${compose}<div class="row" style="margin-top:8px;"><button class="btn sm gold" onclick="submitQuestion('${stuId}')">이 문제 등록</button>${drafts.length>1?`<span style="font-size:12px;">이전에 작성한 질문 ${drafts.length-1}개는 이번 문제 등록 후 차례로 표시됩니다.</span>`:''}</div><hr style="border:none;border-top:1px solid var(--line);margin:14px 0;">`:''}${history}</div>`;
 }
 async function uploadNewQPhoto(inputEl,index=0){
   rememberQuestionTexts();
@@ -7187,9 +7197,9 @@ async function findExactSolutionPhotosForQuestion(source){
     return {photos:[],checked:false};
   }
 }
-async function submitQuestion(stuId){
+async function submitSingleQuestion(stuId){
   rememberQuestionTexts();
-  const drafts=questionDraftItems(stuId);
+  const allDrafts=questionDraftItems(stuId),drafts=allDrafts.slice(0,1);
   for(let i=0;i<drafts.length;i++){
     const item=drafts[i], text=String(item.text||'').trim(), photos=item.photos||[];
     if(!text&&!photos.length){alert(`질문 ${i+1}에 내용이나 사진을 등록해주세요.`);return;}
@@ -7199,9 +7209,10 @@ async function submitQuestion(stuId){
       if(!source.sourceBook){alert(`질문 ${i+1}: 교재를 선택해주세요.`);return;}
       if(!source.sourcePage){alert(`질문 ${i+1}: 페이지를 입력해주세요.`);return;}
       if(!source.sourceProblemNo){alert(`질문 ${i+1}: 문제번호를 입력해주세요.`);return;}
-      if(questionProblemNumbers(source).length>1){alert(`질문 ${i+1}: 문제번호는 한 개씩 입력해주세요. ‘＋ 질문 추가’를 누르면 같은 교재·페이지로 다음 질문을 추가할 수 있어요.`);return;}
+      if(!singleQuestionNumber(source.sourceProblemNo)){alert('문제번호는 하나만 입력해주세요. 예: 13 또는 13(1). 여러 번호나 범위는 등록할 수 없어요.');return;}
+      if(!/^\d+$/.test(source.sourcePage)){alert('페이지는 한 쪽만 입력해주세요. 예: 61');return;}
       if(!source.sourceKey){alert(`질문 ${i+1}: 문제 출처를 다시 확인해주세요.`);return;}
-    }else if(source.sourceType==='MNM'&&!source.problemId){alert(`질문 ${i+1}: M&m 문제 ID를 입력해주세요.`);return;}
+    }else if(source.sourceType==='PRINT'&&!singleQuestionNumber(source.sourceProblemNo)){alert('프린트 문제번호도 하나만 입력해주세요. 예: 3');return;}else if(source.sourceType==='MNM'&&!source.problemId){alert(`질문 ${i+1}: M&m 문제 ID를 입력해주세요.`);return;}
   }
   const prepared=[];
   for(let i=0;i<drafts.length;i++){
@@ -7222,9 +7233,9 @@ async function submitQuestion(stuId){
     item._saved=true; saved++;
   }
   if(saved){
-    currentSubState._newQDraftItems=drafts.filter(item=>!item._saved).map(item=>{delete item._saved;return item;});
+    currentSubState._newQDraftItems=allDrafts.filter(item=>!item._saved).map(item=>{delete item._saved;return item;});
     currentSubState._newQDraftText='';currentSubState._newQDraftPhotos=[];currentSubState._newQDraftSource=null;
-    if(!currentSubState._newQDraftItems.length) currentSubState._newQDraftItems=[{text:'',photos:[],source:{}}];
+    if(!currentSubState._newQDraftItems.length){const nextSource={...prepared[0],sourceProblemNo:'',sourceProblemNoKey:'',sourceKey:'',problemId:''};for(const key of ['studentId','date','text','photos','answerText','answerPhotos','status','solutionLibraryLookupFailed'])delete nextSource[key];currentSubState._newQDraftItems=[{text:'',photos:[],source:nextSource}];}
     if(saved<drafts.length) alert(`${saved}개 질문은 등록됐고, 나머지 질문은 저장되지 않았어요. 남은 입력을 확인한 뒤 다시 등록해주세요.`);
     render();
   }
