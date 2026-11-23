@@ -1977,7 +1977,7 @@ function weekDates(weekStart){
    휴대폰은 앱 탭을 며칠씩 열어 둔 채로 쓰기 때문에, 고친 버전이 올라가도 예전 화면이 계속 돌 수 있다.
    예전 화면은 지금 보안 규칙과 맞지 않아 저장이 막힐 수 있으므로, 새 버전이 올라오면 새로 고침을 안내한다.
    (배포할 때마다 APP_BUILD 값을 바꾼다) */
-const APP_BUILD='2026-11-18-single-question-notice';
+const APP_BUILD='2026-11-23a';
 let newVersionReady=false, versionCheckAt=0;
 async function checkAppVersion(force){
   if(location.protocol==='file:') return false;
@@ -2617,7 +2617,8 @@ function renderDashboard(){
   const todaysClasses = db.classes.filter(c=> (c.dayGroup==='mon-wed'&&(dow===1||dow===3)) || (c.dayGroup==='tue-thu'&&(dow===2||dow===4)) );
   let pendingHw=0, pendingQ=0, autoUnseenQ=0;
   Object.values(db.submissions).forEach(s=>{ if(submissionIsPending(s)) pendingHw++; });
-  db.questions.forEach(q=>{ if(q.status==='대기') pendingQ++; if(questionAutoUnseen(q)) autoUnseenQ++; });
+  // 문항별로 분리된 원래 질문(splitQuestionIds)은 질문 게시판에서 숨겨지므로 개수에도 넣지 않는다. (게시판과 같은 기준)
+  db.questions.forEach(q=>{ if(q.splitQuestionIds?.length) return; if(q.status==='대기') pendingQ++; if(questionAutoUnseen(q)) autoUnseenQ++; });
   const stadMonth = STAD_MONTH();
   const stadToday = STAD_TODAY();
   const stadApprovedToday = Object.values(db.stadApplications||{}).filter(a=>a.status==='approved' && a.month===stadMonth)
