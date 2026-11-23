@@ -9,9 +9,23 @@ async function pdfBackgroundApi(path='',options={}){
   const result=await readMnmJsonResponse(res);if(!res.ok||!result.ok)throw new Error(result.error||'서버 작업 요청 실패');return result;
 }
 const pdfBackgroundPost=(path,body)=>pdfBackgroundApi(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+const pdfAuditExports=new Map();
+function renderPdfAuditExport(id){
+  const state=pdfAuditExports.get(id);
+  if(!state)return '';
+  if(state.status==='loading')return '<div role="status">검증자료 준비 중 · '+state.loaded+'쪽 확인 / '+state.total+'쪽</div>';
+  if(state.status==='error')return '<div role="alert" style="color:#b5473d;">검증자료 준비 실패 · '+escapeHtml(state.error)+' · 검증자료 저장을 눌러 다시 시도해주세요.</div>';
+  return '<div role="status" style="padding:10px;background:#edf7ed;"><b>검증자료 준비 완료</b> · 아래 버튼을 눌러 파일을 내려받으세요.<br><a class="btn gold" href="'+state.url+'" download="'+state.fileName+'">JSON 파일 내려받기</a><button class="btn outline" onclick="showPdfAuditText(\''+id+'\')">다운로드가 안 되면 내용 보기</button><div id="pdfAuditText_'+id+'"></div></div>';
+}
+function showPdfAuditText(id){
+  const state=pdfAuditExports.get(id),el=document.getElementById('pdfAuditText_'+id);
+  if(!state||state.status!=='ready'||!el)return;
+  el.innerHTML='<p>아래 내용을 전체 선택해 복사할 수 있습니다. 파일 저장이 되면 이 방법은 필요 없습니다.</p><textarea readonly rows="8" style="width:100%;"></textarea>';
+  el.querySelector('textarea').value=state.text;
+}
 function renderPdfBackgroundJobs(){
   const labels={uploading:'업로드 미완료',queued:'업로드 완료 · 서버 대기',processing:'서버에서 처리 중',ready:'분할 완료 · 초안 반영 중',imported:'공작소 초안에 반영 완료',error:'일부 페이지 확인 필요'};
-  const rows=pdfBackgroundState.jobs.map(j=>`<div style="padding:10px 0;border-top:1px solid #e4dfd3"><b>${escapeHtml(j.fileName)}</b><div>${labels[j.status]||escapeHtml(j.status)} · 업로드 ${j.uploadedPages.length}/${j.pageCount}쪽 · 처리 ${j.donePages.length}/${j.pageCount}쪽${j.status==='processing'&&j.currentPage?` (${j.currentPage}쪽 작업 중)`:''} · ${j.problemCount}문항${j.failedPages.length?` · 실패 ${j.failedPages.map(Number).join(', ')}쪽`:''}</div>${j.donePages.length?`<button class="btn outline" onclick="exportPdfBackgroundAudit('${j.id}').catch(pdfBackgroundShowError)">검증자료 저장</button>`:''}${j.error?`<div style="color:#b5473d">${escapeHtml(j.error)}</div>`:''}${j.status==='uploading'?`<button class="btn outline" onclick="resumePdfBackgroundUpload('${j.id}')" ${!j.sourceUploaded||pdfBackgroundState.uploading?'disabled':''}>업로드 이어하기</button><small> 원본 전송이 중단됐다면 같은 PDF를 다시 선택하세요. 이미 보낸 부분은 이어 올립니다.</small>`:''}${j.status==='error'?`<button class="btn outline" onclick="retryPdfBackgroundJob('${j.id}')">실패한 페이지만 재시도</button>`:''}${j.status==='ready'?`<button class="btn outline" onclick="importPdfBackgroundResult('${j.id}').catch(pdfBackgroundShowError)">완료 결과 다시 반영</button>`:''}</div>`).join('');
+  const rows=pdfBackgroundState.jobs.map(j=>`<div style="padding:10px 0;border-top:1px solid #e4dfd3"><b>${escapeHtml(j.fileName)}</b><div>${labels[j.status]||escapeHtml(j.status)} · 업로드 ${j.uploadedPages.length}/${j.pageCount}쪽 · 처리 ${j.donePages.length}/${j.pageCount}쪽${j.status==='processing'&&j.currentPage?` (${j.currentPage}쪽 작업 중)`:''} · ${j.problemCount}문항${j.failedPages.length?` · 실패 ${j.failedPages.map(Number).join(', ')}쪽`:''}</div>${j.donePages.length?`<button class="btn outline" ${pdfAuditExports.get(j.id)?.status==='loading'?'disabled':''} onclick="exportPdfBackgroundAudit('${j.id}')">${pdfAuditExports.get(j.id)?.status==='loading'?'검증자료 준비 중…':'검증자료 저장'}</button>${renderPdfAuditExport(j.id)}`:''}${j.error?`<div style="color:#b5473d">${escapeHtml(j.error)}</div>`:''}${j.status==='uploading'?`<button class="btn outline" onclick="resumePdfBackgroundUpload('${j.id}')" ${!j.sourceUploaded||pdfBackgroundState.uploading?'disabled':''}>업로드 이어하기</button><small> 원본 전송이 중단됐다면 같은 PDF를 다시 선택하세요. 이미 보낸 부분은 이어 올립니다.</small>`:''}${j.status==='error'?`<button class="btn outline" onclick="retryPdfBackgroundJob('${j.id}')">실패한 페이지만 재시도</button>`:''}${j.status==='ready'?`<button class="btn outline" onclick="importPdfBackgroundResult('${j.id}').catch(pdfBackgroundShowError)">완료 결과 다시 반영</button>`:''}</div>`).join('');
   return `<div style="padding:12px;border:1px solid #e4dfd3;border-radius:10px;margin-top:12px;font-size:12px;line-height:1.8"><b>PDF 서버 작업</b> <button class="btn outline" onclick="refreshPdfBackgroundJobs(true)">진행 확인</button><div>‘업로드 완료’ 이후에는 화면을 닫아도 분할 작업이 계속됩니다. 다시 접속하면 완료 결과가 공작소 초안으로 반영됩니다.</div>${pdfBackgroundState.schedulerReady===false?'<div style="color:#b5473d">서버 예약 실행이 준비되지 않았습니다. 작업은 보관되며 서버 설정 확인이 필요합니다.</div>':''}${pdfBackgroundState.error?`<div style="color:#b5473d">${escapeHtml(pdfBackgroundState.error)}</div>`:''}${rows||'<div>등록된 서버 작업이 없습니다. 진행 확인을 눌러주세요.</div>'}${pdfBackgroundState.cursor?'<button class="btn outline" onclick="refreshPdfBackgroundJobs(true,true)">이전 작업 더 보기</button>':''}</div>`;
 }
 function paintPdfBackgroundJobs(){const el=document.getElementById('pdfBackgroundJobs');if(el)el.innerHTML=renderPdfBackgroundJobs();}
@@ -154,12 +168,37 @@ window.addEventListener('beforeunload',e=>{if(pdfBackgroundState.uploading){e.pr
 setInterval(()=>{if(document.visibilityState==='visible'&&document.getElementById('pdfBackgroundJobs'))refreshPdfBackgroundJobs();},10000);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&document.getElementById('pdfBackgroundJobs'))refreshPdfBackgroundJobs();});
 
+async function pdfAuditRequest(path){
+  const controller=new AbortController();let timer;
+  try{
+    return await Promise.race([pdfBackgroundApi(path,{signal:controller.signal}),new Promise((_,reject)=>{
+      timer=setTimeout(()=>{controller.abort();reject(new Error('서버 응답이 30초 안에 도착하지 않았습니다. 잠시 후 다시 시도해주세요.'));},30000);
+    })]);
+  }finally{clearTimeout(timer);}
+}
 async function exportPdfBackgroundAudit(id){
-  const pages=[];let data=await pdfBackgroundApi('/'+id+'/audit');
-  const report={schema:data.schema,exportedAt:new Date().toISOString(),job:data.job,sourceMeta:data.sourceMeta,
-    answerMap:data.answerMap,accuracyVerified:false,costMeasured:false,mediaBase:PHOTO_API_BASE,pages};
-  while(true){pages.push(...data.pages);if(!data.nextPage)break;data=await pdfBackgroundApi('/'+id+'/audit?from='+data.nextPage);}
-  const blob=new Blob([JSON.stringify(report,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');
-  a.href=url;a.download='Mnm-PDF-검증-'+id.slice(0,12)+'.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
-  pdfBackgroundMessage('검증자료를 저장했습니다. 미완료 페이지도 표시되며, 정확도 검증 완료를 의미하지 않습니다.');
+  if(pdfAuditExports.get(id)?.status==='loading')return;
+  const previous=pdfAuditExports.get(id);if(previous?.url)URL.revokeObjectURL(previous.url);
+  const state={status:'loading',loaded:0,total:pdfBackgroundState.jobs.find(j=>j.id===id)?.pageCount||0};
+  pdfAuditExports.set(id,state);paintPdfBackgroundJobs();
+  pdfBackgroundMessage('검증자료 준비를 시작했습니다. 완료되면 JSON 파일 내려받기 버튼이 나타납니다.');
+  try{
+    const pages=[],visited=new Set();let data=await pdfAuditRequest('/'+id+'/audit'),report;
+    while(true){
+      if(data.schema!=='mnm-pdf-audit-v1'||!Array.isArray(data.pages))throw new Error('검증자료 응답 형식이 다릅니다. 서버 업데이트를 확인해주세요.');
+      if(!report)report={schema:data.schema,exportedAt:new Date().toISOString(),job:data.job,sourceMeta:data.sourceMeta,answerMap:data.answerMap,accuracyVerified:false,costMeasured:false,mediaBase:PHOTO_API_BASE,pages};
+      for(const page of data.pages){if(visited.has(page.page))throw new Error('검증자료 페이지가 반복됐습니다.');visited.add(page.page);pages.push(page);}
+      state.loaded=pages.length;state.total=report.job.pageCount;paintPdfBackgroundJobs();
+      if(!data.nextPage)break;
+      if(!Number.isInteger(data.nextPage)||data.nextPage<1||data.nextPage>report.job.pageCount||visited.has(data.nextPage))throw new Error('검증자료 페이지 순서 오류');
+      data=await pdfAuditRequest('/'+id+'/audit?from='+data.nextPage);
+    }
+    if(pages.length!==report.job.pageCount)throw new Error('검증자료 일부 페이지가 누락됐습니다. 다시 시도해주세요.');
+    state.text=JSON.stringify(report,null,2);state.url=URL.createObjectURL(new Blob([state.text],{type:'application/json'}));
+    state.fileName='Mnm-PDF-검증-'+id.slice(0,12)+'.json';state.status='ready';
+    pdfBackgroundMessage('검증자료 준비 완료 · JSON 파일 내려받기를 눌러주세요. 아직 기기에 저장된 것은 아닙니다.');
+  }catch(e){
+    state.status='error';state.error=e?.message||String(e);
+    pdfBackgroundMessage('검증자료 준비 실패 · '+state.error);
+  }finally{paintPdfBackgroundJobs();}
 }
