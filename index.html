@@ -1977,7 +1977,7 @@ function weekDates(weekStart){
    휴대폰은 앱 탭을 며칠씩 열어 둔 채로 쓰기 때문에, 고친 버전이 올라가도 예전 화면이 계속 돌 수 있다.
    예전 화면은 지금 보안 규칙과 맞지 않아 저장이 막힐 수 있으므로, 새 버전이 올라오면 새로 고침을 안내한다.
    (배포할 때마다 APP_BUILD 값을 바꾼다) */
-const APP_BUILD='2026-11-23-audit-download';
+const APP_BUILD='2026-11-24a';
 let newVersionReady=false, versionCheckAt=0;
 async function checkAppVersion(force){
   if(location.protocol==='file:') return false;
@@ -3350,14 +3350,20 @@ function renderOneTrack(stuId, track, date){
     </div>` : ''}
   </div>`;
 }
+// 교재 묶음(회독)은 학생의 학년이 아니라 '선택한 학년학기 과정'의 학교급을 따른다. (중등 학생이 [고등] 공수1을 선행하면 고등 교재 묶음: 라쎈 2회독 + 마플시너지)
+function trackPresetLevel(stuId, courseId){
+  const lv = courseId ? courseGradeLevel(courseId) : "";
+  if(lv) return lv;
+  const s = studentById(stuId);
+  return s && s.grade ? s.grade[0] : '';
+}
 function renderAddTrackForm(stuId){
   currentSubState._newTrackDraft = currentSubState._newTrackDraft || {};
   const draft = currentSubState._newTrackDraft[stuId] = currentSubState._newTrackDraft[stuId] || {courseId:'', category:''};
-  const s = studentById(stuId);
-  const gradeLevel = s && s.grade ? s.grade[0] : '';
+  const gradeLevel = trackPresetLevel(stuId, draft.courseId);
   const levelPresets = BOOK_PRESETS[gradeLevel] || {};
   const categories = Object.keys(levelPresets);
-  if(!draft.category && categories.length) draft.category = categories[0];
+  if((!draft.category || !categories.includes(draft.category)) && categories.length) draft.category = categories[0];
   const bundles = levelPresets[draft.category] || [];
   return `<div style="background:#fff3f3;border-radius:8px;padding:6px 8px;margin-top:4px;">
     <select style="width:100%;font-size:11px;margin-bottom:6px;" onchange="currentSubState._newTrackDraft['${stuId}'].courseId=this.value;render();">
@@ -3380,8 +3386,7 @@ function renderAddTrackForm(stuId){
 async function confirmAddPresetBundle(stuId, bundleIndex){
   const draft = currentSubState._newTrackDraft[stuId];
   if(!draft || !draft.courseId){ alert('학년학기를 먼저 선택해주세요.'); return; }
-  const s = studentById(stuId);
-  const gradeLevel = s && s.grade ? s.grade[0] : '';
+  const gradeLevel = trackPresetLevel(stuId, draft.courseId);
   const bundles = (BOOK_PRESETS[gradeLevel]||{})[draft.category] || [];
   const bundle = bundles[bundleIndex];
   if(!bundle){ alert('교재 묶음을 찾을 수 없어요.'); return; }
