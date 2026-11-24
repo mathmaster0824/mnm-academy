@@ -1977,7 +1977,7 @@ function weekDates(weekStart){
    휴대폰은 앱 탭을 며칠씩 열어 둔 채로 쓰기 때문에, 고친 버전이 올라가도 예전 화면이 계속 돌 수 있다.
    예전 화면은 지금 보안 규칙과 맞지 않아 저장이 막힐 수 있으므로, 새 버전이 올라오면 새로 고침을 안내한다.
    (배포할 때마다 APP_BUILD 값을 바꾼다) */
-const APP_BUILD='2026-11-24a';
+const APP_BUILD='2026-11-25b';
 let newVersionReady=false, versionCheckAt=0;
 async function checkAppVersion(force){
   if(location.protocol==='file:') return false;
@@ -4988,7 +4988,7 @@ function renderSolutionLib(){
       <input type="text" id="spPage" placeholder="페이지" style="width:80px;">
       <input type="text" id="spProblem" placeholder="문제번호" style="width:80px;">
       <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="spKey"> ⭐ 주요문항</label>
-      <button class="btn gold sm" onclick="addSolutionPhoto()">+ 등록</button>
+      <button class="btn gold sm" data-sp-add onclick="addSolutionPhoto()">+ 등록</button>
     </div>
   </div>
   <div class="card">
@@ -5135,7 +5135,26 @@ function askSolutionDuplicate(existing,newFiles,label){
     document.body.appendChild(wrap); refresh();
   });
 }
+// 잠깐 떴다 사라지는 안내(등록 성공/실패가 화면에 안 보여 '등록이 안 된다'고 느끼는 것을 막는다)
+function showSpToast(msg,ok){
+  try{
+    document.getElementById('spToast')?.remove();
+    const t=document.createElement('div'); t.id='spToast';
+    t.style.cssText=`position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:10000;padding:12px 18px;border-radius:12px;font-size:14px;font-weight:700;color:#fff;background:${ok?'#2c7a3d':'#b3382c'};box-shadow:0 6px 20px rgba(0,0,0,.25);max-width:90vw;text-align:center;`;
+    t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(),ok?2600:5200);
+  }catch(e){}
+}
+let solutionAddBusy=false;
 async function addSolutionPhoto(){
+  if(solutionAddBusy){ showSpToast('등록 중이에요. 잠시만 기다려 주세요.',true); return; }
+  solutionAddBusy=true;
+  const btn=document.querySelector('[data-sp-add]'); const btnText=btn?btn.textContent:'';
+  if(btn){ btn.disabled=true; btn.textContent='등록 중...'; }
+  try{ await addSolutionPhotoInner(); }
+  catch(e){ console.error('[해설 보관함 등록 실패]',e); showSpToast('등록하지 못했어요: '+String((e&&e.message)||e).slice(0,80),false); }
+  finally{ solutionAddBusy=false; const b=document.querySelector('[data-sp-add]'); if(b){ b.disabled=false; b.textContent=btnText||'+ 등록'; } }
+}
+async function addSolutionPhotoInner(){
   const fileInput = document.getElementById('spPhoto');
   const courseId = document.getElementById('spCourse').value;
   const book = document.getElementById('spBook').value.trim();
@@ -5177,8 +5196,14 @@ async function addSolutionPhoto(){
     const delIds=[]; for(const o of existingSame){ if(replaceIds.includes(o.id) && await fsDelete('solutionPhotos',o.id)) delIds.push(o.id); }
     db.solutionPhotos=(db.solutionPhotos||[]).filter(x=>!delIds.includes(x.id));
   }
+  if(!savedNew){   // 저장된 사진이 한 장도 없으면(저장 실패·사진 처리 실패) 성공으로 보이지 않게 한다
+    showSpToast('저장하지 못했어요. 교재·페이지·문제번호는 그대로 두었으니 사진을 다시 선택해서 등록해 주세요.',false);
+    return;   // 교재·페이지·문제번호 입력값은 지우지 않는다(사진 입력칸은 사진 처리 단계에서 비워짐)
+  }
+  if(failedNew) showSpToast(`${savedNew}장은 저장했고 ${failedNew}장은 저장하지 못했어요.`,false);
   fileInput.value=''; document.getElementById('spBook').value=''; document.getElementById('spPage').value=''; document.getElementById('spProblem').value='';
   render();
+  if(!failedNew) showSpToast(`✅ ${book} ${page}쪽 ${problemNo}번 해설 ${savedNew}장을 등록했어요.`,true);
 }
 async function toggleSolutionKey(id){
   const p=(db.solutionPhotos||[]).find(x=>x.id===id); if(!p) return;
