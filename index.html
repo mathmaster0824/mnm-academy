@@ -1291,6 +1291,7 @@ const DIRECTOR_NAV = [
   {id:'kmmMakeup', label:'KMM 보강', icon:'📐', group:'오늘의 관리'},
   {id:'weekendStudy', label:'주말학습', icon:'🌙', group:'오늘의 관리'},
   {id:'problemWorkshop', label:'문제공작소', icon:'🛠️', group:'자료'},
+  {id:'bookTracker', label:'완북공작소', icon:'📘', group:'자료'},
   {id:'problemRepo', label:'문제저장소', icon:'🧩', group:'자료'},
   {id:'examMaker', label:'시험지 만들기', icon:'📝', group:'자료'},
   {id:'solutionLib', label:'해설 보관함', icon:'🗂️', group:'자료'},
@@ -2256,6 +2257,7 @@ function renderInner(){
       case 'curriculum': html+=renderCurriculum(); break;
       case 'videolib': html+=renderVideoLib(); break;
       case 'problemWorkshop': html+=renderProblemWorkshopPage(); break;
+      case 'bookTracker': html+=typeof renderBookTracker==='function'?renderBookTracker():'완북공작소 로딩 중'; break;
       case 'problemRepo': html+=renderProblemRepository(); break;
       case 'examMaker': html+=renderExamMaker(); break;
       case 'solutionLib': html+=renderSolutionLib(); break;
@@ -12402,6 +12404,7 @@ function renderMonthlyReports(){
 initFirebase();
 </script>
 <script src="pdf-background-import.js?v=2026-11-23-download"></script>
+<script src="book-tracker.js?v=20261126-1"></script>
 </body>
 </html>
 
