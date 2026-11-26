@@ -69,11 +69,13 @@ BT.pending=function(){
 window.BTassigned=async function(stuId,tracks){
  if(session?.mode!=='director')return;
  const student=studentById(stuId);if(!student)return;
+ const pending=[];
  for(const track of tracks){
  const t=data().templates?.[key(track.courseId,track.book)];
- if(!t?.verified||!t.rows?.length)continue;
+ if(!t?.verified||!t.rows?.length){pending.push(track);continue;}
  const id='track_'+track.id;
  await write('cards',id,{...JSON.parse(JSON.stringify(t)),courseName:courseById(track.courseId)?.name||'',student:student.name,studentId:stuId,createdAt:new Date().toISOString()});
  }
+ if(pending.length){const p=pending[0];if(confirm('책갈피 설정이 필요한 교재 '+pending.length+'개가 있습니다. 지금 설정할까요?')){goto('bookTracker');BT.choose(p.courseId,norm(p.book));BT.student(stuId);}}
 };
 })();
