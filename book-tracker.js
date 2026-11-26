@@ -38,4 +38,14 @@ print(){let cards=Object.entries(data().cards||{}).filter(([id])=>state.selected
 };
 window.renderBookTracker=function(){if(session?.mode!=='director')return '';let courses=sortedCourses();if(!courses.length)return '교육과정 없음';if(!state.course){state.course=courses[0].id;state.book=books(state.course)[0]||'';load();}let t=state.draft;let input=(i,f)=>'<input style="width:100%;min-width:0" value="'+esc(t.rows[i][f])+'" onchange="BT.row('+i+',\''+f+'\',this.value)">';return '<h2>완북공작소</h2><div class="card" style="padding:12px"><p>2022 개정 교육과정 기반 유형 초안 · 교재별 실제 분량 검수 후 저장</p><select onchange="BT.choose(this.value)">'+courses.map(c=>opt(c.id,c.name,state.course)).join('')+'</select> <select onchange="BT.choose(BTcourse(),this.value)">'+books(state.course).map(b=>opt(b,b,state.book)).join('')+'</select><p>색상 <select onchange="BT.field(\'color\',this.value)">'+Object.keys(palette).map(c=>opt(c,c,t.color)).join('')+'</select> 크기 <select onchange="BT.field(\'size\',this.value)">'+['auto','S','M','L'].map(c=>opt(c,c,t.size)).join('')+'</select></p><p>완북 조건 <input value="'+esc(t.condition)+'" onchange="BT.field(\'condition\',this.value)"></p><div style="overflow:auto"><table style="width:100%"><thead><tr><th>단원</th><th>유형명</th><th>출력 키워드</th><th>범위</th><th>편집</th></tr></thead><tbody>'+t.rows.map((r,i)=>'<tr>'+['unit','name','label','range'].map(f=>'<td>'+input(i,f)+'</td>').join('')+'<td>'+btn('↑','BT.move('+i+',-1)')+btn('↓','BT.move('+i+',1)')+btn('합치기','BT.merge('+i+')')+btn('삭제','BT.del('+i+')')+'</td></tr>').join('')+'</tbody></table></div>'+btn('+ 유형 추가','BT.add()')+' <label><input type="checkbox" '+(t.verified?'checked':'')+' onchange="BT.field(\'verified\',this.checked)"> 실제 교재 분량 검수 완료</label> '+btn('교재 설정 저장','BT.save()')+'<hr><select onchange="BT.student(this.value)"><option value="">학생 선택</option>'+sortedStudents().map(s=>opt(s.id,s.name,state.student)).join('')+'</select> '+btn('출력 보관함 추가','BT.queue()')+'<p>미리보기는 저장 후 인쇄 시 실제 크기로 검증됩니다.</p></div><div class="card" style="padding:12px"><h3>출력 보관함</h3>'+Object.entries(data().cards||{}).map(([id,c])=>'<p><label><input type="checkbox" '+(state.selected.has(id)?'checked':'')+' onchange="BT.select('+esc(JSON.stringify(id))+',this.checked)"> '+esc(c.student+' · '+c.courseName+' · '+c.book)+'</label> '+btn('삭제','BT.remove('+esc(JSON.stringify(id))+')')+'</p>').join('')+btn('선택 카드 인쇄','BT.print()')+'</div>';};
 window.BTcourse=()=>state.course;
+window.BTassigned=async function(stuId,tracks){
+ if(session?.mode!=='director')return;
+ const student=studentById(stuId);if(!student)return;
+ for(const track of tracks){
+ const t=data().templates?.[key(track.courseId,track.book)];
+ if(!t?.verified||!t.rows?.length)continue;
+ const id='track_'+track.id;
+ await write('cards',id,{...JSON.parse(JSON.stringify(t)),courseName:courseById(track.courseId)?.name||'',student:student.name,studentId:stuId,createdAt:new Date().toISOString()});
+ }
+};
 })();
