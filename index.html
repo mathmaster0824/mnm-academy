@@ -3398,7 +3398,7 @@ async function confirmAddPresetBundle(stuId, bundleIndex){
   if(!newTracks.length){ alert('이미 이 학년학기에 등록되어 있어요.'); return; }
   const tracks = [...(rec.tracks||[]), ...newTracks];
   const ok = await fsSet('practiceProgress', stuId, {tracks});
-  if(ok){ currentSubState._addingTrack[stuId] = false; delete currentSubState._newTrackDraft[stuId]; render(); }
+  if(ok){ currentSubState._addingTrack[stuId] = false; delete currentSubState._newTrackDraft[stuId]; render(); if(typeof window.BTassigned==='function'){try{await window.BTassigned(stuId,newTracks);}catch(e){console.error('완북 트래커 자동 생성 실패',e);}} }
 }
 async function toggleTrackUnit(stuId, trackId, checked, unit){
   const rec = db.practiceProgress[stuId] || {tracks:[]};
@@ -12404,7 +12404,7 @@ function renderMonthlyReports(){
 initFirebase();
 </script>
 <script src="pdf-background-import.js?v=2026-11-23-download"></script>
-<script src="book-tracker.js?v=20261126-1"></script>
+<script src="book-tracker.js?v=20261126-2"></script>
 </body>
 </html>
 
