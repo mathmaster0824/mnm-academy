@@ -1978,7 +1978,7 @@ function weekDates(weekStart){
    휴대폰은 앱 탭을 며칠씩 열어 둔 채로 쓰기 때문에, 고친 버전이 올라가도 예전 화면이 계속 돌 수 있다.
    예전 화면은 지금 보안 규칙과 맞지 않아 저장이 막힐 수 있으므로, 새 버전이 올라오면 새로 고침을 안내한다.
    (배포할 때마다 APP_BUILD 값을 바꾼다) */
-const APP_BUILD='2026-11-25b';
+const APP_BUILD='2026-11-25c';
 let newVersionReady=false, versionCheckAt=0;
 async function checkAppVersion(force){
   if(location.protocol==='file:') return false;
@@ -4983,7 +4983,7 @@ function renderSolutionLib(){
   <p class="page-sub">학년학기·교재·페이지·문제번호를 정확히 저장합니다. 학생 질문의 네 항목이 모두 일치하면 학습보관함 자료가 자동으로 연결돼요. 단원은 검색용 보조정보입니다.</p>
   <div class="card">
     <div class="row" style="flex-wrap:wrap;">
-      <input type="file" accept="image/*" id="spPhoto">
+      <input type="file" accept="image/*" multiple id="spPhoto">
       <select id="spCourse" onchange="onSolCourseChange()"><option value="">학년학기 선택</option>${sortedCourses().map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
       <select id="spBook" style="width:150px;" disabled><option value="">교재 선택 (학년학기 먼저)</option></select>
       <select id="spUnit"><option value="">단원 선택 (학년학기 먼저)</option></select>
@@ -5062,10 +5062,21 @@ async function syncExistingSolutionPhotosToProblemRepo(){
   problemStore.ingest.loaded=false;
   render();
 }
+function openSolutionLightbox(id){
+  // 같은 문제(교재·페이지·문제번호)의 해설 사진을 등록 순서대로 묶어서 크게 보여준다. (기본 원리 → 편리한 방법 순서로 올리면 그 순서대로)
+  try{
+    const all=db.solutionPhotos||[]; const me=all.find(x=>x.id===id); if(!me) return;
+    const same=x=>me.sourceKey ? x.sourceKey===me.sourceKey : (x.courseId===me.courseId && x.bookKey===me.bookKey && x.pageKey===me.pageKey && x.problemNoKey===me.problemNoKey);
+    const group=all.filter(x=>x.photo && same(x)).sort((a,b)=>String(a.uploadedAt||'').localeCompare(String(b.uploadedAt||'')));
+    const list=group.length?group:[me];
+    lbArray=list.map(x=>x.photo); lbIndex=Math.max(0,list.findIndex(x=>x.id===id));
+    showLightboxImage(); document.getElementById('lightbox').style.display='flex';
+  }catch(e){ console.error(e); }
+}
 function renderSolutionLibraryMatchesHtml(list){
   return list.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;">
     ${list.map(p=>`<div style="text-align:center;">
-      <img src="${photoSrc(p.photo,true)}" style="width:100%;border-radius:6px;cursor:pointer;" onclick="openLightbox(photoSrc(p.photo))">
+      <img src="${photoSrc(p.photo,true)}" style="width:100%;border-radius:6px;cursor:pointer;" onclick="openSolutionLightbox('${p.id}')">
       <div style="font-size:10px;color:#6f6958;margin-top:3px;">${courseById(p.courseId)?.name||'-'}${p.book?` · ${p.book}`:''}</div>
       <div style="font-size:10px;color:#6f6958;">${p.keyProblem?'<b data-key-badge style="color:#b8860b;">⭐ 주요 </b>':''}${p.unit?p.unit+' · ':''}${p.page?`${p.page}p `:''}${p.problemNo?`${p.problemNo}번`:''}</div>
       <button class="btn sm ${p.keyProblem?'gold':'outline'}" data-key-toggle="${p.id}" style="font-size:9px;padding:1px 6px;margin-top:3px;" onclick="toggleSolutionKey('${p.id}')">${p.keyProblem?'⭐ 해제':'☆ 주요'}</button>
@@ -5256,7 +5267,7 @@ function renderAutoSolutionMatches(qId){
   if(!matches.length) return '';
   return `<div style="margin-top:8px;padding:8px 10px;border:1px solid #dfd5b9;border-radius:9px;background:#fffaf0;">
     <div style="font-size:11px;font-weight:800;margin-bottom:6px;">🔗 학습보관함 정확 일치 ${matches.length}건${exactSolutionsForQuestion(q).some(p=>p.keyProblem)?' <span data-key-badge style="color:#b8860b;">⭐ 주요문항</span>':''} <span style="font-weight:400;color:#8a8674;">· 원장 화면에만 표시</span></div>
-    <div style="display:flex;gap:7px;overflow-x:auto;padding-bottom:2px;">${matches.map(p=>`<div style="min-width:72px;text-align:center;"><img src="${photoSrc(p.photo,true)}" style="width:72px;height:72px;object-fit:cover;border-radius:6px;cursor:pointer;" onclick="openLightbox(photoSrc(p.photo))"><button class="btn sm outline" style="font-size:9px;padding:2px 5px;margin-top:3px;" onclick="attachSolutionPhotoToAnswer('${qId}','${p.id}')">답변에 첨부</button></div>`).join('')}</div>
+    <div style="display:flex;gap:7px;overflow-x:auto;padding-bottom:2px;">${matches.map(p=>`<div style="min-width:72px;text-align:center;"><img src="${photoSrc(p.photo,true)}" style="width:72px;height:72px;object-fit:cover;border-radius:6px;cursor:pointer;" onclick="openSolutionLightbox('${p.id}')"><button class="btn sm outline" style="font-size:9px;padding:2px 5px;margin-top:3px;" onclick="attachSolutionPhotoToAnswer('${qId}','${p.id}')">답변에 첨부</button></div>`).join('')}</div>
   </div>`;
 }
 
@@ -7224,7 +7235,7 @@ async function findExactSolutionPhotosForQuestion(source){
   if(!source || questionProblemNumbers(source).length>1 || source.sourceType!=='TEXTBOOK' || !source.sourceKey) return {photos:[],checked:true};
   try{
     const snap=await fsdb.collection('solutionPhotos').where('sourceKey','==',source.sourceKey).limit(8).get();
-    const photos=snap.docs.map(d=>d.data()).filter(p=>p && p.sourceKey===source.sourceKey && p.photo).map(p=>p.photo);
+    const photos=snap.docs.map(d=>d.data()).filter(p=>p && p.sourceKey===source.sourceKey && p.photo).sort((a,b)=>String(a.uploadedAt||'').localeCompare(String(b.uploadedAt||''))).map(p=>p.photo);
     return {photos,checked:true};
   }catch(e){
     // 학생 계정에 학습보관함 조회 권한이 없으면 질문은 안전하게 대기 목록으로 보낸다.
