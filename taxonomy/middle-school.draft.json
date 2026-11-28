@@ -1,0 +1,751 @@
+{
+  "version": "mnm-taxonomy-v2-draft",
+  "status": "candidate",
+  "editionMappingStatus": "pending",
+  "notes": [
+    "학기 배치는 학원 운영용 초안이며 교재별 매핑 필요",
+    "대푯값과 상자그림, 이차함수 최댓값 최솟값은 개정판별 적용 검토 필요",
+    "기존 ID 변경 금지, 후보 ID는 원장 승인 전 자동 분류에 사용 금지"
+  ],
+  "sources": [
+    "https://file.naeiledu.co.kr/uploadfile/20230717/191958_054_056%E1%84%87%E1%85%B5%E1%84%89%E1%85%A1%E1%86%BC%E1%84%80%E1%85%AD%E1%84%8B%E1%85%B2%E1%86%A8%E1%84%83%E1%85%A1_ok_m.pdf",
+    "https://m.nebooks.co.kr/pages/book/view.asp?c=BE05010001",
+    "https://ilovel2.tistory.com/244"
+  ],
+  "units": [
+    {
+      "id": "M1-1-factor",
+      "courseId": "M1-1",
+      "name": "소인수분해",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M1-1-factor-C01",
+          "name": "소수와 합성수",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-1-factor-C02",
+          "name": "소인수분해",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-1-factor-C03",
+          "name": "최대공약수",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-1-factor-C04",
+          "name": "최소공배수",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M1-1-rational",
+      "courseId": "M1-1",
+      "name": "정수와 유리수",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M1-1-rational-C01",
+          "name": "정수와 유리수",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-1-rational-C02",
+          "name": "절댓값과 대소 관계",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-1-rational-C03",
+          "name": "덧셈과 뺄셈",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-1-rational-C04",
+          "name": "곱셈과 나눗셈",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M1-1-expression",
+      "courseId": "M1-1",
+      "name": "문자와 식",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M1-1-expression-C01",
+          "name": "문자의 사용",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-1-expression-C02",
+          "name": "식의 값",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-1-expression-C03",
+          "name": "일차식의 계산",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M1-1-linear-equation",
+      "courseId": "M1-1",
+      "name": "일차방정식",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M1-1-linear-equation-C01",
+          "name": "등식의 성질",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-1-linear-equation-C02",
+          "name": "일차방정식의 풀이",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-1-linear-equation-C03",
+          "name": "활용",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M1-1-coordinate",
+      "courseId": "M1-1",
+      "name": "좌표와 그래프",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M1-1-coordinate-C01",
+          "name": "순서쌍과 좌표",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-1-coordinate-C02",
+          "name": "그래프 해석",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-1-coordinate-C03",
+          "name": "정비례",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-1-coordinate-C04",
+          "name": "반비례",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M1-2-basic-geometry",
+      "courseId": "M1-2",
+      "name": "기본 도형과 작도",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M1-2-basic-geometry-C01",
+          "name": "점 선 면 각",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-2-basic-geometry-C02",
+          "name": "위치 관계",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-2-basic-geometry-C03",
+          "name": "평행선",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-2-basic-geometry-C04",
+          "name": "삼각형의 작도",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-2-basic-geometry-C05",
+          "name": "합동 조건",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M1-2-plane",
+      "courseId": "M1-2",
+      "name": "평면도형",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M1-2-plane-C01",
+          "name": "다각형",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-2-plane-C02",
+          "name": "내각과 외각",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-2-plane-C03",
+          "name": "원과 부채꼴",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M1-2-solid",
+      "courseId": "M1-2",
+      "name": "입체도형",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M1-2-solid-C01",
+          "name": "다면체",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-2-solid-C02",
+          "name": "회전체",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-2-solid-C03",
+          "name": "겉넓이",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-2-solid-C04",
+          "name": "부피",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M1-2-data",
+      "courseId": "M1-2",
+      "name": "자료의 정리와 해석",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M1-2-data-C01",
+          "name": "줄기와 잎 그림",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-2-data-C02",
+          "name": "도수분포표",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-2-data-C03",
+          "name": "히스토그램",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-2-data-C04",
+          "name": "도수분포다각형",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-2-data-C05",
+          "name": "상대도수",
+          "status": "candidate"
+        },
+        {
+          "id": "M1-2-data-C06",
+          "name": "대푯값",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M2-1-decimal",
+      "courseId": "M2-1",
+      "name": "유리수와 순환소수",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M2-1-decimal-C01",
+          "name": "유한소수",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-1-decimal-C02",
+          "name": "순환소수",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-1-decimal-C03",
+          "name": "분수 표현",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M2-1-polynomial",
+      "courseId": "M2-1",
+      "name": "식의 계산",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M2-1-polynomial-C01",
+          "name": "지수법칙",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-1-polynomial-C02",
+          "name": "단항식 계산",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-1-polynomial-C03",
+          "name": "다항식 계산",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M2-1-inequality",
+      "courseId": "M2-1",
+      "name": "일차부등식",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M2-1-inequality-C01",
+          "name": "부등식의 성질",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-1-inequality-C02",
+          "name": "일차부등식 풀이",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-1-inequality-C03",
+          "name": "활용",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M2-1-system",
+      "courseId": "M2-1",
+      "name": "연립일차방정식",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M2-1-system-C01",
+          "name": "대입법",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-1-system-C02",
+          "name": "가감법",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-1-system-C03",
+          "name": "활용",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M2-1-linear-function",
+      "courseId": "M2-1",
+      "name": "일차함수",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M2-1-linear-function-C01",
+          "name": "함수와 함숫값",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-1-linear-function-C02",
+          "name": "기울기와 절편",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-1-linear-function-C03",
+          "name": "그래프",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-1-linear-function-C04",
+          "name": "일차방정식과 관계",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M2-2-triangle",
+      "courseId": "M2-2",
+      "name": "삼각형의 성질",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M2-2-triangle-C01",
+          "name": "이등변삼각형",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-2-triangle-C02",
+          "name": "직각삼각형의 합동",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-2-triangle-C03",
+          "name": "외심",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-2-triangle-C04",
+          "name": "내심",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M2-2-quadrilateral",
+      "courseId": "M2-2",
+      "name": "사각형의 성질",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M2-2-quadrilateral-C01",
+          "name": "평행사변형",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-2-quadrilateral-C02",
+          "name": "직사각형",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-2-quadrilateral-C03",
+          "name": "마름모",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-2-quadrilateral-C04",
+          "name": "정사각형",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-2-quadrilateral-C05",
+          "name": "사다리꼴",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M2-2-similarity",
+      "courseId": "M2-2",
+      "name": "도형의 닮음",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M2-2-similarity-C01",
+          "name": "닮음 조건",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-2-similarity-C02",
+          "name": "평행선과 선분의 비",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-2-similarity-C03",
+          "name": "중점 연결",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-2-similarity-C04",
+          "name": "무게중심",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-2-similarity-C05",
+          "name": "닮음비와 넓이 부피",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M2-2-pythagoras",
+      "courseId": "M2-2",
+      "name": "피타고라스 정리",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M2-2-pythagoras-C01",
+          "name": "정리와 역",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-2-pythagoras-C02",
+          "name": "길이 계산",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-2-pythagoras-C03",
+          "name": "활용",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M2-2-probability",
+      "courseId": "M2-2",
+      "name": "확률",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M2-2-probability-C01",
+          "name": "경우의 수",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-2-probability-C02",
+          "name": "확률의 뜻과 성질",
+          "status": "candidate"
+        },
+        {
+          "id": "M2-2-probability-C03",
+          "name": "확률 계산",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M3-1-real",
+      "courseId": "M3-1",
+      "name": "실수와 그 연산",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M3-1-real-C01",
+          "name": "제곱근",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-1-real-C02",
+          "name": "무리수와 실수",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-1-real-C03",
+          "name": "근호의 계산",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M3-1-factor-polynomial",
+      "courseId": "M3-1",
+      "name": "다항식의 곱셈과 인수분해",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M3-1-factor-polynomial-C01",
+          "name": "곱셈 공식",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-1-factor-polynomial-C02",
+          "name": "인수분해 공식",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-1-factor-polynomial-C03",
+          "name": "식의 변형",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M3-1-quadratic-equation",
+      "courseId": "M3-1",
+      "name": "이차방정식",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M3-1-quadratic-equation-C01",
+          "name": "이차방정식과 근",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-1-quadratic-equation-C02",
+          "name": "인수분해 풀이",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-1-quadratic-equation-C03",
+          "name": "제곱근 풀이",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-1-quadratic-equation-C04",
+          "name": "완전제곱식",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-1-quadratic-equation-C05",
+          "name": "근의 공식",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-1-quadratic-equation-C06",
+          "name": "활용",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": "M3-1-U03"
+    },
+    {
+      "id": "M3-1-quadratic-function",
+      "courseId": "M3-1",
+      "name": "이차함수",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M3-1-quadratic-function-C01",
+          "name": "이차함수의 뜻",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-1-quadratic-function-C02",
+          "name": "그래프",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-1-quadratic-function-C03",
+          "name": "축과 꼭짓점",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-1-quadratic-function-C04",
+          "name": "최댓값과 최솟값",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M3-2-trigonometry",
+      "courseId": "M3-2",
+      "name": "삼각비",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M3-2-trigonometry-C01",
+          "name": "삼각비의 뜻",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-2-trigonometry-C02",
+          "name": "특수각",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-2-trigonometry-C03",
+          "name": "길이와 넓이 활용",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M3-2-circle",
+      "courseId": "M3-2",
+      "name": "원의 성질",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M3-2-circle-C01",
+          "name": "현과 중심",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-2-circle-C02",
+          "name": "접선",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-2-circle-C03",
+          "name": "원주각",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-2-circle-C04",
+          "name": "원에 내접하는 사각형",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-2-circle-C05",
+          "name": "접선과 현",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    },
+    {
+      "id": "M3-2-statistics",
+      "courseId": "M3-2",
+      "name": "통계",
+      "status": "candidate",
+      "topics": [
+        {
+          "id": "M3-2-statistics-C01",
+          "name": "대푯값",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-2-statistics-C02",
+          "name": "산포도",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-2-statistics-C03",
+          "name": "산점도와 상관관계",
+          "status": "candidate"
+        },
+        {
+          "id": "M3-2-statistics-C04",
+          "name": "상자그림",
+          "status": "candidate"
+        }
+      ],
+      "legacyUnitId": null
+    }
+  ]
+}
