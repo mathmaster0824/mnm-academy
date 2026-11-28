@@ -1978,7 +1978,7 @@ function weekDates(weekStart){
    휴대폰은 앱 탭을 며칠씩 열어 둔 채로 쓰기 때문에, 고친 버전이 올라가도 예전 화면이 계속 돌 수 있다.
    예전 화면은 지금 보안 규칙과 맞지 않아 저장이 막힐 수 있으므로, 새 버전이 올라오면 새로 고침을 안내한다.
    (배포할 때마다 APP_BUILD 값을 바꾼다) */
-const APP_BUILD='2026-11-25b';
+const APP_BUILD='2026-11-28-homework-upload';
 let newVersionReady=false, versionCheckAt=0;
 async function checkAppVersion(force){
   if(location.protocol==='file:') return false;
@@ -6135,8 +6135,11 @@ function renderSubmissionCard(stuId, directorView, previewAsStudent){
   // v97 복수 반: 같은 날 숙제가 있는 반이 둘 이상이면 반을 고르게 하고, 선택한 반의 슬롯 ID로 제출/임시저장/타이머를 분리한다.
   let classPicker='';
   const gridSub = asStudent && !previewAsStudent ? currentSubState.gridSub : null; // 숙제 표의 칸에서 연 경우: 반·날짜가 이미 정해져 있다
-  if(asStudent && classesForStudent(stuId).length>1){
-    const opts=homeworkClassesForDate(stuId,date);
+  if(asStudent && gridSub && classesForStudent(stuId).some(c=>c.id===gridSub.clsId)){
+    stuId=hwSlotId(baseStudentId(stuId),gridSub.clsId);
+  }else if(asStudent && classesForStudent(stuId).length>1){
+    const planned=homeworkClassesForDate(stuId,date);
+    const opts=planned.length?planned:classesForStudent(stuId);
     if(opts.length>1){
       const sel=opts.some(c=>c.id===currentSubState.subClassId)?currentSubState.subClassId:opts[0].id;
       if(!gridSub) classPicker=`<div style="margin:8px 0 12px;"><div style="font-size:12px;color:#8a8674;margin-bottom:5px;">어느 반 숙제를 제출할까요?</div>
@@ -9043,7 +9046,7 @@ function gridSubmitCount(stuId){
   let n=0;
   classesForStudent(stuId).forEach(c=>{
     const plan=(db.weeklyPlans[c.id+'_'+wk]||{})[stuId]||{};
-    ['mon','tue','wed','thu','fri','sat','sun'].forEach((k,i)=>{ if(plan[k] && gridCanSubmitDate(addDaysISO(wk,i))) n++; });
+    ['mon','tue','wed','thu','fri','sat','sun'].forEach((k,i)=>{ if(gridCanSubmitDate(addDaysISO(wk,i)) && !isLegacyHomeworkDate(addDaysISO(wk,i))) n++; });
   });
   return n;
 }
@@ -9060,7 +9063,7 @@ function renderWeekPlanGrids(stuId,title,withSubmit){
     const cells=['mon','tue','wed','thu','fri','sat','sun'].map((k,i)=>{
       const date=addDaysISO(wk,i);
       let btn='';
-      if(withSubmit && c && plan[k] && gridCanSubmitDate(date)){
+      if(withSubmit && c && gridCanSubmitDate(date) && !isLegacyHomeworkDate(date)){
         const sub=subForClass(stuId,c.id,date);
         const st=sub?submissionReviewState(sub,date,stuId):'none';
         const look=GRID_SUB_STYLE[st]||GRID_SUB_STYLE.none;
@@ -9086,7 +9089,7 @@ function renderWeekPlanGrids(stuId,title,withSubmit){
       <div></div>${['mon','tue','wed','thu','fri','sat','sun'].map(k=>`<div class="hd">${DAY_LABEL[k]}</div>`).join('')}
       <div></div>${cells}
     </div>
-    ${withSubmit && c && gridSubmitCount(stuId)? `<div style="font-size:11.5px;color:#8a8674;margin-top:8px;">숙제를 다 했으면 그 날짜 칸의 📸 버튼을 눌러 사진을 올려요. 이번 주 숙제는 미리 해서 올려도 돼요.<span class="hwlegend" style="display:none;margin-top:3px;">📸 올리기 · ⏳ 검토중 · ✅ 완료 · 🔁 다시 올리기</span></div>`:''}
+    ${withSubmit && c? `<div style="font-size:11.5px;color:#8a8674;margin-top:8px;">숙제 내용이 적혀 있지 않아도 해당 날짜의 📸 올리기 버튼으로 숙제를 제출할 수 있어요. 이번 주 숙제는 미리 해서 올려도 돼요.<span class="hwlegend" style="display:none;margin-top:3px;">📸 올리기 · ⏳ 검토중 · ✅ 완료 · 🔁 다시 올리기</span></div>`:''}
   </div>${panel}`;}).join('');
 }
 function openGridSubmission(clsId,date){
